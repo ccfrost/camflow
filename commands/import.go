@@ -16,7 +16,7 @@ import (
 
 // Import mvoes the DCIM/ files to the photo dir and the staging video dir.
 // It returns the relative target directory for the photos and any error.
-func Import(config camediaconfig.CamediaConfig, sdcardDir string, now time.Time) (string, error) {
+func Import(config camediaconfig.CamediaConfig, sdcardDir string, keepSrc bool, now time.Time) (string, error) {
 	// TODO: maybe add option to keep/delete the source files.
 
 	targetVidDir, err := videoStagingDir()
@@ -66,7 +66,7 @@ func Import(config camediaconfig.CamediaConfig, sdcardDir string, now time.Time)
 		progressbar.OptionShowBytes(true),
 		progressbar.OptionSetWidth(40),
 	)
-	if err := moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir, bar); err != nil {
+	if err := moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir, keepSrc, bar); err != nil {
 		return "", fmt.Errorf("failed to mvoe files: %w", err)
 	}
 
@@ -155,7 +155,7 @@ type moveProgress struct {
 
 // moveFilesAndFlatten moves files from srcDir into the photo/video target dir.
 // It preserves the modification times and flattens the directories.
-func moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir string, bar *progressbar.ProgressBar) error {
+func moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir string, keepSrc bool, bar *progressbar.ProgressBar) error {
 	// Ensure target directories exists.
 	if err := os.MkdirAll(targetPhotoDir, os.ModePerm); err != nil {
 		return fmt.Errorf("failed to create photo dir %s: %w", targetPhotoDir, err)
@@ -198,8 +198,10 @@ func moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir string, bar *progr
 			return err
 		}
 
-		if err := os.Remove(path); err != nil {
-			return fmt.Errorf("failed to delete source file %s: %w", path, err)
+		if !keepSrc {
+			if err := os.Remove(path); err != nil {
+				return fmt.Errorf("failed to delete source file %s: %w", path, err)
+			}
 		}
 
 		return nil

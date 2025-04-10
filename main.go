@@ -35,14 +35,19 @@ func main() {
 
 	// TODO: add version command.
 
-	rootCmd.AddCommand(&cobra.Command{
+	importCmd := cobra.Command{
 		Use:   "import",
 		Short: "Import media from the sdcard",
 		Args:  cobra.ExactArgs(1),
 		Run: func(cmd *cobra.Command, args []string) {
 			// TODO: find sd card (diskutil/gemini code)
 			srcDir := "/Volumes/sdcardTODO"
-			relTargetDir, err := commands.Import(config, srcDir, time.Now())
+			keep, err := cmd.Flags().GetBool("keep")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error: invalid keep flag:", err)
+				os.Exit(1)
+			}
+			relTargetDir, err := commands.Import(config, srcDir, keep, time.Now())
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
@@ -51,7 +56,9 @@ func main() {
 			fmt.Println("imported photos to", relTargetDir)
 			// TODO: if there were videos, say to run upload command.
 		},
-	})
+	}
+	importCmd.Flags().BoolP("keep", "k", false, "Keep the source files")
+	rootCmd.AddCommand(&importCmd)
 
 	// TODO: add upload-photos command.
 
