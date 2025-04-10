@@ -1,4 +1,4 @@
-package main
+package camediaconfig
 
 import (
 	"fmt"
@@ -8,14 +8,20 @@ import (
 	"github.com/spf13/viper"
 )
 
+type KeywordAlbum struct {
+	Keyword string `mapstructure:"keyword"`
+	Album   string `mapstructure:"album"`
+}
+
 // CamediaConfig defines the configuration for Camedia.
 type CamediaConfig struct {
 	DefaultAlbums []string `mapstructure:"default_albums"`
 
-	PhotoRoot             string `mapstructure:"photo_root"`
-	ToFavAlbumMinNumStars int    `mapstructure:"to_fav_album_min_num_stars"`
-	ToFavAlbumName        string `mapstructure:"to_fav_album_name"`
-	// TODO: add custom keywords to albums
+	OrigPhotoRoot         string         `mapstructure:"orig_photo_root"`
+	ExportPhotoDir        string         `mapstructure:"export_photo_dir"`
+	ToFavAlbumMinNumStars int            `mapstructure:"to_fav_album_min_num_stars"`
+	ToFavAlbumName        string         `mapstructure:"to_fav_album_name"`
+	KeywordAlbums         []KeywordAlbum `mapstructure:"keyword_albums"`
 
 	// TODO: connect to gphotos
 	// TODO: connect to todoist
@@ -32,7 +38,7 @@ func getConfigPath(configPathFlag string) (string, error) {
 
 	// Fall back to user config dir.
 	if dir, err := os.UserConfigDir(); err == nil {
-		return filepath.Join(dir, camedia, defaultFilename), nil
+		return filepath.Join(dir, "camedia", defaultFilename), nil
 	}
 
 	// Fall back to home directory.
@@ -44,27 +50,27 @@ func getConfigPath(configPathFlag string) (string, error) {
 }
 
 // loadConfig reads the config file.
-func loadConfig(configPathFlag string) (*CamediaConfig, error) {
+func LoadConfig(configPathFlag string) (CamediaConfig, error) {
 	path, err := getConfigPath(configPathFlag)
 	if err != nil {
-		return nil, err
+		return CamediaConfig{}, err
 	}
 	viper.SetConfigFile(path)
 	viper.SetConfigType("toml")
 
 	if err := viper.ReadInConfig(); err != nil {
-		return nil, err
+		return CamediaConfig{}, err
 	}
 	var config CamediaConfig
 	if err := viper.Unmarshal(&config); err != nil {
-		return nil, err
+		return CamediaConfig{}, err
 	}
-	return &config, nil
+	return config, nil
 }
 
 // saveConfig writes the config to a file.
 // TODO: unused and not fully implemented
-func saveConfig(configPathFlag string, config *CamediaConfig) error {
+func saveConfig(configPathFlag string, config CamediaConfig) error {
 	path, err := getConfigPath(configPathFlag)
 	if err != nil {
 		return err
