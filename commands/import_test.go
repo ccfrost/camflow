@@ -26,12 +26,7 @@ func TestMoveFilesAndFlatten(t *testing.T) {
 		filepath.Join(srcDir, "100CANON"),
 		filepath.Join(srcDir, "101CANON"),
 	}
-	for _, dir := range dirs {
-		require.NoError(t, os.MkdirAll(dir, 0755), "Failed to create test directory: %s", dir)
-	}
 
-	// Create test files with known modification times
-	// TODO: create file in MISC and make sure untouched.
 	modTime := time.Date(2024, 4, 1, 12, 0, 0, 0, time.UTC)
 	testFiles := []struct {
 		path    string
@@ -44,11 +39,6 @@ func TestMoveFilesAndFlatten(t *testing.T) {
 		{filepath.Join(dirs[1], "README.txt"), []byte("ignored"), modTime},
 	}
 
-	for _, tf := range testFiles {
-		require.NoError(t, os.WriteFile(tf.path, tf.content, 0644), "Failed to create test file: %s", tf.path)
-		require.NoError(t, os.Chtimes(tf.path, tf.modTime, tf.modTime), "Failed to set modtime for: %s", tf.path)
-	}
-
 	// Create progress bar for testing
 	bar := progressbar.NewOptions64(
 		1000,
@@ -57,42 +47,94 @@ func TestMoveFilesAndFlatten(t *testing.T) {
 		progressbar.OptionSetWidth(40),
 	)
 
-	// Run the function being tested
-	require.NoError(t, moveFilesAndFlatten(srcDir, photoDir, videoDir, false, bar))
-
-	// Verify results
-	tests := []struct {
-		desc        string
-		path        string
-		shouldExist bool
-		content     []byte
-		modTime     time.Time
+	// Test both keepSrc=false and keepSrc=true cases
+	cases := []struct {
+		keepSrc bool
+		desc    string
+		tests   []struct {
+			desc        string
+			path        string
+			shouldExist bool
+			content     []byte
+			modTime     time.Time
+		}
 	}{
-		{"CR3 moved correctly", filepath.Join(photoDir, "IMG_0001.CR3"), true, []byte("cr3 content"), modTime},
-		{"JPG moved correctly", filepath.Join(photoDir, "IMG_0001.JPG"), true, []byte("jpg content"), modTime},
-		{"MP4 moved correctly", filepath.Join(videoDir, "IMG_0002.MP4"), true, []byte("mp4 content"), modTime.Add(time.Hour)},
-		{"Ignored file not moved", filepath.Join(photoDir, "README.txt"), false, nil, time.Time{}},
-		{"Source CR3 removed", filepath.Join(dirs[0], "IMG_0001.CR3"), false, nil, time.Time{}},
-		{"Source JPG removed", filepath.Join(dirs[0], "IMG_0001.JPG"), false, nil, time.Time{}},
-		{"Source MP4 removed", filepath.Join(dirs[1], "IMG_0002.MP4"), false, nil, time.Time{}},
+		{
+			keepSrc: false,
+			desc:    "with keepSrc=false (files should be moved)",
+			tests: []struct {
+				desc        string
+				path        string
+				shouldExist bool
+				content     []byte
+				modTime     time.Time
+			}{
+				{"CR3 moved correctly", filepath.Join(photoDir, "IMG_0001.CR3"), true, []byte("cr3 content"), modTime},
+				{"JPG moved correctly", filepath.Join(photoDir, "IMG_0001.JPG"), true, []byte("jpg content"), modTime},
+				{"MP4 moved correctly", filepath.Join(videoDir, "IMG_0002.MP4"), true, []byte("mp4 content"), modTime.Add(time.Hour)},
+				{"Ignored file not moved", filepath.Join(photoDir, "README.txt"), false, nil, time.Time{}},
+				{"Source CR3 removed", filepath.Join(dirs[0], "IMG_0001.CR3"), false, nil, time.Time{}},
+				{"Source JPG removed", filepath.Join(dirs[0], "IMG_0001.JPG"), false, nil, time.Time{}},
+				{"Source MP4 removed", filepath.Join(dirs[1], "IMG_0002.MP4"), false, nil, time.Time{}},
+			},
+		},
+		{
+			keepSrc: true,
+			desc:    "with keepSrc=true (files should be copied)",
+			tests: []struct {
+				desc        string
+				path        string
+				shouldExist bool
+				content     []byte
+				modTime     time.Time
+			}{
+				{"CR3 copied to destination", filepath.Join(photoDir, "IMG_0001.CR3"), true, []byte("cr3 content"), modTime},
+				{"JPG copied to destination", filepath.Join(photoDir, "IMG_0001.JPG"), true, []byte("jpg content"), modTime},
+				{"MP4 copied to destination", filepath.Join(videoDir, "IMG_0002.MP4"), true, []byte("mp4 content"), modTime.Add(time.Hour)},
+				{"Source CR3 kept", filepath.Join(dirs[0], "IMG_0001.CR3"), true, []byte("cr3 content"), modTime},
+				{"Source JPG kept", filepath.Join(dirs[0], "IMG_0001.JPG"), true, []byte("jpg content"), modTime},
+				{"Source MP4 kept", filepath.Join(dirs[1], "IMG_0002.MP4"), true, []byte("mp4 content"), modTime.Add(time.Hour)},
+				{"Ignored file not copied", filepath.Join(photoDir, "README.txt"), false, nil, time.Time{}},
+			},
+		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.desc, func(t *testing.T) {
-			info, err := os.Stat(tt.path)
-			if tt.shouldExist {
-				require.NoError(t, err, "Expected %s to exist", tt.path)
+	for _, tc := range cases {
+		t.Run(tc.desc, func(t *testing.T) {
+			// Reset and recreate test directories for each case.
+			os.RemoveAll(photoDir)
+			os.RemoveAll(videoDir)
+			for _, dir := range dirs {
+				require.NoError(t, os.MkdirAll(dir, 0755), "Failed to create test directory: %s", dir)
+			}
 
-				// Check content
-				got, err := os.ReadFile(tt.path)
-				require.NoError(t, err, "Failed to read file: %s", tt.path)
-				assert.Equal(t, string(tt.content), string(got), "Content mismatch for %s", tt.path)
+			// Create test files.
+			for _, tf := range testFiles {
+				require.NoError(t, os.WriteFile(tf.path, tf.content, 0644), "Failed to create test file: %s", tf.path)
+				require.NoError(t, os.Chtimes(tf.path, tf.modTime, tf.modTime), "Failed to set modtime for: %s", tf.path)
+			}
 
-				// Check modification time
-				assert.True(t, info.ModTime().Equal(tt.modTime), "Modtime mismatch for %s: got %s, want %s",
-					tt.path, info.ModTime(), tt.modTime)
-			} else {
-				assert.True(t, os.IsNotExist(err), "Expected %s to not exist, but it does", tt.path)
+			require.NoError(t, moveFilesAndFlatten(srcDir, photoDir, videoDir, tc.keepSrc, bar))
+
+			// Verify results.
+			for _, tt := range tc.tests {
+				t.Run(tt.desc, func(t *testing.T) {
+					info, err := os.Stat(tt.path)
+					if tt.shouldExist {
+						require.NoError(t, err, "Expected %s to exist", tt.path)
+
+						// Check content.
+						got, err := os.ReadFile(tt.path)
+						require.NoError(t, err, "Failed to read file: %s", tt.path)
+						assert.Equal(t, string(tt.content), string(got), "Content mismatch for %s", tt.path)
+
+						// Check modification time.
+						assert.True(t, info.ModTime().Equal(tt.modTime), "Modtime mismatch for %s: got %s, want %s",
+							tt.path, info.ModTime(), tt.modTime)
+					} else {
+						assert.True(t, os.IsNotExist(err), "Expected %s to not exist, but it does", tt.path)
+					}
+				})
 			}
 		})
 	}
