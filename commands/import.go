@@ -136,10 +136,11 @@ func getAvailableSpace(dir string) (uint64, error) {
 func checkNoDupBasenames(files []string) error {
 	basenames := make(map[string]struct{}, len(files))
 	for _, f := range files {
-		_, exists := basenames[filepath.Base(f)]
-		if exists {
+		basename := filepath.Base(f)
+		if _, exists := basenames[basename]; exists {
 			return fmt.Errorf("at least two files have non-unique basenames; eg: %s", f)
 		}
+		basenames[basename] = struct{}{}
 	}
 	return nil
 }

@@ -196,3 +196,152 @@ func TestMoveFilesAndFlattenErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestGetFilesAndSize(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "camedia-test-*")
+	require.NoError(t, err, "Failed to create temp directory")
+	defer os.RemoveAll(tmpDir)
+
+	// Create test files with known sizes
+	files := map[string]int64{
+		"test1.CR3":   100,
+		"test2.JPG":   200,
+		"test3.MP4":   300,
+		"ignored.txt": 400,
+	}
+
+	for name, size := range files {
+		path := filepath.Join(tmpDir, name)
+		data := make([]byte, size)
+		require.NoError(t, os.WriteFile(path, data, 0644))
+	}
+
+	// Create a subdirectory with more files
+	subDir := filepath.Join(tmpDir, "subdir")
+	require.NoError(t, os.MkdirAll(subDir, 0755))
+	subFiles := map[string]int64{
+		"sub1.cr3": 150,
+		"sub2.jpg": 250,
+	}
+	for name, size := range subFiles {
+		path := filepath.Join(subDir, name)
+		data := make([]byte, size)
+		require.NoError(t, os.WriteFile(path, data, 0644))
+	}
+
+	gotFiles, gotSize, err := getFilesAndSize(tmpDir)
+	require.NoError(t, err)
+
+	// Calculate expected total size (only supported extensions)
+	var expectedSize int64
+	expectedCount := 0
+	for name, size := range files {
+		ext := filepath.Ext(name)
+		if ext == ".CR3" || ext == ".JPG" || ext == ".MP4" {
+			expectedSize += size
+			expectedCount++
+		}
+	}
+	for name, size := range subFiles {
+		ext := filepath.Ext(name)
+		if ext == ".cr3" || ext == ".jpg" {
+			expectedSize += size
+			expectedCount++
+		}
+	}
+
+	assert.Equal(t, expectedSize, gotSize)
+	assert.Equal(t, expectedCount, len(gotFiles))
+}
+
+func TestCheckNoDupBasenames(t *testing.T) {
+	tests := []struct {
+		name    string
+		files   []string
+		wantErr bool
+	}{
+		{
+			name: "no duplicates",
+			files: []string{
+				"/path/to/file1.jpg",
+				"/different/path/file2.jpg",
+				"/another/path/file3.jpg",
+			},
+			wantErr: false,
+		},
+		{
+			name: "has duplicates",
+			files: []string{
+				"/path/to/file1.jpg",
+				"/different/path/file1.jpg",
+			},
+			wantErr: true,
+		},
+		{
+			name:    "empty list",
+			files:   []string{},
+			wantErr: false,
+		},
+		{
+			name: "same name different case",
+			files: []string{
+				"/path/to/FILE1.jpg",
+				"/different/path/file1.jpg",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := checkNoDupBasenames(tt.files)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestDeleteEmptyDirs(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "camedia-test-*")
+	require.NoError(t, err, "Failed to create temp directory")
+	defer os.RemoveAll(tmpDir)
+
+	// Create test directory structure
+	dirs := []string{
+		filepath.Join(tmpDir, "empty1"),
+		filepath.Join(tmpDir, "empty2"),
+		filepath.Join(tmpDir, "notempty1"),
+		filepath.Join(tmpDir, "notempty2"),
+	}
+
+	for _, dir := range dirs {
+		require.NoError(t, os.MkdirAll(dir, 0755))
+	}
+
+	// Create some files in the not-empty directories
+	require.NoError(t, os.WriteFile(filepath.Join(dirs[2], "file1.txt"), []byte("content"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(dirs[3], "file2.txt"), []byte("content"), 0644))
+
+	// Create list of files that reference the empty directories
+	files := []string{
+		filepath.Join(dirs[0], "deleted1.jpg"),
+		filepath.Join(dirs[1], "deleted2.jpg"),
+	}
+
+	require.NoError(t, deleteEmptyDirs(files))
+
+	// Check that empty directories were removed
+	_, err = os.Stat(dirs[0])
+	assert.True(t, os.IsNotExist(err), "Expected empty directory to be removed: %s", dirs[0])
+	_, err = os.Stat(dirs[1])
+	assert.True(t, os.IsNotExist(err), "Expected empty directory to be removed: %s", dirs[1])
+
+	// Check that non-empty directories still exist
+	_, err = os.Stat(dirs[2])
+	assert.NoError(t, err, "Expected non-empty directory to exist: %s", dirs[2])
+	_, err = os.Stat(dirs[3])
+	assert.NoError(t, err, "Expected non-empty directory to exist: %s", dirs[3])
+}
