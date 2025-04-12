@@ -74,10 +74,12 @@ func Import(config camediaconfig.CamediaConfig, sdcardDir string, keepSrc bool, 
 		return "", fmt.Errorf("failed to mvoe files: %w", err)
 	}
 
-	// Delete any leaf dirs that we moved files out of and are now empty, so that the
-	// camera will restart the names of dirs that it writes files into.
-	if err := deleteEmptyDirs(files); err != nil {
-		return "", fmt.Errorf("failed to remove empty dirs: %w", err)
+	if !keepSrc {
+		// Delete any leaf dirs that we moved files out of and are now empty, so that the
+		// camera will restart the names of dirs that it writes files into.
+		if err := deleteEmptyDirs(files); err != nil {
+			return "", fmt.Errorf("failed to remove empty dirs: %w", err)
+		}
 	}
 
 	// Eject the sdcard, because there is nothing else to do with it.
