@@ -23,6 +23,10 @@ func Import(config camediaconfig.CamediaConfig, sdcardDir string, keepSrc bool, 
 	if err != nil {
 		return "", fmt.Errorf("failed to get video staging dir: %w", err)
 	}
+	// Create so that it exists for getAvailableSpace.
+	if err := os.MkdirAll(targetVidDir, 0700); err != nil {
+		return "", fmt.Errorf("failed to create video staging dir: %w", err)
+	}
 
 	// Only look at files in $srcDir/DCIM/. Eg, ignore $srcDir/MISC/.
 	srcDir := filepath.Join(sdcardDir, "DCIM")
@@ -66,7 +70,7 @@ func Import(config camediaconfig.CamediaConfig, sdcardDir string, keepSrc bool, 
 		progressbar.OptionShowBytes(true),
 		progressbar.OptionSetWidth(40),
 	)
-	if err := moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir, keepSrc, bar); err != nil {
+	if err := moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir, keepSrc, totalSize, bar); err != nil {
 		return "", fmt.Errorf("failed to mvoe files: %w", err)
 	}
 
@@ -156,7 +160,7 @@ type moveProgress struct {
 
 // moveFilesAndFlatten moves files from srcDir into the photo/video target dir.
 // It preserves the modification times and flattens the directories.
-func moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir string, keepSrc bool, bar *progressbar.ProgressBar) error {
+func moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir string, keepSrc bool, totalBytes int64, bar *progressbar.ProgressBar) error {
 	// Ensure target directories exists.
 	if err := os.MkdirAll(targetPhotoDir, os.ModePerm); err != nil {
 		return fmt.Errorf("failed to create photo dir %s: %w", targetPhotoDir, err)
@@ -166,8 +170,9 @@ func moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir string, keepSrc bo
 	}
 
 	mvProgress := moveProgress{
-		startTime: time.Now(),
-		bar:       bar,
+		startTime:  time.Now(),
+		bar:        bar,
+		totalBytes: totalBytes,
 	}
 
 	err := filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
@@ -242,13 +247,17 @@ func copyFile(src, dst string, size int64, mvProgress *moveProgress) error {
 		}
 
 		mvProgress.bar.Add(n)
-
 		mvProgress.movedBytes += int64(n)
+
 		duration := time.Since(mvProgress.startTime).Seconds()
 		throughput := float64(mvProgress.movedBytes) / duration
 		eta := time.Duration(float64(mvProgress.totalBytes-mvProgress.movedBytes)/throughput) * time.Second
 		const MiB = 1 << 20
-		fmt.Printf("\rCopied: %d/%d MiB (%.2f%%) | Speed: %.0f MiB/s | ETA: %s", mvProgress.movedBytes/MiB, size/MiB, (float64(mvProgress.movedBytes)/float64(size))*100, throughput, eta)
+		fmt.Printf("\rCopied: %d/%d MiB (%.2f%%) | Speed: %.0f MiB/s | ETA: %s",
+			mvProgress.movedBytes/MiB, mvProgress.totalBytes/MiB,
+			(float64(mvProgress.movedBytes)/float64(mvProgress.totalBytes))*100,
+			throughput/MiB,
+			eta)
 		os.Stdout.Sync()
 	}
 

@@ -38,7 +38,7 @@ func main() {
 	importCmd := cobra.Command{
 		Use:   "import",
 		Short: "Import media from the sdcard",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			// TODO: find sd card (diskutil/gemini code)
 			srcDir := "/Volumes/sdcardTODO"
