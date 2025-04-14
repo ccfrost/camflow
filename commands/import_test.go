@@ -157,6 +157,7 @@ func TestMoveFilesAndFlatten(t *testing.T) {
 	dirs := []string{
 		filepath.Join(srcDir, "100CANON"),
 		filepath.Join(srcDir, "101CANON"),
+		filepath.Join(srcDir, "CANONMSC"),
 	}
 
 	modTime := time.Date(2024, 4, 1, 12, 0, 0, 0, time.UTC)
@@ -169,6 +170,7 @@ func TestMoveFilesAndFlatten(t *testing.T) {
 		{filepath.Join(dirs[0], "IMG_0001.JPG"), []byte("jpg content"), modTime},
 		{filepath.Join(dirs[1], "IMG_0002.MP4"), []byte("mp4 content"), modTime.Add(time.Hour)},
 		{filepath.Join(dirs[1], "README.txt"), []byte("ignored"), modTime},
+		{filepath.Join(dirs[2], "IMG_1000.JPG"), []byte("ignored"), modTime},
 	}
 
 	// Create progress bar for testing
@@ -205,6 +207,7 @@ func TestMoveFilesAndFlatten(t *testing.T) {
 				{"JPG moved correctly", filepath.Join(photoDir, "IMG_0001.JPG"), true, []byte("jpg content"), modTime},
 				{"MP4 moved correctly", filepath.Join(videoDir, "IMG_0002.MP4"), true, []byte("mp4 content"), modTime.Add(time.Hour)},
 				{"Ignored file not moved", filepath.Join(photoDir, "README.txt"), false, nil, time.Time{}},
+				{"Ignored file not moved", filepath.Join(photoDir, "IMG_1000.JPG"), false, nil, time.Time{}},
 				{"Source CR3 removed", filepath.Join(dirs[0], "IMG_0001.CR3"), false, nil, time.Time{}},
 				{"Source JPG removed", filepath.Join(dirs[0], "IMG_0001.JPG"), false, nil, time.Time{}},
 				{"Source MP4 removed", filepath.Join(dirs[1], "IMG_0002.MP4"), false, nil, time.Time{}},
@@ -227,6 +230,7 @@ func TestMoveFilesAndFlatten(t *testing.T) {
 				{"Source JPG kept", filepath.Join(dirs[0], "IMG_0001.JPG"), true, []byte("jpg content"), modTime},
 				{"Source MP4 kept", filepath.Join(dirs[1], "IMG_0002.MP4"), true, []byte("mp4 content"), modTime.Add(time.Hour)},
 				{"Ignored file not copied", filepath.Join(photoDir, "README.txt"), false, nil, time.Time{}},
+				{"Ignored file not copied", filepath.Join(photoDir, "IMG_1000.JPG"), false, nil, time.Time{}},
 			},
 		},
 	}
@@ -327,6 +331,28 @@ func TestMoveFilesAndFlattenErrors(t *testing.T) {
 			} else {
 				assert.NoError(t, err, "Got unexpected error")
 			}
+		})
+	}
+}
+
+func TestIsDcimMediaDir(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		dir  string
+		want bool
+	}{
+		{"Valid 3-digit prefix", "100CANON", true},
+		{"Valid different numbers", "999TEST", true},
+		{"Too short", "12", false},
+		{"Non-numeric prefix", "ABC123", false},
+		{"Empty string", "", false},
+		{"Mixed numeric prefix", "1A2TEST", false},
+		{"All numeric", "123456", true},
+		{"Canon misc", "CANONMSC", false},
+	} {
+		t.Run(tt.dir+": "+tt.name, func(t *testing.T) {
+			got := isDcimMediaDir(tt.dir)
+			assert.Equal(t, tt.want, got, "isDcimMediaDir(%q)", tt.dir)
 		})
 	}
 }

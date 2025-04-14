@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/ccfrost/camedia/camediaconfig"
 	"github.com/schollz/progressbar/v3"
@@ -105,12 +106,16 @@ func getFilesAndSize(dir string) ([]string, int64, error) {
 		if err != nil {
 			return err
 		}
-		if !info.IsDir() {
-			switch filepath.Ext(info.Name()) {
-			case ".CR3", ".cr3", ".JPG", ".jpg", ".MP4", ".mp4":
-				files = append(files, path)
-				totalSize += info.Size()
+		if info.IsDir() {
+			if filepath.Dir(path) == dir && !isDcimMediaDir(filepath.Base(path)) {
+				return filepath.SkipDir
 			}
+			return nil
+		}
+		switch filepath.Ext(info.Name()) {
+		case ".CR3", ".cr3", ".JPG", ".jpg", ".MP4", ".mp4":
+			files = append(files, path)
+			totalSize += info.Size()
 		}
 		return nil
 	})
@@ -186,6 +191,9 @@ func moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir string, keepSrc bo
 			return err
 		}
 		if info.IsDir() {
+			if filepath.Dir(path) == srcDir && !isDcimMediaDir(filepath.Base(path)) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 
@@ -268,6 +276,25 @@ func copyFile(src, dst string, size int64, mvProgress *moveProgress) error {
 	}
 
 	return nil
+}
+
+// isDcimMediaDir returns whether the DCIM standard says that name
+// can contain camera media files. This function expects that name
+// is the name of a directory in DCIM/.
+func isDcimMediaDir(name string) bool {
+	if len(name) < 4 {
+		return false
+	}
+	return isAllDigits(name[:3])
+}
+
+func isAllDigits(s string) bool {
+	for _, r := range s {
+		if !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
 }
 
 // deleteEmptyDirs removes empty directories in the list of files.
