@@ -269,19 +269,20 @@ func copyFile(src, dst string, size int64, mvProgress *moveProgress) error {
 			return fmt.Errorf("failed to write file %s: %w", dst, err)
 		}
 
-		mvProgress.bar.Add(n)
 		mvProgress.movedBytes += int64(n)
-
 		duration := time.Since(mvProgress.startTime).Seconds()
 		throughput := float64(mvProgress.movedBytes) / duration
 		eta := time.Duration(float64(mvProgress.totalBytes-mvProgress.movedBytes)/throughput) * time.Second
 		const MiB = 1 << 20
-		fmt.Printf("\rCopied: %d/%d MiB (%.2f%%) | Speed: %.0f MiB/s | ETA: %s",
+
+		description := fmt.Sprintf("Copied: %d/%d MiB (%.0f%%) | Speed: %.0f MiB/s | ETA: %v",
 			mvProgress.movedBytes/MiB, mvProgress.totalBytes/MiB,
 			(float64(mvProgress.movedBytes)/float64(mvProgress.totalBytes))*100,
 			throughput/MiB,
-			eta)
-		os.Stdout.Sync()
+			eta.Round(time.Second))
+
+		mvProgress.bar.Describe(description)
+		mvProgress.bar.Add(n)
 	}
 
 	return nil
