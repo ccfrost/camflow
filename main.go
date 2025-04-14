@@ -41,7 +41,7 @@ func main() {
 		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			// TODO: find sd card (diskutil/gemini code)
-			srcDir := "/Volumes/sdcardTODO"
+			srcDir := "/Volumes/EOS_DIGITAL/"
 			keep, err := cmd.Flags().GetBool("keep")
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "error: invalid keep flag:", err)

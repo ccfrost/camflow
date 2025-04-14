@@ -246,7 +246,8 @@ func TestMoveFilesAndFlatten(t *testing.T) {
 				require.NoError(t, os.Chtimes(tf.path, tf.modTime, tf.modTime), "Failed to set modtime for: %s", tf.path)
 			}
 
-			require.NoError(t, moveFilesAndFlatten(srcDir, photoDir, videoDir, tc.keepSrc, bar))
+			const totalSize = int64(1000) // TODO:
+			require.NoError(t, moveFilesAndFlatten(srcDir, photoDir, videoDir, tc.keepSrc, totalSize, bar))
 
 			// Verify results.
 			for _, tt := range tc.tests {
@@ -319,7 +320,8 @@ func TestMoveFilesAndFlattenErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.desc, func(t *testing.T) {
-			err := moveFilesAndFlatten(tt.srcDir, tt.photoDir, tt.videoDir, false, bar)
+			const totalSize = int64(1000) // TODO:
+			err := moveFilesAndFlatten(tt.srcDir, tt.photoDir, tt.videoDir, false, totalSize, bar)
 			if tt.wantErr {
 				assert.Error(t, err, "Expected an error but got none")
 			} else {

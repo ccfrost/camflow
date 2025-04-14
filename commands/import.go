@@ -38,6 +38,10 @@ func Import(config camediaconfig.CamediaConfig, sdcardDir string, keepSrc bool, 
 	targetPhotoDirRelName := now.Format("2006/01/02")
 	targetPhotoDir := filepath.Join(config.OrigPhotoRoot, targetPhotoDirRelName)
 
+	// TODO: skip DCIM/CANONMSC/; only process NNN... directories.
+
+	// TODO: check that progress output is what we want. maybe slow it down some to make it easier to look at. maybe try with file remove disabled to make it easier to repeat.
+
 	files, totalSize, err := getFilesAndSize(srcDir)
 	if err != nil {
 		return "", fmt.Errorf("failed to list import files: %w", err)
