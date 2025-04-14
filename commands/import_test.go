@@ -31,17 +31,25 @@ func TestGetFilesAndSize(t *testing.T) {
 	}
 
 	// Create a subdirectory with more files
-	subDir := filepath.Join(tmpDir, "subdir")
-	require.NoError(t, os.MkdirAll(subDir, 0755))
+	subDirInclude := filepath.Join(tmpDir, "101CANON")
+	require.NoError(t, os.MkdirAll(subDirInclude, 0755))
 	subFiles := map[string]int64{
 		"sub1.cr3": 150,
 		"sub2.jpg": 250,
 	}
 	for name, size := range subFiles {
-		path := filepath.Join(subDir, name)
+		path := filepath.Join(subDirInclude, name)
 		data := make([]byte, size)
 		require.NoError(t, os.WriteFile(path, data, 0644))
 	}
+
+	// Create a subdirectory with more files, but that should be excluded.
+	subDirExclude := filepath.Join(tmpDir, "CANONMSC")
+	require.NoError(t, os.MkdirAll(subDirExclude, 0755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(subDirExclude, "sub10.cr3"),
+		make([]byte, 350),
+		0644))
 
 	gotFiles, gotSize, err := getFilesAndSize(tmpDir)
 	require.NoError(t, err)
@@ -65,7 +73,7 @@ func TestGetFilesAndSize(t *testing.T) {
 	}
 
 	assert.Equal(t, expectedSize, gotSize)
-	assert.Equal(t, expectedCount, len(gotFiles))
+	assert.Equal(t, expectedCount, len(gotFiles), gotFiles)
 }
 
 func TestGetAvailableSpace(t *testing.T) {
