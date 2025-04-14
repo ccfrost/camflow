@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -102,19 +103,23 @@ func Import(config camediaconfig.CamediaConfig, sdcardDir string, keepSrc bool, 
 func getFilesAndSize(dir string) ([]string, int64, error) {
 	var files []string
 	var totalSize int64
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.WalkDir(dir, func(path string, dirEnt fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
-			if filepath.Dir(path) == dir && !isDcimMediaDir(filepath.Base(path)) {
+		if dirEnt.IsDir() {
+			if filepath.Dir(path) == dir && !isDcimMediaDir(dirEnt.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		switch filepath.Ext(info.Name()) {
+		switch filepath.Ext(dirEnt.Name()) {
 		case ".CR3", ".cr3", ".JPG", ".jpg", ".MP4", ".mp4":
 			files = append(files, path)
+			info, err := dirEnt.Info()
+			if err != nil {
+				return fmt.Errorf("failed to Info() %s: %w", path, err)
+			}
 			totalSize += info.Size()
 		}
 		return nil
@@ -186,12 +191,12 @@ func moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir string, keepSrc bo
 		totalBytes: totalBytes,
 	}
 
-	err := filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.WalkDir(srcDir, func(path string, dirEnt fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
-			if filepath.Dir(path) == srcDir && !isDcimMediaDir(filepath.Base(path)) {
+		if dirEnt.IsDir() {
+			if filepath.Dir(path) == srcDir && !isDcimMediaDir(dirEnt.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -199,7 +204,7 @@ func moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir string, keepSrc bo
 
 		// Determine the target directory based on file extension.
 		var targetDir string
-		switch filepath.Ext(info.Name()) {
+		switch filepath.Ext(dirEnt.Name()) {
 		case ".CR3", ".cr3", ".JPG", ".jpg":
 			targetDir = targetPhotoDir
 		case ".MP4", ".mp4":
@@ -210,7 +215,11 @@ func moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir string, keepSrc bo
 			return nil
 		}
 
-		targetPath := filepath.Join(targetDir, info.Name())
+		targetPath := filepath.Join(targetDir, dirEnt.Name())
+		info, err := dirEnt.Info()
+		if err != nil {
+			return fmt.Errorf("failed to Info() %s: %w", path, err)
+		}
 		if err := copyFile(path, targetPath, info.Size(), &mvProgress); err != nil {
 			return err
 		}
