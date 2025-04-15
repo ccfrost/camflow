@@ -28,10 +28,7 @@ func main() {
 			return nil
 		},
 	}
-
 	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "", "Path to the configuration file")
-
-	// TODO: describe the args, for all commands.
 
 	// TODO: add version command.
 
