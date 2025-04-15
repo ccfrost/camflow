@@ -40,13 +40,23 @@ func main() {
 		Short: "Import media from the sdcard",
 		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
-			// TODO: find sd card (diskutil/gemini code)
-			srcDir := "/Volumes/EOS_DIGITAL/"
-			keep, err := cmd.Flags().GetBool("keep")
+			srcDir, err := cmd.Flags().GetString("src")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error: invalid src flag:", err)
+				os.Exit(1)
+			}
+			if srcDir == "" {
+				// TODO: find sd card (diskutil/gemini code)
+				panic("TODO: find sd card")
+			}
+
+			var keep bool
+			keep, err = cmd.Flags().GetBool("keep")
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "error: invalid keep flag:", err)
 				os.Exit(1)
 			}
+
 			relTargetDir, err := commands.Import(config, srcDir, keep, time.Now())
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
@@ -57,6 +67,7 @@ func main() {
 			// TODO: if there were videos, say to run upload command.
 		},
 	}
+	importCmd.Flags().StringP("src", "s", "/Volumes/EOS_DIGITAL/", "Path to the source sdcard directory (defaults to auto-detect)")
 	importCmd.Flags().BoolP("keep", "k", false, "Keep the source files")
 	rootCmd.AddCommand(&importCmd)
 
