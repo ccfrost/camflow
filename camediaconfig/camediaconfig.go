@@ -17,13 +17,19 @@ type KeywordAlbum struct {
 type CamediaConfig struct {
 	DefaultAlbums []string `mapstructure:"default_albums"`
 
-	OrigPhotoRoot         string         `mapstructure:"orig_photo_root"`
-	ExportPhotoDir        string         `mapstructure:"export_photo_dir"`
-	ToFavAlbumMinNumStars int            `mapstructure:"to_fav_album_min_num_stars"`
-	ToFavAlbumName        string         `mapstructure:"to_fav_album_name"`
-	KeywordAlbums         []KeywordAlbum `mapstructure:"keyword_albums"`
+	OrigPhotoRoot  string `mapstructure:"orig_photo_root"`
+	ExportPhotoDir string `mapstructure:"export_photo_dir"`
 
-	// TODO: connect to gphotos
+	GooglePhotos struct {
+		ClientId     string `mapstructure:"client_id"`
+		ClientSecret string `mapstructure:"client_secret"`
+		RedirectURI  string `mapstructure:"redirect_uri"`
+
+		ToFavAlbumMinNumStars int            `mapstructure:"to_fav_album_min_num_stars"`
+		ToFavAlbumName        string         `mapstructure:"to_fav_album_name"`
+		KeywordAlbums         []KeywordAlbum `mapstructure:"keyword_albums"`
+	}
+
 	// TODO: connect to todoist
 }
 
