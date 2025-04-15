@@ -182,12 +182,7 @@ func TestMoveFilesAndFlatten(t *testing.T) {
 	}
 
 	// Create progress bar for testing
-	bar := progressbar.NewOptions64(
-		1000,
-		progressbar.OptionSetDescription("testing"),
-		progressbar.OptionShowBytes(true),
-		progressbar.OptionSetWidth(40),
-	)
+	bar := progressbar.DefaultBytesSilent(-1, "moving:")
 
 	// Test both keepSrc=false and keepSrc=true cases
 	cases := []struct {
@@ -298,7 +293,7 @@ func TestMoveFilesAndFlattenErrors(t *testing.T) {
 	readOnlyDir := filepath.Join(tmpDir, "readonly")
 	require.NoError(t, os.MkdirAll(readOnlyDir, 0444), "Failed to create readonly directory")
 
-	bar := progressbar.NewOptions64(1000)
+	bar := progressbar.DefaultBytesSilent(-1, "moving:")
 
 	tests := []struct {
 		desc     string

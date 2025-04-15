@@ -72,12 +72,20 @@ func Import(config camediaconfig.CamediaConfig, sdcardDir string, keepSrc bool, 
 
 	// Move the files into the target dirs.
 	bar := progressbar.NewOptions64(totalSize,
-		progressbar.OptionSetDescription("moving files"),
+		progressbar.OptionSetDescription("moving:"),
+		progressbar.OptionSetWidth(20), // Fit in an 80-column terminal.
 		progressbar.OptionShowBytes(true),
-		progressbar.OptionSetWidth(40),
+		progressbar.OptionUseIECUnits(true),
+		progressbar.OptionShowCount(), // Show number of bytes moved.
+		progressbar.OptionSetPredictTime(true),
+		progressbar.OptionShowTotalBytes(true),
+		progressbar.OptionShowElapsedTimeOnFinish(),
 	)
 	if err := moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir, keepSrc, totalSize, bar); err != nil {
 		return "", fmt.Errorf("failed to mvoe files: %w", err)
+	}
+	if err := bar.Close(); err != nil {
+		fmt.Printf("warning: failed to close progress bar\n")
 	}
 
 	if !keepSrc {
@@ -191,7 +199,7 @@ func moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir string, keepSrc bo
 		totalBytes: totalBytes,
 	}
 
-	err := filepath.WalkDir(srcDir, func(path string, dirEnt fs.DirEntry, err error) error {
+	return filepath.WalkDir(srcDir, func(path string, dirEnt fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -235,8 +243,6 @@ func moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir string, keepSrc bo
 
 		return nil
 	})
-	fmt.Print("\r") // Clear the progress line when done.
-	return err
 }
 
 // copyFile creats a copy of src file at dst.
@@ -270,18 +276,6 @@ func copyFile(src, dst string, size int64, mvProgress *moveProgress) error {
 		}
 
 		mvProgress.movedBytes += int64(n)
-		duration := time.Since(mvProgress.startTime).Seconds()
-		throughput := float64(mvProgress.movedBytes) / duration
-		eta := time.Duration(float64(mvProgress.totalBytes-mvProgress.movedBytes)/throughput) * time.Second
-		const MiB = 1 << 20
-
-		description := fmt.Sprintf("Copied: %d/%d MiB (%.0f%%) | Speed: %.0f MiB/s | ETA: %v",
-			mvProgress.movedBytes/MiB, mvProgress.totalBytes/MiB,
-			(float64(mvProgress.movedBytes)/float64(mvProgress.totalBytes))*100,
-			throughput/MiB,
-			eta.Round(time.Second))
-
-		mvProgress.bar.Describe(description)
 		mvProgress.bar.Add(n)
 	}
 
