@@ -12,6 +12,8 @@ import (
 	"github.com/schollz/progressbar/v3"
 )
 
+const chunkSize = 10 * 1024 * 1024 // 10MB chunks
+
 // UploadVideos uploads videos from the staging video dir to Google Photos.
 // Videos are added to all albums in config.DefaultAlbums.
 // Uploaded videos are deleted from staging unless keepStaging is true.
@@ -68,7 +70,7 @@ func UploadVideos(config camediaconfig.CamediaConfig, keepStaging bool) error {
 		albums[albumTitle] = album
 	}
 
-	// Create progress bar
+	// Create progress bar for overall progress
 	bar := progressbar.NewOptions(len(videos),
 		progressbar.OptionSetDescription("uploading videos:"),
 		progressbar.OptionSetWidth(20),
@@ -76,10 +78,26 @@ func UploadVideos(config camediaconfig.CamediaConfig, keepStaging bool) error {
 		progressbar.OptionSetPredictTime(true),
 	)
 
+	// Create progress bar for current file
+	fileBar := progressbar.NewOptions64(-1,
+		progressbar.OptionSetDescription("current file:"),
+		progressbar.OptionSetWidth(20),
+		progressbar.OptionShowBytes(true),
+		progressbar.OptionShowCount(),
+		progressbar.OptionShowElapsedTimeOnFinish(),
+		progressbar.OptionOnCompletion(func() { fmt.Println() }),
+	)
+
 	// Upload each video and add to albums
 	for _, video := range videos {
-		// Upload video
-		mediaItem, err := client.UploadVideo(ctx, video)
+		fileBar.Describe(fmt.Sprintf("uploading %s:", filepath.Base(video)))
+		fileBar.Reset()
+
+		// Upload video with progress tracking
+		mediaItem, err := client.UploadVideo(ctx, video, func(p googlephotos.UploadProgress) {
+			fileBar.ChangeMax64(p.TotalBytes)
+			fileBar.Set64(p.BytesUploaded + int64(float64(chunkSize)*p.ChunkProgress))
+		})
 		if err != nil {
 			return fmt.Errorf("failed to upload video %q: %w", video, err)
 		}
@@ -103,6 +121,9 @@ func UploadVideos(config camediaconfig.CamediaConfig, keepStaging bool) error {
 
 	if err := bar.Close(); err != nil {
 		fmt.Printf("warning: failed to close progress bar\n")
+	}
+	if err := fileBar.Close(); err != nil {
+		fmt.Printf("warning: failed to close file progress bar\n")
 	}
 
 	return nil
