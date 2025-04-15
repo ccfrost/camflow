@@ -73,7 +73,28 @@ func main() {
 
 	// TODO: add upload-photos command.
 
-	// TODO: add upload-videos command.
+	uploadVideosCmd := cobra.Command{
+		Use:   "upload-videos",
+		Short: "Upload videos from staging to Google Photos",
+		Long: `Upload videos from the staging directory to Google Photos.
+Videos will be added to all albums configured in default_albums.
+Successfully uploaded videos are deleted from staging unless --keep is specified.`,
+		Args: cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			keep, err := cmd.Flags().GetBool("keep")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error: invalid keep flag:", err)
+				os.Exit(1)
+			}
+
+			if err := commands.UploadVideos(config, keep); err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+		},
+	}
+	uploadVideosCmd.Flags().BoolP("keep", "k", false, "Keep videos in staging after upload")
+	rootCmd.AddCommand(&uploadVideosCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
