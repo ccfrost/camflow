@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ccfrost/camedia/camediaconfig"
@@ -23,15 +24,17 @@ const (
 	photosScope     = "https://www.googleapis.com/auth/photoslibrary"
 	uploadScope     = "https://www.googleapis.com/auth/photoslibrary.appendonly"
 	sharingScope    = "https://www.googleapis.com/auth/photoslibrary.sharing"
-	photosBaseURL   = "https://photoslibrary.googleapis.com/v1"
 	uploadChunkSize = 10 * 1024 * 1024        // 10MB chunks
 	maxVideoSize    = 10 * 1024 * 1024 * 1024 // 10GB (Google Photos limit)
 	minVideoSize    = 1                       // 1 byte minimum
 	uploadTimeout   = 30 * time.Second        // Timeout for each chunk upload
 )
 
-// Error types for validation
 var (
+	// Base URL for Google Photos API - made variable for testing
+	photosBaseURL = "https://photoslibrary.googleapis.com/v1"
+
+	// Error types for validation
 	ErrInvalidFile      = errors.New("invalid video file")
 	ErrUploadStateStale = errors.New("upload state is stale")
 	ErrChunkMismatch    = errors.New("chunk size mismatch")
@@ -170,6 +173,11 @@ func saveToken(token *oauth2.Token) error {
 
 // UploadVideo uploads a video file to Google Photos with resumable upload support
 func (c *Client) UploadVideo(ctx context.Context, filename string, progressCb ProgressCallback) (*MediaItem, error) {
+	// Validate video file first
+	if err := c.validateVideoFile(filename); err != nil {
+		return nil, fmt.Errorf("invalid video file: %w", err)
+	}
+
 	// Try to load existing upload state
 	info, err := c.loadUploadInfo(filename)
 	if err != nil {
@@ -607,6 +615,44 @@ func (c *Client) AddMediaItemToAlbum(ctx context.Context, mediaItem *MediaItem, 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("failed to add media item to album: %s", body)
+	}
+
+	return nil
+}
+
+// validateVideoFile checks if a file is valid for upload
+func (c *Client) validateVideoFile(filename string) error {
+	// Check file exists and is readable
+	file, err := os.Open(filename)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidFile, err)
+	}
+	defer file.Close()
+
+	// Get file info
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidFile, err)
+	}
+
+	// Check file size
+	if info.Size() < minVideoSize || info.Size() > maxVideoSize {
+		return fmt.Errorf("%w: size %d is outside allowed range %d-%d",
+			ErrInvalidFile, info.Size(), minVideoSize, maxVideoSize)
+	}
+
+	// Read first 512 bytes for MIME type detection
+	header := make([]byte, 512)
+	n, err := file.Read(header)
+	if err != nil && err != io.EOF {
+		return fmt.Errorf("%w: %v", ErrInvalidFile, err)
+	}
+	header = header[:n]
+
+	// Check MIME type
+	mimeType := http.DetectContentType(header)
+	if !strings.HasPrefix(mimeType, "video/") {
+		return fmt.Errorf("%w: invalid MIME type %s", ErrInvalidFile, mimeType)
 	}
 
 	return nil
