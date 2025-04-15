@@ -20,14 +20,14 @@ import (
 )
 
 const (
-	tokenFile       = "token.json"
-	photosScope     = "https://www.googleapis.com/auth/photoslibrary"
-	uploadScope     = "https://www.googleapis.com/auth/photoslibrary.appendonly"
-	sharingScope    = "https://www.googleapis.com/auth/photoslibrary.sharing"
-	uploadChunkSize = 10 * 1024 * 1024        // 10MB chunks
-	maxVideoSize    = 10 * 1024 * 1024 * 1024 // 10GB (Google Photos limit)
-	minVideoSize    = 1                       // 1 byte minimum
-	uploadTimeout   = 30 * time.Second        // Timeout for each chunk upload
+	tokenFile        = "token.json"
+	appendOnlyScope  = "https://www.googleapis.com/auth/photoslibrary.appendonly"
+	readAppDataScope = "https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata"
+	editAppDataScope = "https://www.googleapis.com/auth/photoslibrary.edit.appcreateddata"
+	uploadChunkSize  = 10 * 1024 * 1024        // 10MB chunks
+	maxVideoSize     = 10 * 1024 * 1024 * 1024 // 10GB (Google Photos limit)
+	minVideoSize     = 1                       // 1 byte minimum
+	uploadTimeout    = 30 * time.Second        // Timeout for each chunk upload
 )
 
 var (
@@ -87,9 +87,9 @@ func NewClient(ctx context.Context, config camediaconfig.CamediaConfig) (*Client
 		ClientSecret: config.GooglePhotos.ClientSecret,
 		RedirectURL:  config.GooglePhotos.RedirectURI,
 		Scopes: []string{
-			photosScope,
-			uploadScope,
-			sharingScope,
+			appendOnlyScope,  // For uploading new media and creating albums
+			readAppDataScope, // For reading our app's media items and albums
+			editAppDataScope, // For editing our app's media items and albums
 		},
 		Endpoint: google.Endpoint,
 	}
