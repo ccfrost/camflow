@@ -19,8 +19,6 @@ import (
 // Import mvoes the DCIM/ files to the photo dir and the staging video dir.
 // It returns the relative target directory for the photos and any error.
 func Import(config camediaconfig.CamediaConfig, sdcardDir string, keepSrc bool, now time.Time) (string, error) {
-	// TODO: maybe add option to keep/delete the source files.
-
 	targetVidDir, err := videoStagingDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get video staging dir: %w", err)
@@ -40,10 +38,6 @@ func Import(config camediaconfig.CamediaConfig, sdcardDir string, keepSrc bool, 
 	targetPhotoDirRelName := now.Format("2006/01/02")
 	targetPhotoDir := filepath.Join(config.OrigPhotoRoot, targetPhotoDirRelName)
 
-	// TODO: skip DCIM/CANONMSC/; only process NNN... directories.
-
-	// TODO: check that progress output is what we want. maybe slow it down some to make it easier to look at. maybe try with file remove disabled to make it easier to repeat.
-
 	files, totalSize, err := getFilesAndSize(srcDir)
 	if err != nil {
 		return "", fmt.Errorf("failed to list import files: %w", err)
@@ -57,7 +51,9 @@ func Import(config camediaconfig.CamediaConfig, sdcardDir string, keepSrc bool, 
 	}
 	const GiB = 1 << 30
 	if uint64(totalSize) > targetAvailable {
-		return "", fmt.Errorf("not enough space in %s: need %d GiB more: %d GiB needed, %d GiB available", targetVidDir, totalSize/GiB, targetAvailable/GiB, (uint64(totalSize)-targetAvailable)/GiB)
+		return "", fmt.Errorf(
+			"not enough space in %s: need %d GiB more: %d GiB needed, %d GiB available",
+			targetVidDir, totalSize/GiB, targetAvailable/GiB, (uint64(totalSize)-targetAvailable)/GiB)
 	}
 
 	// Verify that there are no base filenames that appear multiple times.
@@ -193,12 +189,6 @@ func moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir string, keepSrc bo
 		return fmt.Errorf("failed to create video staging dir %s: %w", targetVidDir, err)
 	}
 
-	mvProgress := moveProgress{
-		startTime:  time.Now(),
-		bar:        bar,
-		totalBytes: totalBytes,
-	}
-
 	return filepath.WalkDir(srcDir, func(path string, dirEnt fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -228,7 +218,7 @@ func moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir string, keepSrc bo
 		if err != nil {
 			return fmt.Errorf("failed to Info() %s: %w", path, err)
 		}
-		if err := copyFile(path, targetPath, info.Size(), &mvProgress); err != nil {
+		if err := copyFile(path, targetPath, info.Size(), bar); err != nil {
 			return err
 		}
 		if err := os.Chtimes(targetPath, info.ModTime(), info.ModTime()); err != nil {
@@ -246,8 +236,8 @@ func moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir string, keepSrc bo
 }
 
 // copyFile creats a copy of src file at dst.
-// It shares its progress via mvProgress.bar.
-func copyFile(src, dst string, size int64, mvProgress *moveProgress) error {
+// It shares its progress via bar.
+func copyFile(src, dst string, size int64, bar *progressbar.ProgressBar) error {
 	srcFile, err := os.Open(src)
 	if err != nil {
 		return err
@@ -275,8 +265,7 @@ func copyFile(src, dst string, size int64, mvProgress *moveProgress) error {
 			return fmt.Errorf("failed to write file %s: %w", dst, err)
 		}
 
-		mvProgress.movedBytes += int64(n)
-		mvProgress.bar.Add(n)
+		bar.Add(n)
 	}
 
 	return nil
