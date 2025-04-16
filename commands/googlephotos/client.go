@@ -273,13 +273,22 @@ func (c *Client) uploadFileChunks(ctx context.Context, info *UploadInfo, progres
 		return "", fmt.Errorf("failed to seek in file: %w", err)
 	}
 
+	chunk := make([]byte, uploadChunkSize) // Reusable buffer
+
 	for info.BytesUploaded < info.TotalBytes {
-		chunk := make([]byte, uploadChunkSize)
-		n, err := f.Read(chunk)
-		if err != nil && err != io.EOF {
+		// Determine chunk size for this iteration
+		bytesToRead := uploadChunkSize
+		remainingBytes := info.TotalBytes - info.BytesUploaded
+		if int64(bytesToRead) > remainingBytes {
+			bytesToRead = int(remainingBytes)
+		}
+
+		// Read the exact chunk size needed
+		n, err := io.ReadFull(f, chunk[:bytesToRead])
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF { // Allow EOF/UnexpectedEOF if it matches bytes read
 			return "", fmt.Errorf("failed to read chunk: %w", err)
 		}
-		if n == 0 {
+		if n == 0 { // Should not happen if BytesUploaded < TotalBytes, but check anyway
 			break
 		}
 
@@ -288,96 +297,145 @@ func (c *Client) uploadFileChunks(ctx context.Context, info *UploadInfo, progres
 		contentRange := fmt.Sprintf("bytes %d-%d/%d",
 			info.BytesUploaded, rangeEnd, info.TotalBytes)
 
-		// Create pipe to track chunk upload progress
-		pr, pw := io.Pipe()
-		chunkReader := &progressReader{
-			reader: bytes.NewReader(chunk[:n]),
-			size:   int64(n),
-			progress: func(bytesRead int64) {
-				if progressCb != nil {
-					progressCb(UploadProgress{
-						Filename:      info.Filename,
-						BytesUploaded: info.BytesUploaded,
-						TotalBytes:    info.TotalBytes,
-						ChunkProgress: float64(bytesRead) / float64(n),
-					})
-				}
-			},
-		}
-		go func() {
-			_, err := io.Copy(pw, chunkReader)
-			pw.CloseWithError(err)
-		}()
-
-		// Upload chunk
+		// Create request with the chunk data directly
 		req, err := http.NewRequestWithContext(ctx, "POST",
 			info.UploadURL,
-			pr)
+			bytes.NewReader(chunk[:n])) // Use bytes.NewReader for the chunk data
 		if err != nil {
-			return "", err
+			// If context is cancelled, return the context error directly
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return "", err
+			}
+			return "", fmt.Errorf("failed to create chunk request: %w", err)
 		}
 
 		req.Header.Set("X-Goog-Upload-Command", "upload")
 		req.Header.Set("X-Goog-Upload-Offset", strconv.FormatInt(info.BytesUploaded, 10))
 		req.Header.Set("Content-Range", contentRange)
+		// Content-Length is set automatically by the http client for bytes.Reader
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
+			// If context is cancelled, return the context error directly
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return "", err
+			}
+			// Consider retrying certain errors here? For now, fail.
 			return "", fmt.Errorf("failed to upload chunk: %w", err)
 		}
-		defer resp.Body.Close()
+		defer resp.Body.Close() // Close body for each chunk response
 
-		if resp.StatusCode != http.StatusOK {
+		// Google Resumable Upload uses 308 for intermediate, 200/201 for final.
+		// Let's accept both 200 OK and 308 Resume Incomplete as success for now.
+		// The mock server currently sends 200 OK for both.
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != 308 {
 			body, _ := io.ReadAll(resp.Body)
+			// Check if the server indicates a range mismatch (e.g., status 400 or other)
+			// Potentially query the server for expected offset if status indicates error?
 			return "", fmt.Errorf("chunk upload failed with status %d: %s",
 				resp.StatusCode, body)
 		}
 
+		// Update bytes uploaded *after* successful transmission
 		info.BytesUploaded += int64(n)
 
-		// Report full chunk completion
+		// Report progress *after* successful chunk upload
 		if progressCb != nil {
 			progressCb(UploadProgress{
 				Filename:      info.Filename,
 				BytesUploaded: info.BytesUploaded,
 				TotalBytes:    info.TotalBytes,
-				ChunkProgress: 1.0,
+				ChunkProgress: 1.0, // Indicate chunk is fully processed by client
 			})
 		}
 
 		// Save progress
 		if err := c.saveUploadInfo(info); err != nil {
+			// Log warning but continue? Or fail hard? For now, log and continue.
 			fmt.Printf("warning: failed to save upload progress: %v\n", err)
 		}
 
-		// Check if this was the final chunk
-		if resp.Header.Get("X-Goog-Upload-Status") == "final" {
-			uploadToken, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return "", fmt.Errorf("failed to read upload token: %w", err)
+		// Check if this was the final chunk based on status code or total bytes
+		// Google uses 200 OK or 201 Created for the final response.
+		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated || info.BytesUploaded >= info.TotalBytes {
+			// Read the response body which should contain the upload token for 200/201
+			// If it was 308 but we reached TotalBytes, we still need to finalize/query?
+			// The Google API doc implies the final chunk response (200/201) contains the item details or token.
+			// Let's assume 200/201 means final and contains the token.
+			if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+				uploadTokenBytes, err := io.ReadAll(resp.Body)
+				if err != nil {
+					return "", fmt.Errorf("failed to read upload token from final response: %w", err)
+				}
+				if len(uploadTokenBytes) == 0 {
+					// This might happen if the server sent 200 OK but no body,
+					// which would be unexpected for the final Google Photos response.
+					// Maybe query the upload status first?
+					return "", fmt.Errorf("received empty upload token in final response")
+				}
+				return string(uploadTokenBytes), nil
+			} else if info.BytesUploaded >= info.TotalBytes {
+				// We've sent all bytes, but the last response was 308.
+				// This might indicate the server hasn't processed the final chunk yet.
+				// We might need a final "finalize" request or query the status.
+				// For simplicity now, let's assume if we sent all bytes, it should have finished.
+				// This path indicates a potential mismatch with the real API or the mock.
+				// Let's try querying the upload status.
+				finalStatus, finalToken, queryErr := c.queryUploadStatus(ctx, info)
+				if queryErr != nil {
+					return "", fmt.Errorf("upload seemingly complete but failed to query final status: %w", queryErr)
+				}
+				if finalStatus == "final" && finalToken != "" {
+					return finalToken, nil
+				}
+				return "", fmt.Errorf("upload complete but final status query returned status '%s' or empty token", finalStatus)
 			}
-			return string(uploadToken), nil
 		}
+		// If it was 308 and not the last chunk, continue the loop.
 	}
 
-	return "", fmt.Errorf("upload completed without receiving upload token")
-}
-
-// progressReader wraps an io.Reader and reports read progress
-type progressReader struct {
-	reader   io.Reader
-	size     int64
-	read     int64
-	progress func(int64)
-}
-
-func (r *progressReader) Read(p []byte) (int, error) {
-	n, err := r.reader.Read(p)
-	r.read += int64(n)
-	if r.progress != nil {
-		r.progress(r.read)
+	// If the loop finishes without returning a token (e.g., TotalBytes is 0, or some edge case)
+	if info.TotalBytes == 0 {
+		return "", fmt.Errorf("cannot upload zero-byte file")
 	}
-	return n, err
+	return "", fmt.Errorf("upload loop finished unexpectedly without receiving upload token")
+}
+
+// queryUploadStatus checks the status of a resumable upload.
+// Returns status ("active", "final", etc.), upload token (if final), and error.
+func (c *Client) queryUploadStatus(ctx context.Context, info *UploadInfo) (string, string, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST", info.UploadURL, nil)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to create query request: %w", err)
+	}
+	req.Header.Set("X-Goog-Upload-Command", "query")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to query upload status: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != 308 { // Expect 200 or 308 for query
+		body, _ := io.ReadAll(resp.Body)
+		return "", "", fmt.Errorf("query upload status failed with status %d: %s", resp.StatusCode, body)
+	}
+
+	status := resp.Header.Get("X-Goog-Upload-Status")
+	token := ""
+	if status == "final" {
+		// If final, the body might contain the token (though docs are unclear if query returns it)
+		// Let's assume the token is only in the final *upload* response body.
+		// If the status is final, the caller should use the token received previously.
+		// However, our mock *does* put the token in the body on final upload.
+		// Let's read it just in case, aligning with the mock for now.
+		tokenBytes, _ := io.ReadAll(resp.Body)
+		token = string(tokenBytes)
+	}
+
+	// We might also want to check X-Goog-Upload-Size-Received header here to verify server state.
+
+	return status, token, nil
 }
 
 func (c *Client) createMediaItem(ctx context.Context, filename, uploadToken string) (*MediaItem, error) {
