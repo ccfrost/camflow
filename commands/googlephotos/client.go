@@ -85,7 +85,7 @@ func NewClient(ctx context.Context, config camediaconfig.CamediaConfig) (*Client
 	oauthConfig := &oauth2.Config{
 		ClientID:     config.GooglePhotos.ClientId,
 		ClientSecret: config.GooglePhotos.ClientSecret,
-		//RedirectURL:  config.GooglePhotos.RedirectURI, // TODO: drop?
+		RedirectURL:  config.GooglePhotos.RedirectURI,
 		Scopes: []string{
 			appendOnlyScope,  // For uploading new media and creating albums
 			readAppDataScope, // For reading our app's media items and albums

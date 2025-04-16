@@ -28,7 +28,7 @@ type CamediaConfig struct {
 		ToFavAlbumMinNumStars int            `mapstructure:"to_fav_album_min_num_stars"`
 		ToFavAlbumName        string         `mapstructure:"to_fav_album_name"`
 		KeywordAlbums         []KeywordAlbum `mapstructure:"keyword_albums"`
-	}
+	} `mapstructure:"google_photos"`
 
 	// TODO: connect to todoist
 }
