@@ -18,7 +18,7 @@ const chunkSize = 10 * 1024 * 1024 // 10MB chunks
 // Videos are added to all albums in config.DefaultAlbums.
 // Uploaded videos are deleted from staging unless keepStaging is true.
 // The function is idempotent - if interrupted, it can be recalled to resume.
-func UploadVideos(config camediaconfig.CamediaConfig, keepStaging bool) error {
+func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, keepStaging bool, client *googlephotos.Client) error {
 	// Get staging directory
 	stagingDir, err := videoStagingDir()
 	if err != nil {
@@ -51,13 +51,6 @@ func UploadVideos(config camediaconfig.CamediaConfig, keepStaging bool) error {
 
 	if len(videos) == 0 {
 		return nil
-	}
-
-	// Initialize Google Photos client
-	ctx := context.Background()
-	client, err := googlephotos.NewClient(ctx, config)
-	if err != nil {
-		return fmt.Errorf("failed to create Google Photos client: %w", err)
 	}
 
 	// Create/get all target albums
