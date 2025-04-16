@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,24 +60,40 @@ func (h *mockHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			chunk, err := io.ReadAll(r.Body)
 			require.NoError(h.t, err)
 
-			// Verify chunk size matches expected
+			// Get total size from Content-Range header (e.g., "bytes 10485760-20971519/36700160")
+			contentRange := r.Header.Get("Content-Range")
+			parts := strings.Split(contentRange, "/")
+			require.Len(h.t, parts, 2, "Invalid Content-Range: %s", contentRange)
+			totalSizeStr := parts[1]
+			totalSize, err := strconv.ParseInt(totalSizeStr, 10, 64)
+			require.NoError(h.t, err, "Failed to parse total size from Content-Range: %s", contentRange)
+
+			// Verify chunk size matches expected (optional but good for testing)
 			if h.chunkIndex < len(h.expectedChunks) {
 				assert.Equal(h.t, h.expectedChunks[h.chunkIndex], int64(len(chunk)),
 					"Chunk size mismatch at index %d", h.chunkIndex)
 			}
 
+			// Update total bytes received *by the handler*
+			// Note: Google's resumable upload might return 308 Resume Incomplete instead of 200 OK
+			// for intermediate chunks, and the X-Goog-Upload-Size-Received might not be needed
+			// if the client relies on the 308 status range header.
+			// However, for this mock, we'll update our internal counter and respond OK.
 			h.uploadedBytes += int64(len(chunk))
 			h.chunkIndex++
 
-			// Check if this is the final chunk
-			if h.uploadedBytes >= h.expectedChunks[len(h.expectedChunks)-1] {
+			// Check if this completes the upload based on total size
+			if h.uploadedBytes >= totalSize { // Compare against TOTAL size from header
 				h.uploadToken = "mock-upload-token"
 				w.Header().Set("X-Goog-Upload-Status", "final")
-				w.WriteHeader(http.StatusOK)
+				w.WriteHeader(http.StatusOK) // Final response is 200 OK with body
 				w.Write([]byte(h.uploadToken))
 			} else {
+				// Respond with intermediate status, confirming bytes received
+				// Google API might use HTTP 308 Resume Incomplete with a Range header.
+				// Simulating with 200 OK and X-Goog-Upload-Size-Received for simplicity here.
 				w.Header().Set("X-Goog-Upload-Size-Received", fmt.Sprintf("%d", h.uploadedBytes))
-				w.WriteHeader(http.StatusOK)
+				w.WriteHeader(http.StatusOK) // StatusOK for resumable intermediate response
 			}
 		}
 
