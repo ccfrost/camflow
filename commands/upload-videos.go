@@ -70,15 +70,18 @@ func UploadVideos(config camediaconfig.CamediaConfig, keepStaging bool) error {
 		albums[albumTitle] = album
 	}
 
-	// Create progress bar for overall progress
-	bar := progressbar.NewOptions(len(videos),
+	overallBar := progressbar.NewOptions(len(videos),
 		progressbar.OptionSetDescription("uploading videos:"),
 		progressbar.OptionSetWidth(20),
 		progressbar.OptionShowCount(),
 		progressbar.OptionSetPredictTime(true),
 	)
+	defer func() {
+		if err := overallBar.Close(); err != nil {
+			fmt.Printf("warning: failed to close progress bar\n")
+		}
+	}()
 
-	// Create progress bar for current file
 	fileBar := progressbar.NewOptions64(-1,
 		progressbar.OptionSetDescription("current file:"),
 		progressbar.OptionSetWidth(20),
@@ -87,6 +90,11 @@ func UploadVideos(config camediaconfig.CamediaConfig, keepStaging bool) error {
 		progressbar.OptionShowElapsedTimeOnFinish(),
 		progressbar.OptionOnCompletion(func() { fmt.Println() }),
 	)
+	defer func() {
+		if err := fileBar.Close(); err != nil {
+			fmt.Printf("warning: failed to close file progress bar\n")
+		}
+	}()
 
 	// Upload each video and add to albums
 	for _, video := range videos {
@@ -116,14 +124,7 @@ func UploadVideos(config camediaconfig.CamediaConfig, keepStaging bool) error {
 			}
 		}
 
-		bar.Add(1)
-	}
-
-	if err := bar.Close(); err != nil {
-		fmt.Printf("warning: failed to close progress bar\n")
-	}
-	if err := fileBar.Close(); err != nil {
-		fmt.Printf("warning: failed to close file progress bar\n")
+		overallBar.Add(1)
 	}
 
 	return nil
