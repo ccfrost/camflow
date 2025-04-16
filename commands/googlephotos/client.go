@@ -506,8 +506,8 @@ func (c *Client) deleteUploadInfo(filename string) error {
 	return os.Remove(path)
 }
 
-// GetOrCreateAlbum gets an album by title or creates it if it doesn't exist
-func (c *Client) GetOrCreateAlbum(ctx context.Context, title string) (*Album, error) {
+// GetAlbum gets an album by title. Returns an error if not found.
+func (c *Client) GetAlbum(ctx context.Context, title string) (*Album, error) {
 	// First try to find existing album
 	var pageToken string
 	for {
@@ -527,12 +527,22 @@ func (c *Client) GetOrCreateAlbum(ctx context.Context, title string) (*Album, er
 		}
 		defer resp.Body.Close()
 
+		// Check for non-OK status codes after potential redirects
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("failed to list albums, status %d: %s", resp.StatusCode, body)
+		}
+
 		var result struct {
 			Albums        []Album `json:"albums"`
 			NextPageToken string  `json:"nextPageToken"`
 		}
 
 		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			// Handle potential empty body on non-200 status if not caught above
+			if err == io.EOF && resp.StatusCode != http.StatusOK {
+				return nil, fmt.Errorf("failed to list albums, status %d: empty response body", resp.StatusCode)
+			}
 			return nil, fmt.Errorf("failed to decode albums: %w", err)
 		}
 
@@ -548,43 +558,8 @@ func (c *Client) GetOrCreateAlbum(ctx context.Context, title string) (*Album, er
 		pageToken = result.NextPageToken
 	}
 
-	// Album not found, create it
-	reqBody := map[string]interface{}{
-		"album": map[string]string{
-			"title": title,
-		},
-	}
-
-	reqBytes, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal album creation request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST",
-		photosBaseURL+"/albums",
-		bytes.NewReader(reqBytes))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create album: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("failed to create album: %s", body)
-	}
-
-	var album Album
-	if err := json.NewDecoder(resp.Body).Decode(&album); err != nil {
-		return nil, fmt.Errorf("failed to decode created album: %w", err)
-	}
-
-	return &album, nil
+	// Album not found
+	return nil, fmt.Errorf("album %q not found", title)
 }
 
 // AddMediaItemToAlbum adds a media item to an album

@@ -53,12 +53,12 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, keepS
 		return nil
 	}
 
-	// Create/get all target albums
+	// Get all target albums
 	albums := make(map[string]*googlephotos.Album)
 	for _, albumTitle := range config.DefaultAlbums {
-		album, err := client.GetOrCreateAlbum(ctx, albumTitle)
+		album, err := client.GetAlbum(ctx, albumTitle)
 		if err != nil {
-			return fmt.Errorf("failed to get/create album %q: %w", albumTitle, err)
+			return fmt.Errorf("failed to get album %q: %w. Please ensure it exists.", albumTitle, err)
 		}
 		albums[albumTitle] = album
 	}
