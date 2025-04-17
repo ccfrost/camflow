@@ -169,15 +169,6 @@ func checkNoDupBasenames(files []string) error {
 	return nil
 }
 
-type moveProgress struct {
-	startTime  time.Time
-	movedBytes int64
-
-	totalBytes int64
-
-	bar *progressbar.ProgressBar
-}
-
 // moveFilesAndFlatten moves files from srcDir into the photo/video target dir.
 // It preserves the modification times and flattens the directories.
 func moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir string, keepSrc bool, totalBytes int64, bar *progressbar.ProgressBar) error {
