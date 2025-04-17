@@ -49,16 +49,24 @@ func (h *mockHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	case h.uploadURL:
 		// Handle chunk upload
+		h.t.Logf("[Mock Server] Received request for upload URL: %s, Method: %s", r.URL.Path, r.Method)
+		h.t.Logf("[Mock Server] Headers: %+v", r.Header)
+
 		switch r.Header.Get("X-Goog-Upload-Command") {
 		case "query":
 			// Return current upload progress
+			h.t.Logf("[Mock Server] Handling 'query' command. Current uploadedBytes: %d", h.uploadedBytes)
 			w.Header().Set("X-Goog-Upload-Size-Received", fmt.Sprintf("%d", h.uploadedBytes))
+			// Google might return 308 even for query if upload is active
+			// Let's stick to 200 for now unless proven otherwise
 			w.WriteHeader(http.StatusOK)
+			h.t.Logf("[Mock Server] Responding to 'query' with Status: %d, Headers: %+v", http.StatusOK, w.Header())
 
 		case "upload":
 			// Read and validate chunk
 			chunk, err := io.ReadAll(r.Body)
 			require.NoError(h.t, err)
+			h.t.Logf("[Mock Server] Handling 'upload' command. Received chunk size: %d", len(chunk))
 
 			// Get total size from Content-Range header (e.g., "bytes 10485760-20971519/36700160")
 			contentRange := r.Header.Get("Content-Range")
@@ -67,6 +75,7 @@ func (h *mockHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			totalSizeStr := parts[1]
 			totalSize, err := strconv.ParseInt(totalSizeStr, 10, 64)
 			require.NoError(h.t, err, "Failed to parse total size from Content-Range: %s", contentRange)
+			h.t.Logf("[Mock Server] Parsed TotalSize: %d from Content-Range: %s", totalSize, contentRange)
 
 			// Verify chunk size matches expected (optional but good for testing)
 			if h.chunkIndex < len(h.expectedChunks) {
@@ -75,30 +84,52 @@ func (h *mockHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Update total bytes received *by the handler*
-			// Note: Google's resumable upload might return 308 Resume Incomplete instead of 200 OK
-			// for intermediate chunks, and the X-Goog-Upload-Size-Received might not be needed
-			// if the client relies on the 308 status range header.
-			// However, for this mock, we'll update our internal counter and respond OK.
-			h.uploadedBytes += int64(len(chunk))
-			h.chunkIndex++
+			 // Simulate server receiving the bytes *before* responding
+			// Important: Only add if the Content-Range offset matches expected
+			expectedOffsetStr := fmt.Sprintf("%d", h.uploadedBytes)
+			rangeParts := strings.Fields(strings.Split(contentRange, "/")[0]) // "bytes 0-1023" -> ["bytes", "0-1023"]
+			if len(rangeParts) == 2 {
+				offsetParts := strings.Split(rangeParts[1], "-") // "0-1023" -> ["0", "1023"]
+				if len(offsetParts) > 0 && offsetParts[0] == expectedOffsetStr {
+					h.uploadedBytes += int64(len(chunk))
+					h.chunkIndex++
+					h.t.Logf("[Mock Server] Content-Range offset %s matched expected. Updated uploadedBytes: %d", offsetParts[0], h.uploadedBytes)
+				} else if len(offsetParts) > 0 {
+					h.t.Logf("[Mock Server] Content-Range offset %s did NOT match expected %s. Bytes not added.", offsetParts[0], expectedOffsetStr)
+					// If offset doesn't match, Google API typically returns 308 with the correct Range header
+					// indicating what it *has* received.
+					rangeResp := fmt.Sprintf("bytes=0-%d", h.uploadedBytes-1)
+					w.Header().Set("Range", rangeResp)
+					w.WriteHeader(http.StatusPermanentRedirect) // 308
+					h.t.Logf("[Mock Server] Offset mismatch. Responding with Status: %d, Headers: %+v", http.StatusPermanentRedirect, w.Header())
+					return // Don't proceed further
+				}
+			} else {
+				h.t.Logf("[Mock Server] Could not parse offset from Content-Range: %s", contentRange)
+				// Handle error? For test, maybe just proceed and see what happens.
+			}
 
 			// Check if this completes the upload based on total size
 			if h.uploadedBytes >= totalSize { // Compare against TOTAL size from header
 				h.uploadToken = "mock-upload-token"
-				w.Header().Set("X-Goog-Upload-Status", "final")
+				w.Header().Set("X-Goog-Upload-Status", "final") // Optional, but good practice
 				w.WriteHeader(http.StatusOK) // Final response is 200 OK with body
 				w.Write([]byte(h.uploadToken))
+				h.t.Logf("[Mock Server] Upload complete. Responding with Status: %d, Headers: %+v, Body: %s", http.StatusOK, w.Header(), h.uploadToken)
 			} else {
 				// Respond with intermediate status, confirming bytes received
-				// Google API might use HTTP 308 Resume Incomplete with a Range header.
-				// Simulating with 200 OK and X-Goog-Upload-Size-Received for simplicity here.
-				w.Header().Set("X-Goog-Upload-Size-Received", fmt.Sprintf("%d", h.uploadedBytes))
-				w.WriteHeader(http.StatusOK) // StatusOK for resumable intermediate response
+				rangeResp := fmt.Sprintf("bytes=0-%d", h.uploadedBytes-1) // Range is inclusive
+				w.Header().Set("Range", rangeResp)
+				w.WriteHeader(http.StatusPermanentRedirect) // 308
+				h.t.Logf("[Mock Server] Upload incomplete. Responding with Status: %d, Headers: %+v", http.StatusPermanentRedirect, w.Header())
 			}
+		default:
+			h.t.Logf("[Mock Server] Unknown command: %s", r.Header.Get("X-Goog-Upload-Command"))
+			http.Error(w, "Unknown upload command", http.StatusBadRequest)
 		}
 
 	case "/mediaItems:batchCreate":
-		// Handle media item creation
+		h.t.Logf("[Mock Server] Received request for /mediaItems:batchCreate")
 		var req struct {
 			NewMediaItems []struct {
 				Description     string `json:"description"`
@@ -156,24 +187,57 @@ func createTestVideo(t *testing.T, size int64) string {
 	filename := filepath.Join(tmpDir, "test.mp4")
 	f, err := os.Create(filename)
 	require.NoError(t, err)
-	defer f.Close()
 
-	// Write pattern data
-	chunk := make([]byte, 1024)
-	for i := range chunk {
-		chunk[i] = byte(i % 256)
-	}
-
-	remaining := size
-	for remaining > 0 {
-		writeSize := int64(len(chunk))
-		if remaining < writeSize {
-			writeSize = remaining
-		}
-		_, err = f.Write(chunk[:writeSize])
+	// For very large files used in size validation tests, just truncate.
+	// This is much faster than writing gigabytes of data.
+	// Use a threshold, e.g., 1GB, to decide.
+	const largeFileThreshold = 1 * 1024 * 1024 * 1024 // 1 GB
+	if size > largeFileThreshold {
+		err = f.Truncate(size)
+		require.NoError(t, err, "Failed to truncate large file")
+		f.Close() // Close immediately after truncate
+		// Add a minimal header to make DetectContentType happy if needed,
+		// although validateVideoFile might fail on size first anyway.
+		// Re-open to write header.
+		f, err = os.OpenFile(filename, os.O_WRONLY, 0600)
 		require.NoError(t, err)
-		remaining -= writeSize
+		// Write a minimal MP4-like header signature (first few bytes)
+		// This helps http.DetectContentType identify it as video/*
+		// Example: ftypisom (ISO Base Media file format)
+		_, err = f.Write([]byte{0x00, 0x00, 0x00, 0x18, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm'})
+		require.NoError(t, err)
+
+	} else if size > 0 {
+		// Write a minimal MP4 header first for smaller files too
+		_, err = f.Write([]byte{0x00, 0x00, 0x00, 0x18, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm'})
+		require.NoError(t, err)
+
+		// Write pattern data for the rest of the size
+		headerSize := int64(12)
+		remaining := size - headerSize
+		if remaining < 0 {
+			remaining = 0 // Handle cases where size < headerSize
+		}
+
+		chunk := make([]byte, 1024)
+		for i := range chunk {
+			chunk[i] = byte(i % 256)
+		}
+
+		for remaining > 0 {
+			writeSize := int64(len(chunk))
+			if remaining < writeSize {
+				writeSize = remaining
+			}
+			_, err = f.Write(chunk[:writeSize])
+			require.NoError(t, err)
+			remaining -= writeSize
+		}
 	}
+	// else size is 0, do nothing extra
+
+	err = f.Close()
+	require.NoError(t, err)
 
 	return filename
 }
@@ -371,7 +435,7 @@ func TestValidateVideoFile(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			filename := tt.setup(t)
 			client := &Client{}
-			err := client.validateVideoFile(filename)
+			err := client.ValidateVideoFile(filename) // Renamed call
 
 			if tt.wantErr {
 				assert.Error(t, err)

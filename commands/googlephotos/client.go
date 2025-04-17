@@ -174,7 +174,7 @@ func saveToken(token *oauth2.Token) error {
 // UploadVideo uploads a video file to Google Photos with resumable upload support
 func (c *Client) UploadVideo(ctx context.Context, filename string, progressCb ProgressCallback) (*MediaItem, error) {
 	// Validate video file first
-	if err := c.validateVideoFile(filename); err != nil {
+	if err := c.ValidateVideoFile(filename); err != nil { // Renamed call
 		return nil, fmt.Errorf("invalid video file: %w", err)
 	}
 
@@ -268,14 +268,17 @@ func (c *Client) uploadFileChunks(ctx context.Context, info *UploadInfo, progres
 	}
 	defer f.Close()
 
-	// Seek to the last uploaded position
+	// Seek to the last uploaded position confirmed by server (or 0 if new upload)
 	if _, err := f.Seek(info.BytesUploaded, 0); err != nil {
-		return "", fmt.Errorf("failed to seek in file: %w", err)
+		return "", fmt.Errorf("failed to seek in file to offset %d: %w", info.BytesUploaded, err)
 	}
 
 	chunk := make([]byte, uploadChunkSize) // Reusable buffer
 
+	fmt.Printf("[Client] Starting upload loop. Filename: %s, Initial BytesUploaded: %d, TotalBytes: %d\n", info.Filename, info.BytesUploaded, info.TotalBytes) // Log loop start
+
 	for info.BytesUploaded < info.TotalBytes {
+		fmt.Printf("[Client] Loop iteration. BytesUploaded: %d / %d\n", info.BytesUploaded, info.TotalBytes) // Log start of iteration
 		// Determine chunk size for this iteration
 		bytesToRead := uploadChunkSize
 		remainingBytes := info.TotalBytes - info.BytesUploaded
@@ -284,156 +287,247 @@ func (c *Client) uploadFileChunks(ctx context.Context, info *UploadInfo, progres
 		}
 
 		// Read the exact chunk size needed
+		fmt.Printf("[Client] Reading chunk. Offset: %d, Max size: %d\n", info.BytesUploaded, bytesToRead) // Log read attempt
 		n, err := io.ReadFull(f, chunk[:bytesToRead])
 		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF { // Allow EOF/UnexpectedEOF if it matches bytes read
-			return "", fmt.Errorf("failed to read chunk: %w", err)
+			fmt.Printf("[Client] ERROR reading chunk: %v\n", err) // Log read error
+			return "", fmt.Errorf("failed to read chunk at offset %d: %w", info.BytesUploaded, err)
 		}
 		if n == 0 { // Should not happen if BytesUploaded < TotalBytes, but check anyway
-			break
+			fmt.Printf("[Client] Read 0 bytes unexpectedly. Breaking loop.\n") // Log zero read
+			break // Exit loop if read returns 0 bytes
 		}
+		fmt.Printf("[Client] Read %d bytes.\n", n) // Log bytes read
 
-		// Calculate content range
-		rangeEnd := info.BytesUploaded + int64(n) - 1
+		// Calculate content range for the chunk being sent
+		currentOffset := info.BytesUploaded
+		rangeEnd := currentOffset + int64(n) - 1
 		contentRange := fmt.Sprintf("bytes %d-%d/%d",
-			info.BytesUploaded, rangeEnd, info.TotalBytes)
+			currentOffset, rangeEnd, info.TotalBytes)
+		fmt.Printf("[Client] Sending chunk. URL: %s, Offset: %d, Size: %d, Range: %s\n", info.UploadURL, currentOffset, n, contentRange) // Log chunk send details
 
 		// Create request with the chunk data directly
-		req, err := http.NewRequestWithContext(ctx, "POST",
+		reqCtx, cancel := context.WithTimeout(ctx, uploadTimeout) // Add timeout per chunk
+		req, err := http.NewRequestWithContext(reqCtx, "POST",
 			info.UploadURL,
 			bytes.NewReader(chunk[:n])) // Use bytes.NewReader for the chunk data
 		if err != nil {
+			cancel() // Clean up context
 			// If context is cancelled, return the context error directly
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				fmt.Printf("[Client] ERROR creating request (context error): %v\n", err)
 				return "", err
 			}
-			return "", fmt.Errorf("failed to create chunk request: %w", err)
+			fmt.Printf("[Client] ERROR creating request: %v\n", err)
+			return "", fmt.Errorf("failed to create chunk request at offset %d: %w", currentOffset, err)
 		}
 
 		req.Header.Set("X-Goog-Upload-Command", "upload")
-		req.Header.Set("X-Goog-Upload-Offset", strconv.FormatInt(info.BytesUploaded, 10))
+		// X-Goog-Upload-Offset is optional if Content-Range is provided, but doesn't hurt
+		req.Header.Set("X-Goog-Upload-Offset", strconv.FormatInt(currentOffset, 10))
 		req.Header.Set("Content-Range", contentRange)
 		// Content-Length is set automatically by the http client for bytes.Reader
 
 		resp, err := c.httpClient.Do(req)
+		cancel() // Clean up context after request is done or failed
 		if err != nil {
 			// If context is cancelled, return the context error directly
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				fmt.Printf("[Client] ERROR sending chunk (context error): %v\n", err)
 				return "", err
 			}
-			// Consider retrying certain errors here? For now, fail.
-			return "", fmt.Errorf("failed to upload chunk: %w", err)
-		}
-		defer resp.Body.Close() // Close body for each chunk response
-
-		// Google Resumable Upload uses 308 for intermediate, 200/201 for final.
-		// Let's accept both 200 OK and 308 Resume Incomplete as success for now.
-		// The mock server currently sends 200 OK for both.
-		if resp.StatusCode != http.StatusOK && resp.StatusCode != 308 {
-			body, _ := io.ReadAll(resp.Body)
-			// Check if the server indicates a range mismatch (e.g., status 400 or other)
-			// Potentially query the server for expected offset if status indicates error?
-			return "", fmt.Errorf("chunk upload failed with status %d: %s",
-				resp.StatusCode, body)
+			// Consider retrying certain network errors here? For now, fail.
+			fmt.Printf("[Client] ERROR sending chunk: %v\n", err)
+			return "", fmt.Errorf("failed to upload chunk at offset %d: %w", currentOffset, err)
 		}
 
-		// Update bytes uploaded *after* successful transmission
-		info.BytesUploaded += int64(n)
+		// --- Response Handling ---
+		statusCode := resp.StatusCode
+		respHeaders := resp.Header.Clone() // Clone headers before body is closed
+		bodyBytes, readErr := io.ReadAll(resp.Body) // Read body regardless of status
+		resp.Body.Close()                           // Close body immediately
 
-		// Report progress *after* successful chunk upload
-		if progressCb != nil {
-			progressCb(UploadProgress{
-				Filename:      info.Filename,
-				BytesUploaded: info.BytesUploaded,
-				TotalBytes:    info.TotalBytes,
-				ChunkProgress: 1.0, // Indicate chunk is fully processed by client
-			})
+		fmt.Printf("[Client] Received response. Status: %d, Headers: %+v\n", statusCode, respHeaders) // Log response details
+		if readErr != nil {
+			fmt.Printf("[Client] WARNING: Error reading response body: %v\n", readErr)
+		}
+		if len(bodyBytes) > 0 {
+			fmt.Printf("[Client] Response Body: %s\n", string(bodyBytes))
 		}
 
-		// Save progress
-		if err := c.saveUploadInfo(info); err != nil {
-			// Log warning but continue? Or fail hard? For now, log and continue.
-			fmt.Printf("warning: failed to save upload progress: %v\n", err)
-		}
-
-		// Check if this was the final chunk based on status code or total bytes
-		// Google uses 200 OK or 201 Created for the final response.
-		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated || info.BytesUploaded >= info.TotalBytes {
-			// Read the response body which should contain the upload token for 200/201
-			// If it was 308 but we reached TotalBytes, we still need to finalize/query?
-			// The Google API doc implies the final chunk response (200/201) contains the item details or token.
-			// Let's assume 200/201 means final and contains the token.
-			if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
-				uploadTokenBytes, err := io.ReadAll(resp.Body)
-				if err != nil {
-					return "", fmt.Errorf("failed to read upload token from final response: %w", err)
-				}
-				if len(uploadTokenBytes) == 0 {
-					// This might happen if the server sent 200 OK but no body,
-					// which would be unexpected for the final Google Photos response.
-					// Maybe query the upload status first?
-					return "", fmt.Errorf("received empty upload token in final response")
-				}
-				return string(uploadTokenBytes), nil
-			} else if info.BytesUploaded >= info.TotalBytes {
-				// We've sent all bytes, but the last response was 308.
-				// This might indicate the server hasn't processed the final chunk yet.
-				// We might need a final "finalize" request or query the status.
-				// For simplicity now, let's assume if we sent all bytes, it should have finished.
-				// This path indicates a potential mismatch with the real API or the mock.
-				// Let's try querying the upload status.
-				finalStatus, finalToken, queryErr := c.queryUploadStatus(ctx, info)
-				if queryErr != nil {
-					return "", fmt.Errorf("upload seemingly complete but failed to query final status: %w", queryErr)
-				}
-				if finalStatus == "final" && finalToken != "" {
-					return finalToken, nil
-				}
-				return "", fmt.Errorf("upload complete but final status query returned status '%s' or empty token", finalStatus)
+		if statusCode == 308 { // Intermediate chunk success (Resume Incomplete)
+			fmt.Printf("[Client] Handling 308 response.\n")
+			rangeHeader := respHeaders.Get("Range")
+			if rangeHeader == "" {
+				fmt.Printf("[Client] ERROR: upload chunk 308 missing Range header (offset %d). Aborting.\n", currentOffset)
+				return "", fmt.Errorf("upload chunk returned 308 but missing Range header (offset %d)", currentOffset)
 			}
+			// Parse "bytes=0-end"
+			parts := strings.SplitN(rangeHeader, "=", 2)
+			rangeVal := ""
+			if len(parts) == 2 && parts[0] == "bytes" {
+				rangeVal = parts[1]
+			} else {
+				fmt.Printf("[Client] ERROR: Invalid Range header format %q. Aborting.\n", rangeHeader)
+				return "", fmt.Errorf("upload chunk returned 308 with invalid Range header format: %q (offset %d)", rangeHeader, currentOffset)
+			}
+			rangeParts := strings.SplitN(rangeVal, "-", 2)
+			serverBytesUploaded := int64(0)
+			if len(rangeParts) == 2 {
+				endByte, parseErr := strconv.ParseInt(rangeParts[1], 10, 64)
+				if parseErr != nil {
+					fmt.Printf("[Client] ERROR: Invalid Range end value %q. Aborting.\n", rangeHeader)
+					return "", fmt.Errorf("upload chunk returned 308 with invalid Range end value: %q (offset %d)", rangeHeader, currentOffset)
+				}
+				serverBytesUploaded = endByte + 1 // Range end is inclusive
+			} else {
+				fmt.Printf("[Client] ERROR: Invalid Range value format %q. Aborting.\n", rangeHeader)
+				return "", fmt.Errorf("upload chunk returned 308 with invalid Range value format: %q (offset %d)", rangeHeader, currentOffset)
+			}
+			fmt.Printf("[Client] Parsed Range header '%s'. Server confirmed bytes: %d\n", rangeHeader, serverBytesUploaded)
+
+			// Update client state ONLY based on server confirmation
+			if serverBytesUploaded <= info.BytesUploaded {
+				fmt.Printf("[Client] ERROR: Server range %q indicates %d bytes, but client tracked %d. Aborting.\n", rangeHeader, serverBytesUploaded, info.BytesUploaded)
+				return "", fmt.Errorf("upload chunk 308 range mismatch: server ack'd %d bytes, client expected > %d", serverBytesUploaded, info.BytesUploaded)
+			}
+			fmt.Printf("[Client] Updating BytesUploaded from %d to %d based on server Range.\n", info.BytesUploaded, serverBytesUploaded)
+			info.BytesUploaded = serverBytesUploaded
+
+			// Report progress
+			if progressCb != nil {
+				fmt.Printf("[Client] Reporting progress: %d / %d\n", info.BytesUploaded, info.TotalBytes)
+				progressCb(UploadProgress{
+					Filename:      info.Filename,
+					BytesUploaded: info.BytesUploaded, // Use updated value
+					TotalBytes:    info.TotalBytes,
+					ChunkProgress: 1.0, // Indicate chunk processing attempt complete
+				})
+			}
+			// Save progress
+			fmt.Printf("[Client] Saving upload info state.\n")
+			if err := c.saveUploadInfo(info); err != nil {
+				fmt.Printf("[Client] WARNING: failed to save upload progress after 308: %v\n", err)
+			}
+
+			// Seek file pointer to the new confirmed offset
+			fmt.Printf("[Client] Seeking file to new offset: %d\n", info.BytesUploaded)
+			_, seekErr := f.Seek(info.BytesUploaded, 0)
+			if seekErr != nil {
+				fmt.Printf("[Client] ERROR seeking file after 308: %v\n", seekErr)
+				return "", fmt.Errorf("failed to seek file to offset %d after 308 response: %w", info.BytesUploaded, seekErr)
+			}
+
+			fmt.Printf("[Client] Continuing loop after 308 handling.\n")
+			continue
+
+		} else if statusCode == http.StatusOK || statusCode == http.StatusCreated { // Final chunk success
+			fmt.Printf("[Client] Handling final response %d.\n", statusCode)
+			expectedTotal := currentOffset + int64(n)
+			if expectedTotal != info.TotalBytes {
+				fmt.Printf("[Client] WARNING: final chunk response %d received, but calculated bytes %d != total bytes %d. Trusting server.\n", statusCode, expectedTotal, info.TotalBytes)
+			}
+			info.BytesUploaded = info.TotalBytes
+
+			if progressCb != nil {
+				fmt.Printf("[Client] Reporting final progress: %d / %d\n", info.BytesUploaded, info.TotalBytes)
+				progressCb(UploadProgress{
+					Filename:      info.Filename,
+					BytesUploaded: info.BytesUploaded,
+					TotalBytes:    info.TotalBytes,
+					ChunkProgress: 1.0,
+				})
+			}
+
+			if readErr != nil {
+				fmt.Printf("[Client] ERROR reading final response body: %v\n", readErr)
+				return "", fmt.Errorf("failed to read body from final response (status %d): %w", statusCode, readErr)
+			}
+			uploadToken := string(bodyBytes)
+			if uploadToken == "" {
+				fmt.Printf("[Client] ERROR: Empty upload token in final response %d.\n", statusCode)
+				return "", fmt.Errorf("received empty upload token in final response (status %d)", statusCode)
+			}
+			fmt.Printf("[Client] Upload successful. Token: %s\n", uploadToken)
+			return uploadToken, nil
+
+		} else {
+			fmt.Printf("[Client] Handling error response %d.\n", statusCode)
+			errorMsg := string(bodyBytes)
+			if readErr != nil {
+				errorMsg = fmt.Sprintf("(failed to read error body: %v)", readErr)
+			}
+			if statusCode == http.StatusNotFound {
+				fmt.Printf("[Client] ERROR: Upload URL %s not found (404). Session expired?\n", info.UploadURL)
+				return "", fmt.Errorf("upload failed: upload URL %s not found (session may have expired)", info.UploadURL)
+			}
+			fmt.Printf("[Client] ERROR: Chunk upload failed. Status: %d, Offset: %d, Msg: %s\n", statusCode, currentOffset, errorMsg)
+			return "", fmt.Errorf("chunk upload failed with status %d (offset %d): %s", statusCode, currentOffset, errorMsg)
 		}
-		// If it was 308 and not the last chunk, continue the loop.
 	}
 
-	// If the loop finishes without returning a token (e.g., TotalBytes is 0, or some edge case)
-	if info.TotalBytes == 0 {
-		return "", fmt.Errorf("cannot upload zero-byte file")
+	fmt.Printf("[Client] Exited upload loop. BytesUploaded: %d, TotalBytes: %d\n", info.BytesUploaded, info.TotalBytes)
+
+	if info.BytesUploaded >= info.TotalBytes {
+		fmt.Printf("[Client] Loop exited normally (BytesUploaded >= TotalBytes). Querying status...\n")
+		finalStatus, finalToken, queryErr := c.queryUploadStatus(ctx, info)
+		if queryErr != nil {
+			fmt.Printf("[Client] ERROR querying status after loop exit: %v\n", queryErr)
+			return "", fmt.Errorf("upload seemingly complete but failed to query final status: %w", queryErr)
+		}
+		fmt.Printf("[Client] Query result: Status=%s, Token=%s\n", finalStatus, finalToken)
+		if finalStatus == "final" {
+			if finalToken != "" {
+				fmt.Printf("[Client] Query returned final status and token. Success.\n")
+				return finalToken, nil
+			}
+			fmt.Printf("[Client] ERROR: Query returned final status but no token.\n")
+			return "", fmt.Errorf("upload complete (queried status 'final') but failed to retrieve upload token from query")
+		}
+		fmt.Printf("[Client] ERROR: Query returned non-final status %s after loop exit.\n", finalStatus)
+		return "", fmt.Errorf("upload seemingly complete (sent all bytes) but final status query returned status '%s'", finalStatus)
+
+	} else {
+		fmt.Printf("[Client] Loop exited unexpectedly (BytesUploaded %d < TotalBytes %d). Erroring out.\n", info.BytesUploaded, info.TotalBytes)
+		return "", fmt.Errorf("upload loop finished unexpectedly at offset %d before reaching total bytes %d", info.BytesUploaded, info.TotalBytes)
 	}
-	return "", fmt.Errorf("upload loop finished unexpectedly without receiving upload token")
 }
 
-// queryUploadStatus checks the status of a resumable upload.
-// Returns status ("active", "final", etc.), upload token (if final), and error.
 func (c *Client) queryUploadStatus(ctx context.Context, info *UploadInfo) (string, string, error) {
+	fmt.Printf("[Client] Querying upload status for URL: %s\n", info.UploadURL)
 	req, err := http.NewRequestWithContext(ctx, "POST", info.UploadURL, nil)
 	if err != nil {
+		fmt.Printf("[Client] ERROR creating query request: %v\n", err)
 		return "", "", fmt.Errorf("failed to create query request: %w", err)
 	}
 	req.Header.Set("X-Goog-Upload-Command", "query")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		fmt.Printf("[Client] ERROR executing query request: %v\n", err)
 		return "", "", fmt.Errorf("failed to query upload status: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != 308 { // Expect 200 or 308 for query
+	fmt.Printf("[Client] Query response status: %d, Headers: %+v\n", resp.StatusCode, resp.Header)
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPermanentRedirect {
 		body, _ := io.ReadAll(resp.Body)
-		return "", "", fmt.Errorf("query upload status failed with status %d: %s", resp.StatusCode, body)
+		fmt.Printf("[Client] ERROR: Query request failed. Status: %d, Body: %s\n", resp.StatusCode, string(body))
+		return "", "", fmt.Errorf("query upload status failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	status := resp.Header.Get("X-Goog-Upload-Status")
 	token := ""
 	if status == "final" {
-		// If final, the body might contain the token (though docs are unclear if query returns it)
-		// Let's assume the token is only in the final *upload* response body.
-		// If the status is final, the caller should use the token received previously.
-		// However, our mock *does* put the token in the body on final upload.
-		// Let's read it just in case, aligning with the mock for now.
-		tokenBytes, _ := io.ReadAll(resp.Body)
-		token = string(tokenBytes)
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		if len(bodyBytes) > 0 {
+			fmt.Printf("[Client] WARNING: queryUploadStatus received status 'final' with non-empty body: %s\n", string(bodyBytes))
+			token = string(bodyBytes)
+		}
 	}
 
-	// We might also want to check X-Goog-Upload-Size-Received header here to verify server state.
+	fmt.Printf("[Client] Query result: Status=%s, Token=%s\n", status, token)
 
 	return status, token, nil
 }
@@ -511,28 +605,35 @@ func getUploadInfoPath(filename string) (string, error) {
 func (c *Client) loadUploadInfo(filename string) (*UploadInfo, error) {
 	path, err := getUploadInfoPath(filename)
 	if err != nil {
+		fmt.Printf("[Client|loadUploadInfo] Error getting path for %s: %v\n", filename, err)
 		return nil, err
 	}
+	fmt.Printf("[Client|loadUploadInfo] Attempting to load from: %s\n", path)
 
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		fmt.Printf("[Client|loadUploadInfo] Error opening %s: %v\n", path, err)
+		return nil, err // Return the original error (e.g., os.ErrNotExist)
 	}
 	defer f.Close()
 
 	var info UploadInfo
 	if err := json.NewDecoder(f).Decode(&info); err != nil {
+		fmt.Printf("[Client|loadUploadInfo] Error decoding %s: %v\n", path, err)
 		return nil, err
 	}
 
 	// Verify the file still exists and has the same size
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
+		fmt.Printf("[Client|loadUploadInfo] Error stating original file %s: %v\n", filename, err)
 		return nil, err
 	}
 	if fileInfo.Size() != info.TotalBytes {
+		fmt.Printf("[Client|loadUploadInfo] File size mismatch for %s: expected %d, got %d\n", filename, info.TotalBytes, fileInfo.Size())
 		return nil, fmt.Errorf("file size changed")
 	}
+	fmt.Printf("[Client|loadUploadInfo] Successfully loaded state for %s: %+v\n", filename, info)
 
 	return &info, nil
 }
@@ -540,28 +641,44 @@ func (c *Client) loadUploadInfo(filename string) (*UploadInfo, error) {
 func (c *Client) saveUploadInfo(info *UploadInfo) error {
 	path, err := getUploadInfoPath(info.Filename)
 	if err != nil {
+		fmt.Printf("[Client|saveUploadInfo] Error getting path for %s: %v\n", info.Filename, err)
 		return err
 	}
+	fmt.Printf("[Client|saveUploadInfo] Attempting to save state to: %s for %+v\n", path, info)
 
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		fmt.Printf("[Client|saveUploadInfo] Error creating directory for %s: %v\n", path, err)
 		return err
 	}
 
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
+		fmt.Printf("[Client|saveUploadInfo] Error opening/creating %s: %v\n", path, err)
 		return fmt.Errorf("failed to create upload info file: %w", err)
 	}
 	defer f.Close()
 
-	return json.NewEncoder(f).Encode(info)
+	err = json.NewEncoder(f).Encode(info)
+	if err != nil {
+		fmt.Printf("[Client|saveUploadInfo] Error encoding state to %s: %v\n", path, err)
+		return err
+	}
+	fmt.Printf("[Client|saveUploadInfo] Successfully saved state to %s\n", path)
+	return nil
 }
 
 func (c *Client) deleteUploadInfo(filename string) error {
 	path, err := getUploadInfoPath(filename)
 	if err != nil {
+		fmt.Printf("[Client|deleteUploadInfo] Error getting path for %s: %v\n", filename, err)
 		return err
 	}
-	return os.Remove(path)
+	fmt.Printf("[Client|deleteUploadInfo] Attempting to delete: %s\n", path)
+	err = os.Remove(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) { // Don't log error if file already doesn't exist
+		fmt.Printf("[Client|deleteUploadInfo] Error deleting %s: %v\n", path, err)
+	}
+	return err
 }
 
 // GetAlbum gets an album by title. Returns an error if not found.
@@ -653,8 +770,8 @@ func (c *Client) AddMediaItemToAlbum(ctx context.Context, mediaItem *MediaItem, 
 	return nil
 }
 
-// validateVideoFile checks if a file is valid for upload
-func (c *Client) validateVideoFile(filename string) error {
+// ValidateVideoFile checks if a file is valid for upload (Exported)
+func (c *Client) ValidateVideoFile(filename string) error { // Renamed function
 	// Check file exists and is readable
 	file, err := os.Open(filename)
 	if err != nil {
