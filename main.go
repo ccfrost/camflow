@@ -8,7 +8,6 @@ import (
 
 	"github.com/ccfrost/camedia/camediaconfig"
 	"github.com/ccfrost/camedia/commands"
-	"github.com/ccfrost/camedia/commands/googlephotos"
 	"github.com/spf13/cobra"
 )
 
@@ -87,12 +86,7 @@ Successfully uploaded videos are deleted from staging unless --keep is specified
 			}
 
 			ctx := context.Background()
-			client, err := googlephotos.NewClient(ctx, config)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "failed to create Google Photos client: %w", err)
-				os.Exit(1)
-			}
-			if err := commands.UploadVideos(ctx, config, keep, client); err != nil {
+			if err := commands.UploadVideos(ctx, config, keep); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}
