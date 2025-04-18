@@ -49,9 +49,14 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, keepS
 		return nil
 	}
 
-	// TODO: Upload videos. Additional requirements:
+	// TODO: Upload videos.
+	// Additional requirements:
+	// Use the credentials from camediaconfig.GooglePhotos, for client id, secret, and redirect uri.
+	// Store the refresh token in the same directory as the config file.
 	// Support resuming from a partial upload.
 	// Add the video to each album in config.DefaultAlbums.
+	// Don't create an album if it doesn't exist. If it doesn't exist, error to the user and quit.
+	// Do cache the album id mapping, and in the same directory as the config file.
 	// After uploading, delete the video from staging if keepStaging is false.
 	// Show a progress bar for the total number of bytes to upload.
 
