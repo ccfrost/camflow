@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath" // Added for filepath.Dir
 	"time"
 
 	"github.com/ccfrost/camedia/camediaconfig"
@@ -86,7 +87,9 @@ Successfully uploaded videos are deleted from staging unless --keep is specified
 			}
 
 			ctx := context.Background()
-			if err := commands.UploadVideos(ctx, config, keep); err != nil {
+			// Get config directory from the loaded config object
+			configDir := filepath.Dir(config.ConfigPath())
+			if err := commands.UploadVideos(ctx, config, configDir, keep); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}

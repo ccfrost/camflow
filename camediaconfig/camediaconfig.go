@@ -15,6 +15,9 @@ type KeywordAlbum struct {
 
 // CamediaConfig defines the configuration for Camedia.
 type CamediaConfig struct {
+	// The path from which this config was loaded.
+	configPath string `mapstructure:"-"` // Mark as transient for mapstructure
+
 	DefaultAlbums []string `mapstructure:"default_albums"`
 
 	OrigPhotoRoot  string `mapstructure:"orig_photo_root"`
@@ -31,6 +34,11 @@ type CamediaConfig struct {
 	} `mapstructure:"google_photos"`
 
 	// TODO: connect to todoist
+}
+
+// ConfigPath returns the absolute path from which the configuration was loaded.
+func (c *CamediaConfig) ConfigPath() string {
+	return c.configPath
 }
 
 // getConfigPath determines where to store the config file.
@@ -71,6 +79,10 @@ func LoadConfig(configPathFlag string) (CamediaConfig, error) {
 	if err := viper.Unmarshal(&config); err != nil {
 		return CamediaConfig{}, err
 	}
+
+	// Store the path from which the config was loaded.
+	config.configPath = path
+
 	return config, nil
 }
 
