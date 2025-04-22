@@ -193,6 +193,7 @@ func (c *albumCache) getOrFetchAlbumIDs(ctx context.Context, albumsService gphot
 	missingTitles := make([]string, 0)
 	titleSet := make(map[string]struct{}) // For quick lookup
 
+	// TODO: is ids correct if there was a non-cached entry?
 	for _, title := range titles {
 		if id, found := c.Albums[title]; found {
 			ids = append(ids, id)
@@ -219,6 +220,7 @@ func (c *albumCache) getOrFetchAlbumIDs(ctx context.Context, albumsService gphot
 	needsSave := false
 	for _, album := range fetchedAlbums {
 		if _, needed := titleSet[album.Title]; needed {
+			// TODO: update cache for already cached names, in case the id changed.
 			if _, alreadyCached := c.Albums[album.Title]; !alreadyCached {
 				c.Albums[album.Title] = album.ID
 				fmt.Printf("Found and cached album: '%s' (ID: %s)\n", album.Title, album.ID)
@@ -267,8 +269,8 @@ type videoFileInfo struct {
 // Videos are added to all albums in config.DefaultAlbums.
 // Uploaded videos are deleted from staging unless keepStaging is true.
 // The function is idempotent - if interrupted, it can be recalled to resume.
-// Takes configDir to locate token and cache files.
-func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, configDir string, keepStaging bool) error {
+// Takes configDir to locate token and cache files, and a gphotosClient for API interaction.
+func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, configDir string, keepStaging bool, gphotosClient gphotos.Client) error {
 	// Get staging directory
 	stagingDir, err := videoStagingDir()
 	if err != nil {
@@ -316,18 +318,6 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, confi
 	}
 
 	fmt.Printf("Found %d videos to upload (total size: %.2f MB).\n", len(videosToUpload), float64(totalSize)/1024/1024) // Use len of new slice
-
-	// --- Initialize Google Photos Client ---
-	httpClient, err := getAuthenticatedClient(ctx, config, configDir)
-	if err != nil {
-		return fmt.Errorf("failed to get authenticated Google Photos client: %w", err)
-	}
-
-	// Create Photos Library Client using the authenticated client
-	gphotosClient, err := gphotos.NewClient(httpClient)
-	if err != nil {
-		return fmt.Errorf("failed to create Google Photos client: %w", err)
-	}
 
 	// --- Get Album IDs ---
 	if len(config.DefaultAlbums) == 0 {
