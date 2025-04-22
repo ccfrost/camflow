@@ -9,6 +9,7 @@ import (
 
 	"github.com/ccfrost/camedia/camediaconfig"
 	"github.com/ccfrost/camedia/commands"
+	gphotos "github.com/gphotosuploader/google-photos-api-client-go/v3"
 	"github.com/spf13/cobra"
 )
 
@@ -87,9 +88,18 @@ Successfully uploaded videos are deleted from staging unless --keep is specified
 			}
 
 			ctx := context.Background()
-			// Get config directory from the loaded config object
 			configDir := filepath.Dir(config.ConfigPath())
-			if err := commands.UploadVideos(ctx, config, configDir, keep); err != nil {
+			gphotosHttpClient, err := commands.GetAuthenticatedGooglePhotosClient(ctx, config, configDir)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+			gphotosClient, err := gphotos.NewClient(gphotosHttpClient)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+			if err := commands.UploadVideos(ctx, config, configDir, keep, gphotosClient); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}

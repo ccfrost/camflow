@@ -25,7 +25,7 @@ type videoFileInfo struct {
 // Uploaded videos are deleted from staging unless keepStaging is true.
 // The function is idempotent - if interrupted, it can be recalled to resume.
 // Takes configDir to locate token and cache files, and a gphotosClient for API interaction.
-func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, configDir string, keepStaging bool, gphotosClient gphotos.Client) error {
+func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, configDir string, keepStaging bool, gphotosClient *gphotos.Client) error {
 	// Get staging directory
 	stagingDir, err := videoStagingDir()
 	if err != nil {
@@ -120,7 +120,7 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, confi
 // uploadVideo uploads a single video "videoPath" of size "fileSize" to google photos.
 // It updates "bar" with the bytes it has uploaded.
 // It deletes the file after uploading if "keepStaging" is false.
-func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepStaging bool, gphotosClient gphotos.Client, videoPath string, fileSize int64, targetAlbumIDs []string, bar *progressbar.ProgressBar) error {
+func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepStaging bool, gphotosClient *gphotos.Client, videoPath string, fileSize int64, targetAlbumIDs []string, bar *progressbar.ProgressBar) error {
 	filename := filepath.Base(videoPath)
 	bar.Describe(fmt.Sprintf("Uploading %s", filename))
 

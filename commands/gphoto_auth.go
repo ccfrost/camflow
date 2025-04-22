@@ -20,10 +20,10 @@ const (
 	tokenFileName     = "google_photos_token.json"
 )
 
-// getAuthenticatedClient creates an authenticated HTTP client using OAuth2 credentials.
+// GetAuthenticatedGooglePhotosClient creates an authenticated HTTP client using OAuth2 credentials.
 // It handles token loading, refreshing, and saving.
 // Takes configDir to locate the token file.
-func getAuthenticatedClient(ctx context.Context, config camediaconfig.CamediaConfig, configDir string) (*http.Client, error) {
+func GetAuthenticatedGooglePhotosClient(ctx context.Context, config camediaconfig.CamediaConfig, configDir string) (*http.Client, error) {
 	if config.GooglePhotos.ClientId == "" || config.GooglePhotos.ClientSecret == "" {
 		return nil, fmt.Errorf("google Photos ClientId or ClientSecret not configured")
 	}
