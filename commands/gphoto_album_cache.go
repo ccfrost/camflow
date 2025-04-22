@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	gphotos "github.com/gphotosuploader/google-photos-api-client-go/v3"
 )
 
 const albumCacheFileName = "google_photos_album_cache.json"
