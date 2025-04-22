@@ -67,7 +67,7 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, confi
 		return fmt.Errorf("failed to list staged videos: %w", err)
 	}
 
-	if len(videosToUpload) == 0 { // Check the new slice
+	if len(videosToUpload) == 0 {
 		fmt.Println("No videos found in staging directory.")
 		return nil
 	}
@@ -98,107 +98,115 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, confi
 	}
 
 	// --- Upload Loop ---
+
 	bar := progressbar.DefaultBytes(
 		totalSize,
 		"Uploading videos",
 	)
 
-	// Iterate over the struct slice
 	for _, videoInfo := range videosToUpload {
-		videoPath := videoInfo.path // Get path from struct
-		fileSize := videoInfo.size  // Get size from struct
-		filename := filepath.Base(videoPath)
-		bar.Describe(fmt.Sprintf("Uploading %s", filename))
-
-		// 1. Upload bytes using the client's uploader
-		uploadToken, err := gphotosClient.Uploader.UploadFile(ctx, videoPath)
-		if err != nil {
-			// Don't stop the whole process, just log and continue
-			fmt.Printf("\nError uploading file %s: %v. Skipping.\n", filename, err)
-			// Use the stored size for progress update on failure
-			bar.Add64(fileSize)
-			continue // Skip to the next video
+		if err := uploadVideo(ctx, config, keepStaging, gphotosClient, videoInfo.path, videoInfo.size, targetAlbumIDs, bar); err != nil {
+			return err
 		}
 
-		// 2. Create Media Item using the upload token
-		// Construct the SimpleMediaItem required by the Create method
-		simpleMediaItem := media_items.SimpleMediaItem{
-			UploadToken: uploadToken,
-			Filename:    filename,
-		}
-		// Pass the struct instead of individual arguments
-		mediaItem, err := gphotosClient.MediaItems.Create(ctx, simpleMediaItem)
-		if err != nil {
-			fmt.Printf("\nError creating media item for %s (token: %s): %v. Skipping.\n", filename, uploadToken, err)
-			// Use the stored size for progress update on failure
-			bar.Add64(fileSize)
-			continue
-		}
-		// Corrected: mediaItem.Id -> mediaItem.ID
-		fmt.Printf("\nSuccessfully created media item for %s (ID: %s)\n", filename, mediaItem.ID)
+	}
 
-		// 3. Add Media Item to Albums (if any specified)
-		successfullyAddedToAll := true // Assume success unless an error occurs
-		if len(targetAlbumIDs) > 0 {
-			addedCount := 0
-			failedAlbums := []string{}
-			// Create a map for quick lookup of album titles by ID
-			albumIDToTitle := make(map[string]string)
-			for i, id := range targetAlbumIDs {
-				if i < len(config.DefaultAlbums) { // Safety check
-					albumIDToTitle[id] = config.DefaultAlbums[i]
-				}
-			}
-
-			for _, albumID := range targetAlbumIDs {
-				albumTitle := albumIDToTitle[albumID] // Get title for logging
-				if albumTitle == "" {
-					albumTitle = albumID
-				} // Fallback to ID if title not found
-
-				// Corrected: mediaItem.Id -> mediaItem.ID
-				err = gphotosClient.Albums.AddMediaItems(ctx, albumID, []string{mediaItem.ID})
-				if err != nil {
-					// Corrected: mediaItem.Id -> mediaItem.ID
-					fmt.Printf("Error adding media item %s to album '%s' (ID: %s): %v\n", mediaItem.ID, albumTitle, albumID, err)
-					failedAlbums = append(failedAlbums, albumTitle)
-					successfullyAddedToAll = false // Mark as failed
-				} else {
-					// Corrected: mediaItem.Id -> mediaItem.ID
-					fmt.Printf("Added media item %s to album '%s'\n", mediaItem.ID, albumTitle)
-					addedCount++
-				}
-			}
-			if len(failedAlbums) > 0 {
-				fmt.Printf("Warning: Failed to add %s to %d albums: %v\n", filename, len(failedAlbums), failedAlbums)
-				// Decide if this is a critical failure. For now, we continue but don't delete.
-			} else {
-				fmt.Printf("Successfully added %s to all %d target albums.\n", filename, addedCount)
-			}
-		}
-
-		// 4. Delete from staging if required and successful
-		if successfullyAddedToAll && !keepStaging {
-			fmt.Printf("Deleting %s from staging...\n", videoPath)
-			if err := os.Remove(videoPath); err != nil {
-				// Log error but don't fail the whole process
-				fmt.Printf("Error deleting %s from staging: %v\n", videoPath, err)
-			}
-		} else if !successfullyAddedToAll {
-			fmt.Printf("Skipping deletion of %s due to failure adding to some albums.\n", videoPath)
-		} else if keepStaging {
-			fmt.Printf("Keeping %s in staging directory.\n", videoPath)
-		}
-
-		// Update progress bar after processing the file (even if deletion failed)
-		// Use the stored size directly
-		bar.Add64(fileSize)
-
-	} // End of video loop
-
-	// Ensure progress bar finishes cleanly
 	_ = bar.Finish() // Ignore error on finish
 
 	fmt.Println("\nVideo upload process finished.")
+	return nil
+}
+
+// uploadVideo uploads a single video "videoPath" of size "fileSize" to google photos.
+// It updates "bar" with the bytes it has uploaded.
+// It deletes the file after uploading if "keepStaging" is false.
+func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepStaging bool, gphotosClient gphotos.Client, videoPath string, fileSize int64, targetAlbumIDs []string, bar *progressbar.ProgressBar) error {
+	filename := filepath.Base(videoPath)
+	bar.Describe(fmt.Sprintf("Uploading %s", filename))
+
+	// 1. Upload bytes using the client's uploader
+	// TODO: have UploadFile update bar as it progresses.
+	uploadToken, err := gphotosClient.Uploader.UploadFile(ctx, videoPath)
+	if err != nil {
+		// Don't stop the whole process, just log and continue
+		fmt.Printf("\nError uploading file %s: %v. Skipping.\n", filename, err)
+		// Use the stored size for progress update on failure
+		// FIXME: this may add more than the file size to the bar, since it may have uploaded some bytes.
+		// Maybe reduce total size to upload by the amount not uploaded, instead?
+		bar.Add64(fileSize)
+		return nil // Skip to the next video
+	}
+
+	// 2. Create Media Item using the upload token
+	// Construct the SimpleMediaItem required by the Create method
+	simpleMediaItem := media_items.SimpleMediaItem{
+		UploadToken: uploadToken,
+		Filename:    filename,
+	}
+	// Pass the struct instead of individual arguments
+	mediaItem, err := gphotosClient.MediaItems.Create(ctx, simpleMediaItem)
+	if err != nil {
+		fmt.Printf("\nError creating media item for %s (token: %s): %v. Skipping.\n", filename, uploadToken, err)
+		// Use the stored size for progress update on failure
+		// FIXME: may be incorrect, same as above.
+		bar.Add64(fileSize)
+		return nil
+	}
+	fmt.Printf("\nSuccessfully created media item for %s (ID: %s)\n", filename, mediaItem.ID)
+
+	// 3. Add Media Item to Albums (if any specified)
+	successfullyAddedToAll := true // Assume success unless an error occurs
+	if len(targetAlbumIDs) > 0 {
+		addedCount := 0
+		failedAlbums := []string{}
+		// Create a map for quick lookup of album titles by ID
+		albumIDToTitle := make(map[string]string)
+		for i, id := range targetAlbumIDs {
+			if i < len(config.DefaultAlbums) { // Safety check
+				albumIDToTitle[id] = config.DefaultAlbums[i]
+			}
+		}
+
+		for _, albumID := range targetAlbumIDs {
+			albumTitle := albumIDToTitle[albumID] // Get title for logging
+			if albumTitle == "" {
+				albumTitle = albumID
+			} // Fallback to ID if title not found
+
+			err = gphotosClient.Albums.AddMediaItems(ctx, albumID, []string{mediaItem.ID})
+			if err != nil {
+				fmt.Printf("Error adding media item %s to album '%s' (ID: %s): %v\n", mediaItem.ID, albumTitle, albumID, err)
+				failedAlbums = append(failedAlbums, albumTitle)
+				successfullyAddedToAll = false // Mark as failed
+			} else {
+				fmt.Printf("Added media item %s to album '%s'\n", mediaItem.ID, albumTitle)
+				addedCount++
+			}
+		}
+		if len(failedAlbums) > 0 {
+			fmt.Printf("Warning: Failed to add %s to %d albums: %v\n", filename, len(failedAlbums), failedAlbums)
+			// Decide if this is a critical failure. For now, we continue but don't delete.
+		} else {
+			fmt.Printf("Successfully added %s to all %d target albums.\n", filename, addedCount)
+		}
+	}
+
+	// 4. Delete from staging if required and successful
+	if successfullyAddedToAll && !keepStaging {
+		fmt.Printf("Deleting %s from staging...\n", videoPath)
+		if err := os.Remove(videoPath); err != nil {
+			// Log error but don't fail the whole process
+			fmt.Printf("Error deleting %s from staging: %v\n", videoPath, err)
+		}
+	} else if !successfullyAddedToAll {
+		fmt.Printf("Skipping deletion of %s due to failure adding to some albums.\n", videoPath)
+	} else if keepStaging {
+		fmt.Printf("Keeping %s in staging directory.\n", videoPath)
+	}
+
+	// Update progress bar after processing the file (even if deletion failed)
+	// Use the stored size directly
+	bar.Add64(fileSize)
+
 	return nil
 }
