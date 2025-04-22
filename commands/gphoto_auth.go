@@ -20,42 +20,6 @@ const (
 	tokenFileName     = "google_photos_token.json"
 )
 
-// getTokenFilePath constructs the path to the token file based on the config directory.
-func getTokenFilePath(configDir string) (string, error) {
-	if configDir == "." || configDir == "" {
-		return "", fmt.Errorf("config directory path is empty or invalid")
-	}
-	return filepath.Join(configDir, tokenFileName), nil
-}
-
-// saveToken saves the OAuth2 token to the specified file path.
-func saveToken(path string, token *oauth2.Token) error {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		return fmt.Errorf("unable to cache oauth token: %w", err)
-	}
-	defer f.Close()
-	return json.NewEncoder(f).Encode(token)
-}
-
-// getTokenFromWeb guides the user through the web-based OAuth2 flow.
-func getTokenFromWeb(ctx context.Context, conf *oauth2.Config) (*oauth2.Token, error) {
-	authURL := conf.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
-	fmt.Printf("Go to the following link in your browser then type the "+
-		"authorization code: \n%v\n", authURL)
-
-	var authCode string
-	if _, err := fmt.Scan(&authCode); err != nil {
-		return nil, fmt.Errorf("unable to read authorization code: %w", err)
-	}
-
-	tok, err := conf.Exchange(ctx, authCode)
-	if err != nil {
-		return nil, fmt.Errorf("unable to retrieve token from web: %w", err)
-	}
-	return tok, nil
-}
-
 // getAuthenticatedClient creates an authenticated HTTP client using OAuth2 credentials.
 // It handles token loading, refreshing, and saving.
 // Takes configDir to locate the token file.
@@ -118,4 +82,40 @@ func getAuthenticatedClient(ctx context.Context, config camediaconfig.CamediaCon
 
 	// The gphotosuploader library expects an http.Client, which oauth2.Config provides.
 	return conf.Client(ctx, token), nil
+}
+
+// getTokenFilePath constructs the path to the token file based on the config directory.
+func getTokenFilePath(configDir string) (string, error) {
+	if configDir == "." || configDir == "" {
+		return "", fmt.Errorf("config directory path is empty or invalid")
+	}
+	return filepath.Join(configDir, tokenFileName), nil
+}
+
+// saveToken saves the OAuth2 token to the specified file path.
+func saveToken(path string, token *oauth2.Token) error {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return fmt.Errorf("unable to cache oauth token: %w", err)
+	}
+	defer f.Close()
+	return json.NewEncoder(f).Encode(token)
+}
+
+// getTokenFromWeb guides the user through the web-based OAuth2 flow.
+func getTokenFromWeb(ctx context.Context, conf *oauth2.Config) (*oauth2.Token, error) {
+	authURL := conf.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
+	fmt.Printf("Go to the following link in your browser then type the "+
+		"authorization code: \n%v\n", authURL)
+
+	var authCode string
+	if _, err := fmt.Scan(&authCode); err != nil {
+		return nil, fmt.Errorf("unable to read authorization code: %w", err)
+	}
+
+	tok, err := conf.Exchange(ctx, authCode)
+	if err != nil {
+		return nil, fmt.Errorf("unable to retrieve token from web: %w", err)
+	}
+	return tok, nil
 }
