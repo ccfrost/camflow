@@ -4,7 +4,6 @@ go 1.24.0
 
 require (
 	github.com/gphotosuploader/google-photos-api-client-go/v3 v3.0.7
-	github.com/pkg/xattr v0.4.10
 	github.com/schollz/progressbar/v3 v3.18.0
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.20.1
