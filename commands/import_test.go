@@ -101,191 +101,128 @@ func TestGetAvailableSpace(t *testing.T) {
 	assert.Greater(t, space, uint64(0), "Available space should be greater than 0 for files too")
 }
 
-func TestMoveFilesAndFlatten(t *testing.T) {
-	// Create temporary test directories
-	tmpDir, err := os.MkdirTemp("", "camedia-test-*")
-	require.NoError(t, err, "Failed to create temp directory")
-	defer os.RemoveAll(tmpDir)
+func TestCopyFile(t *testing.T) {
+	// --- Setup ---
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+	bar := progressbar.DefaultBytesSilent(-1, "copying:") // Use a silent bar for testing
 
-	srcDir := filepath.Join(tmpDir, "sdcard", "DCIM")
-	photoDir := filepath.Join(tmpDir, "photos")
-	videoDir := filepath.Join(tmpDir, "videos")
+	// --- Success Case ---
+	t.Run("Success", func(t *testing.T) {
+		srcFile := filepath.Join(srcDir, "source_success.txt")
+		dstFile := filepath.Join(dstDir, "subdir", "dest_success.txt") // Test subdirectory creation
+		content := []byte("test content for copyfile")
+		modTime := time.Date(2023, 10, 27, 10, 0, 0, 0, time.UTC)
+		size := int64(len(content))
 
-	// Create test directory structure
-	dirs := []string{
-		filepath.Join(srcDir, "100CANON"),
-		filepath.Join(srcDir, "101CANON"),
-		filepath.Join(srcDir, "CANONMSC"),
-	}
+		// Create source file
+		err := os.WriteFile(srcFile, content, 0644)
+		require.NoError(t, err, "Failed to create source file")
 
-	modTime := time.Date(2024, 4, 1, 12, 0, 0, 0, time.UTC)
-	testFiles := []struct {
-		path    string
-		content []byte
-		modTime time.Time
-	}{
-		{filepath.Join(dirs[0], "IMG_0001.CR3"), []byte("cr3 content"), modTime},
-		{filepath.Join(dirs[0], "IMG_0001.JPG"), []byte("jpg content"), modTime},
-		{filepath.Join(dirs[1], "IMG_0002.MP4"), []byte("mp4 content"), modTime.Add(time.Hour)},
-		{filepath.Join(dirs[1], "README.txt"), []byte("ignored"), modTime},
-		{filepath.Join(dirs[2], "IMG_1000.JPG"), []byte("ignored"), modTime},
-	}
+		// Perform the copy
+		err = copyFile(srcFile, dstFile, size, modTime, bar)
+		require.NoError(t, err, "copyFile failed unexpectedly")
 
-	// Create progress bar for testing
-	bar := progressbar.DefaultBytesSilent(-1, "moving:")
+		// Verify destination file exists
+		info, err := os.Stat(dstFile)
+		require.NoError(t, err, "Destination file does not exist after copy")
+		assert.False(t, info.IsDir(), "Destination should be a file")
 
-	// Test both keepSrc=false and keepSrc=true cases
-	cases := []struct {
-		keepSrc bool
-		desc    string
-		tests   []struct {
-			desc        string
-			path        string
-			shouldExist bool
-			content     []byte
-			modTime     time.Time
-		}
-	}{
-		{
-			keepSrc: false,
-			desc:    "with keepSrc=false (files should be moved)",
-			tests: []struct {
-				desc        string
-				path        string
-				shouldExist bool
-				content     []byte
-				modTime     time.Time
-			}{
-				{"CR3 moved correctly", filepath.Join(photoDir, "IMG_0001.CR3"), true, []byte("cr3 content"), modTime},
-				{"JPG moved correctly", filepath.Join(photoDir, "IMG_0001.JPG"), true, []byte("jpg content"), modTime},
-				{"MP4 moved correctly", filepath.Join(videoDir, "IMG_0002.MP4"), true, []byte("mp4 content"), modTime.Add(time.Hour)},
-				{"Ignored file not moved", filepath.Join(photoDir, "README.txt"), false, nil, time.Time{}},
-				{"Ignored file not moved", filepath.Join(photoDir, "IMG_1000.JPG"), false, nil, time.Time{}},
-				{"Source CR3 removed", filepath.Join(dirs[0], "IMG_0001.CR3"), false, nil, time.Time{}},
-				{"Source JPG removed", filepath.Join(dirs[0], "IMG_0001.JPG"), false, nil, time.Time{}},
-				{"Source MP4 removed", filepath.Join(dirs[1], "IMG_0002.MP4"), false, nil, time.Time{}},
-			},
-		},
-		{
-			keepSrc: true,
-			desc:    "with keepSrc=true (files should be copied)",
-			tests: []struct {
-				desc        string
-				path        string
-				shouldExist bool
-				content     []byte
-				modTime     time.Time
-			}{
-				{"CR3 copied to destination", filepath.Join(photoDir, "IMG_0001.CR3"), true, []byte("cr3 content"), modTime},
-				{"JPG copied to destination", filepath.Join(photoDir, "IMG_0001.JPG"), true, []byte("jpg content"), modTime},
-				{"MP4 copied to destination", filepath.Join(videoDir, "IMG_0002.MP4"), true, []byte("mp4 content"), modTime.Add(time.Hour)},
-				{"Source CR3 kept", filepath.Join(dirs[0], "IMG_0001.CR3"), true, []byte("cr3 content"), modTime},
-				{"Source JPG kept", filepath.Join(dirs[0], "IMG_0001.JPG"), true, []byte("jpg content"), modTime},
-				{"Source MP4 kept", filepath.Join(dirs[1], "IMG_0002.MP4"), true, []byte("mp4 content"), modTime.Add(time.Hour)},
-				{"Ignored file not copied", filepath.Join(photoDir, "README.txt"), false, nil, time.Time{}},
-				{"Ignored file not copied", filepath.Join(photoDir, "IMG_1000.JPG"), false, nil, time.Time{}},
-			},
-		},
-	}
+		// Verify destination file content
+		dstContent, err := os.ReadFile(dstFile)
+		require.NoError(t, err, "Failed to read destination file")
+		assert.Equal(t, content, dstContent, "Destination file content mismatch")
 
-	for _, tc := range cases {
-		t.Run(tc.desc, func(t *testing.T) {
-			// Reset and recreate test directories for each case.
-			os.RemoveAll(photoDir)
-			os.RemoveAll(videoDir)
-			for _, dir := range dirs {
-				require.NoError(t, os.MkdirAll(dir, 0755), "Failed to create test directory: %s", dir)
-			}
+		// Verify destination modification time
+		// Use Truncate for potentially higher precision OS/filesystems
+		assert.True(t, modTime.Truncate(time.Second).Equal(info.ModTime().Truncate(time.Second)),
+			"Modification time mismatch: expected %v, got %v", modTime, info.ModTime())
 
-			// Create test files.
-			for _, tf := range testFiles {
-				require.NoError(t, os.WriteFile(tf.path, tf.content, 0644), "Failed to create test file: %s", tf.path)
-				require.NoError(t, os.Chtimes(tf.path, tf.modTime, tf.modTime), "Failed to set modtime for: %s", tf.path)
-			}
+		// Verify temp file is gone
+		_, err = os.Stat(dstFile + ".tmp")
+		assert.True(t, os.IsNotExist(err), "Temporary file should not exist after successful copy")
+	})
 
-			const totalSize = int64(1000) // TODO:
-			require.NoError(t, moveFilesAndFlatten(srcDir, photoDir, videoDir, tc.keepSrc, totalSize, bar))
+	// --- Success Case (Zero Byte File) ---
+	t.Run("SuccessZeroByte", func(t *testing.T) {
+		srcFile := filepath.Join(srcDir, "source_zero.txt")
+		dstFile := filepath.Join(dstDir, "subdir", "dest_zero.txt")
+		content := []byte{} // Empty content
+		modTime := time.Date(2023, 10, 27, 11, 0, 0, 0, time.UTC)
+		size := int64(0)
 
-			// Verify results.
-			for _, tt := range tc.tests {
-				t.Run(tt.desc, func(t *testing.T) {
-					info, err := os.Stat(tt.path)
-					if tt.shouldExist {
-						require.NoError(t, err, "Expected %s to exist", tt.path)
+		// Create source file
+		err := os.WriteFile(srcFile, content, 0644)
+		require.NoError(t, err, "Failed to create zero-byte source file")
 
-						// Check content.
-						got, err := os.ReadFile(tt.path)
-						require.NoError(t, err, "Failed to read file: %s", tt.path)
-						assert.Equal(t, string(tt.content), string(got), "Content mismatch for %s", tt.path)
+		// Perform the copy
+		err = copyFile(srcFile, dstFile, size, modTime, bar)
+		require.NoError(t, err, "copyFile failed for zero-byte file")
 
-						// Check modification time.
-						assert.True(t, info.ModTime().Equal(tt.modTime), "Modtime mismatch for %s: got %s, want %s",
-							tt.path, info.ModTime(), tt.modTime)
-					} else {
-						assert.True(t, os.IsNotExist(err), "Expected %s to not exist, but it does", tt.path)
-					}
-				})
-			}
-		})
-	}
+		// Verify destination file exists and is zero size
+		info, err := os.Stat(dstFile)
+		require.NoError(t, err, "Zero-byte destination file does not exist")
+		assert.Equal(t, int64(0), info.Size(), "Destination file should be zero bytes")
 
-	// TODO: check that CANON101 is deleted
-}
+		// Verify destination modification time
+		assert.True(t, modTime.Truncate(time.Second).Equal(info.ModTime().Truncate(time.Second)),
+			"Modification time mismatch for zero-byte file: expected %v, got %v", modTime, info.ModTime())
+	})
 
-func TestMoveFilesAndFlattenErrors(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "camedia-test-*")
-	require.NoError(t, err, "Failed to create temp directory")
-	defer os.RemoveAll(tmpDir)
+	// --- Error Case: Cannot Create Destination Directory ---
+	t.Run("ErrorCannotCreateDestDir", func(t *testing.T) {
+		// Create a read-only directory to prevent subdirectory creation
+		readOnlyBaseDir := t.TempDir()
+		err := os.Chmod(readOnlyBaseDir, 0555) // Read/execute only
+		require.NoError(t, err, "Failed to make base directory read-only")
+		// On some systems/CI, chmod might not prevent creation by root/owner,
+		// but it's the standard way to attempt this for a test.
 
-	srcDir := filepath.Join(tmpDir, "DCIM")
-	require.NoError(t, os.MkdirAll(srcDir, 0755), "Failed to create source directory")
+		srcFile := filepath.Join(srcDir, "source_err_dest.txt")
+		dstFile := filepath.Join(readOnlyBaseDir, "forbidden_subdir", "dest_err.txt")
+		content := []byte("should not be copied")
+		modTime := time.Now()
+		size := int64(len(content))
 
-	readOnlyDir := filepath.Join(tmpDir, "readonly")
-	require.NoError(t, os.MkdirAll(readOnlyDir, 0444), "Failed to create readonly directory")
+		// Create source file
+		err = os.WriteFile(srcFile, content, 0644)
+		require.NoError(t, err, "Failed to create source file for error test")
 
-	bar := progressbar.DefaultBytesSilent(-1, "moving:")
+		// Perform the copy - expect failure
+		err = copyFile(srcFile, dstFile, size, modTime, bar)
+		require.Error(t, err, "copyFile should have failed when destination directory cannot be created")
 
-	tests := []struct {
-		desc     string
-		srcDir   string
-		photoDir string
-		videoDir string
-		wantErr  bool
-	}{
-		{
-			desc:     "Source directory doesn't exist",
-			srcDir:   filepath.Join(tmpDir, "nonexistent"),
-			photoDir: filepath.Join(tmpDir, "photos"),
-			videoDir: filepath.Join(tmpDir, "videos"),
-			wantErr:  true,
-		},
-		{
-			desc:     "Can't create photo directory",
-			srcDir:   srcDir,
-			photoDir: filepath.Join(readOnlyDir, "photos"),
-			videoDir: filepath.Join(tmpDir, "videos"),
-			wantErr:  true,
-		},
-		{
-			desc:     "Can't create video directory",
-			srcDir:   srcDir,
-			photoDir: filepath.Join(tmpDir, "photos"),
-			videoDir: filepath.Join(readOnlyDir, "videos"),
-			wantErr:  true,
-		},
-	}
+		// Check if the error indicates a directory creation problem (optional, depends on exact error wrapping)
+		assert.ErrorContains(t, err, "failed to create dir")
 
-	for _, tt := range tests {
-		t.Run(tt.desc, func(t *testing.T) {
-			const totalSize = int64(1000) // TODO:
-			err := moveFilesAndFlatten(tt.srcDir, tt.photoDir, tt.videoDir, false, totalSize, bar)
-			if tt.wantErr {
-				assert.Error(t, err, "Expected an error but got none")
-			} else {
-				assert.NoError(t, err, "Got unexpected error")
-			}
-		})
-	}
+		// Verify destination file does not exist
+		_, err = os.Stat(dstFile)
+		assert.True(t, os.IsNotExist(err), "Destination file should not exist after failed copy")
+
+		// Verify temp file does not exist
+		_, err = os.Stat(dstFile + ".tmp")
+		assert.True(t, os.IsNotExist(err), "Temporary file should not exist after failed copy")
+
+		// Restore permissions for cleanup
+		os.Chmod(readOnlyBaseDir, 0755)
+	})
+
+	// --- Error Case: Source Does Not Exist ---
+	// (Lower priority per user feedback, but good to have)
+	t.Run("ErrorSourceNotExist", func(t *testing.T) {
+		srcFile := filepath.Join(srcDir, "nonexistent_source.txt")
+		dstFile := filepath.Join(dstDir, "dest_src_err.txt")
+		modTime := time.Now()
+		size := int64(100) // Size doesn't matter much here
+
+		err := copyFile(srcFile, dstFile, size, modTime, bar)
+		require.Error(t, err, "copyFile should fail if source doesn't exist")
+		assert.True(t, os.IsNotExist(err), "Error should be os.IsNotExist for missing source")
+
+		// Verify destination file does not exist
+		_, err = os.Stat(dstFile)
+		assert.True(t, os.IsNotExist(err), "Destination file should not exist when source is missing")
+	})
 }
 
 func TestIsDcimMediaDir(t *testing.T) {
