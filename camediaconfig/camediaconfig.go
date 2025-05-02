@@ -20,8 +20,7 @@ type CamediaConfig struct {
 
 	DefaultAlbums []string `mapstructure:"default_albums"`
 
-	OrigPhotoRoot  string `mapstructure:"orig_photo_root"`
-	ExportPhotoDir string `mapstructure:"export_photo_dir"`
+	MediaRoot string `mapstructure:"media_root"`
 
 	GooglePhotos struct {
 		ClientId     string `mapstructure:"client_id"`
@@ -39,6 +38,23 @@ type CamediaConfig struct {
 // ConfigPath returns the absolute path from which the configuration was loaded.
 func (c *CamediaConfig) ConfigPath() string {
 	return c.configPath
+}
+
+func (c *CamediaConfig) PhotoStagingDir() string {
+	return filepath.Join(c.MediaRoot, "photos-staging")
+}
+
+func (c *CamediaConfig) VideoStagingDir() string {
+	return filepath.Join(c.MediaRoot, "videos-staging")
+}
+
+func (c *CamediaConfig) Validate() error {
+	// Everything needs MediaRoot and this checks that there is a config.
+	if c.MediaRoot == "" {
+		return fmt.Errorf("media_root is not set")
+	}
+	// TODO: validate any other fields?
+	return nil
 }
 
 // getConfigPath determines where to store the config file.

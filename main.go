@@ -28,6 +28,9 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
+			if err := config.Validate(); err != nil {
+				return fmt.Errorf("invalid config: %w", err)
+			}
 			return nil
 		},
 	}
@@ -57,14 +60,29 @@ func main() {
 				os.Exit(1)
 			}
 
-			relTargetDir, err := commands.Import(config, srcDir, keep, time.Now())
+			res, err := commands.Import(config, srcDir, keep, time.Now())
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}
-			// TODO: don't say if there were no videos:
-			fmt.Println("imported photos to", relTargetDir)
-			// TODO: if there were videos, say to run upload command.
+
+			optColon := ""
+			if len(res.Photos) > 0 {
+				optColon = ":"
+			}
+			fmt.Printf("Imported %d photos:\n", len(res.Photos))
+			for dirName, count := range res.Photos {
+				fmt.Printf("\t%s: %d photos\n", dirName, count)
+			}
+
+			optColon = ""
+			if len(res.Videos) > 0 {
+				optColon = ":"
+			}
+			fmt.Printf("Imported %d videos%s\n", optColon, len(res.Videos))
+			for dirName, count := range res.Videos {
+				fmt.Printf("\t%s: %d videos\n", dirName, count)
+			}
 		},
 	}
 	importCmd.Flags().StringP("src", "s", "/Volumes/EOS_DIGITAL/", "Path to the source sdcard directory (defaults to auto-detect)")

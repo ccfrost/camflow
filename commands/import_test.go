@@ -101,56 +101,6 @@ func TestGetAvailableSpace(t *testing.T) {
 	assert.Greater(t, space, uint64(0), "Available space should be greater than 0 for files too")
 }
 
-func TestCheckNoDupBasenames(t *testing.T) {
-	tests := []struct {
-		name    string
-		files   []string
-		wantErr bool
-	}{
-		{
-			name: "no duplicates",
-			files: []string{
-				"/path/to/file1.jpg",
-				"/different/path/file2.jpg",
-				"/another/path/file3.jpg",
-			},
-			wantErr: false,
-		},
-		{
-			name: "has duplicates",
-			files: []string{
-				"/path/to/file1.jpg",
-				"/different/path/file1.jpg",
-			},
-			wantErr: true,
-		},
-		{
-			name:    "empty list",
-			files:   []string{},
-			wantErr: false,
-		},
-		{
-			name: "same name different case",
-			files: []string{
-				"/path/to/FILE1.jpg",
-				"/different/path/file1.jpg",
-			},
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := checkNoDupBasenames(tt.files)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
 func TestMoveFilesAndFlatten(t *testing.T) {
 	// Create temporary test directories
 	tmpDir, err := os.MkdirTemp("", "camedia-test-*")

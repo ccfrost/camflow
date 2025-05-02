@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -16,54 +17,38 @@ import (
 	"github.com/schollz/progressbar/v3"
 )
 
+type ImportDirEntry struct {
+	RelativeDir string
+	Count       int
+}
+type ImportResult struct {
+	Photos []ImportDirEntry
+	Videos []ImportDirEntry
+}
+
 // Import mvoes the DCIM/ files to the photo dir and the staging video dir.
 // It returns the relative target directory for the photos and any error.
-func Import(config camediaconfig.CamediaConfig, sdcardDir string, keepSrc bool, now time.Time) (string, error) {
-	targetVidDir, err := videoStagingDir()
-	if err != nil {
-		return "", fmt.Errorf("failed to get video staging dir: %w", err)
-	}
-	// Create so that it exists for getAvailableSpace.
-	if err := os.MkdirAll(targetVidDir, 0700); err != nil {
-		return "", fmt.Errorf("failed to create video staging dir: %w", err)
-	}
-
+func Import(config camediaconfig.CamediaConfig, sdcardDir string, keepSrc bool, now time.Time) (ImportResult, error) {
 	// Only look at files in $srcDir/DCIM/. Eg, ignore $srcDir/MISC/.
 	srcDir := filepath.Join(sdcardDir, "DCIM")
 
 	// TODO: Create todo “Process photos: <date> @ Photos” (which section?)
 
-	// Pick directory name for the photos.
-	// TODO: ?: change to date of most recent imported file, since the photos matter more than when they were imported.
-	targetPhotoDirRelName := now.Format("2006/01/02")
-	targetPhotoDir := filepath.Join(config.OrigPhotoRoot, targetPhotoDirRelName)
-
 	files, totalSize, err := getFilesAndSize(srcDir)
 	if err != nil {
-		return "", fmt.Errorf("failed to list import files: %w", err)
+		return ImportResult{}, fmt.Errorf("failed to list import files: %w", err)
 	}
 
 	// Check that there is sufficient space to move the files.
-	// XXX: assumes target photo and video dirs are on the same filesystem.
-	targetAvailable, err := getAvailableSpace(targetVidDir)
+	targetAvailable, err := getAvailableSpace(config.MediaRoot)
 	if err != nil {
-		return "", fmt.Errorf("failed to get available space: %w", err)
+		return ImportResult{}, fmt.Errorf("failed to get available space: %w", err)
 	}
 	const GiB = 1 << 30
 	if uint64(totalSize) > targetAvailable {
-		return "", fmt.Errorf(
+		return ImportResult{}, fmt.Errorf(
 			"not enough space in %s: need %d GiB more: %d GiB needed, %d GiB available",
-			targetVidDir, totalSize/GiB, targetAvailable/GiB, (uint64(totalSize)-targetAvailable)/GiB)
-	}
-
-	// Verify that there are no base filenames that appear multiple times.
-	// This could happen if there are multiple directories under DCIM/ and
-	// because this code flattens those directories.
-	// Fixes seem like a lot of work (on this code and/or on the copied filenames),
-	// so for now fail rather than silently drop such files or take on complications
-	// to deal with them.
-	if err := checkNoDupBasenames(files); err != nil {
-		return "", err
+			config.MediaRoot, totalSize/GiB, targetAvailable/GiB, (uint64(totalSize)-targetAvailable)/GiB)
 	}
 
 	// Move the files into the target dirs.
@@ -77,8 +62,9 @@ func Import(config camediaconfig.CamediaConfig, sdcardDir string, keepSrc bool, 
 		progressbar.OptionShowTotalBytes(true),
 		progressbar.OptionShowElapsedTimeOnFinish(),
 	)
-	if err := moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir, keepSrc, totalSize, bar); err != nil {
-		return "", fmt.Errorf("failed to mvoe files: %w", err)
+	importRes, err := moveFiles(config, srcDir, keepSrc, bar)
+	if err != nil {
+		return ImportResult{}, fmt.Errorf("failed to move files: %w", err)
 	}
 	if err := bar.Close(); err != nil {
 		fmt.Printf("warning: failed to close progress bar\n")
@@ -88,7 +74,7 @@ func Import(config camediaconfig.CamediaConfig, sdcardDir string, keepSrc bool, 
 		// Delete any leaf dirs that we moved files out of and are now empty, so that the
 		// camera will restart the names of dirs that it writes files into.
 		if err := deleteEmptyDirs(files); err != nil {
-			return "", fmt.Errorf("failed to remove empty dirs: %w", err)
+			return ImportResult{}, fmt.Errorf("failed to remove empty dirs: %w", err)
 		}
 	}
 
@@ -96,11 +82,11 @@ func Import(config camediaconfig.CamediaConfig, sdcardDir string, keepSrc bool, 
 	cmd := exec.Command("diskutil", "eject", sdcardDir)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("failed to eject disk at %s: %s, error: %w", sdcardDir, string(output), err)
+		return ImportResult{}, fmt.Errorf("failed to eject disk at %s: %s, error: %w", sdcardDir, string(output), err)
 	}
 	fmt.Printf("Ejected sdcard\n")
 
-	return targetPhotoDirRelName, nil
+	return importRes, nil
 }
 
 // getFilesAndSize returns the list of all files in dir and sum of their sizes.
@@ -156,31 +142,16 @@ func getAvailableSpace(dir string) (uint64, error) {
 	return availableBytes, nil
 }
 
-// checkNoDupBasenames checks that there are no duplicate basenames in the list of files.
-func checkNoDupBasenames(files []string) error {
-	basenames := make(map[string]struct{}, len(files))
-	for _, f := range files {
-		basename := filepath.Base(f)
-		if _, exists := basenames[basename]; exists {
-			return fmt.Errorf("at least two files have non-unique basenames; eg: %s", f)
-		}
-		basenames[basename] = struct{}{}
-	}
-	return nil
-}
+// moveFiles moves files from srcDir into the staging photo/video dirs for the date of each file.
+// It preserves the modification times.
+func moveFiles(config camediaconfig.CamediaConfig, srcDir string, keepSrc bool, bar *progressbar.ProgressBar) (ImportResult, error) {
+	photoDirs := make(map[string]int)
+	videoDirs := make(map[string]int)
 
-// moveFilesAndFlatten moves files from srcDir into the photo/video target dir.
-// It preserves the modification times and flattens the directories.
-func moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir string, keepSrc bool, totalBytes int64, bar *progressbar.ProgressBar) error {
-	// Ensure target directories exists.
-	if err := os.MkdirAll(targetPhotoDir, os.ModePerm); err != nil {
-		return fmt.Errorf("failed to create photo dir %s: %w", targetPhotoDir, err)
-	}
-	if err := os.MkdirAll(targetVidDir, os.ModePerm); err != nil {
-		return fmt.Errorf("failed to create video staging dir %s: %w", targetVidDir, err)
-	}
+	photoStagingRoot := config.PhotoStagingDir()
+	videoStagingRoot := config.VideoStagingDir()
 
-	return filepath.WalkDir(srcDir, func(path string, dirEnt fs.DirEntry, err error) error {
+	err := filepath.WalkDir(srcDir, func(path string, dirEnt fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -191,28 +162,32 @@ func moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir string, keepSrc bo
 			return nil
 		}
 
-		// Determine the target directory based on file extension.
-		var targetDir string
+		// Determine photo vs video based on file extension.
+		var stagingRoot string
 		switch filepath.Ext(dirEnt.Name()) {
 		case ".CR3", ".cr3", ".JPG", ".jpg":
-			targetDir = targetPhotoDir
+			stagingRoot = photoStagingRoot
 		case ".MP4", ".mp4":
-			targetDir = targetVidDir
+			stagingRoot = videoStagingRoot
 		default:
 			// Skip unsupported file types.
 			fmt.Printf("Skipping unsupported file: %s\n", path)
 			return nil
 		}
 
-		targetPath := filepath.Join(targetDir, dirEnt.Name())
+		// Compute target filename.
 		info, err := dirEnt.Info()
 		if err != nil {
 			return fmt.Errorf("failed to Info() %s: %w", path, err)
 		}
-		if err := copyFile(path, targetPath, info.Size(), bar); err != nil {
-			return err
-		}
-		if err := os.Chtimes(targetPath, info.ModTime(), info.ModTime()); err != nil {
+		relativeDir := info.ModTime().Format("2006/01/02")
+		dirEntPrefix := info.ModTime().Format("2006-01-02-")
+		targetPath := filepath.Join(stagingRoot, relativeDir, dirEntPrefix+dirEnt.Name())
+
+		// Note: this assumes that there are no duplicate camera file names created on the same day.
+		// That could happen, eg if the camera's counter is reset or if enough photos are taken in that day,
+		// but it is unlikely enough that we ignore it for now.
+		if err := copyFile(path, targetPath, info.Size(), info.ModTime(), bar); err != nil {
 			return err
 		}
 
@@ -224,22 +199,59 @@ func moveFilesAndFlatten(srcDir, targetPhotoDir, targetVidDir string, keepSrc bo
 
 		return nil
 	})
+	if err != nil {
+		return ImportResult{}, err
+	}
+
+	var result ImportResult
+	for dir, count := range photoDirs {
+		result.Photos = append(result.Photos, ImportDirEntry{
+			RelativeDir: dir,
+			Count:       count,
+		})
+	}
+	for dir, count := range videoDirs {
+		result.Videos = append(result.Videos, ImportDirEntry{
+			RelativeDir: dir,
+			Count:       count,
+		})
+	}
+	sort.Slice(result.Photos, func(i, j int) bool {
+		return result.Photos[i].RelativeDir < result.Photos[j].RelativeDir
+	})
+	sort.Slice(result.Videos, func(i, j int) bool {
+		return result.Videos[i].RelativeDir < result.Videos[j].RelativeDir
+	})
+	return result, nil
 }
 
-// copyFile creats a copy of src file at dst.
+// copyFile creats a copy of src file at dstFinal.
+// It creates the copy first a temporary file and then renames it to dstFinal.
 // It shares its progress via bar.
-func copyFile(src, dst string, size int64, bar *progressbar.ProgressBar) error {
+func copyFile(src, dstFinal string, size int64, modTime time.Time, bar *progressbar.ProgressBar) error {
+	dstTmp := dstFinal + ".tmp"
+
 	srcFile, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer srcFile.Close()
 
-	dstFile, err := os.Create(dst)
+	// Ensure target directories exists.
+	baseName := filepath.Dir(dstFinal)
+	if err := os.MkdirAll(baseName, os.ModePerm); err != nil {
+		return fmt.Errorf("failed to create dir %s: %w", baseName, err)
+	}
+
+	dstTmpFile, err := os.Create(dstTmp)
 	if err != nil {
 		return err
 	}
-	defer dstFile.Close()
+	defer func() {
+		if dstTmpFile != nil {
+			dstTmpFile.Close()
+		}
+	}()
 
 	buf := make([]byte, 1024*1024)
 
@@ -252,11 +264,24 @@ func copyFile(src, dst string, size int64, bar *progressbar.ProgressBar) error {
 			break
 		}
 
-		if _, err := dstFile.Write(buf[:n]); err != nil {
-			return fmt.Errorf("failed to write file %s: %w", dst, err)
+		if _, err := dstTmpFile.Write(buf[:n]); err != nil {
+			return fmt.Errorf("failed to write file %s: %w", dstTmp, err)
 		}
 
 		bar.Add(n)
+	}
+
+	if err := dstTmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close dst tmp file %s: %w", dstTmp, err)
+	}
+	dstTmpFile = nil
+
+	if err := os.Rename(dstTmp, dstFinal); err != nil {
+		return fmt.Errorf("failed to rename %s: %w", dstTmp, err)
+	}
+
+	if err := os.Chtimes(dstFinal, modTime, modTime); err != nil {
+		return err
 	}
 
 	return nil
