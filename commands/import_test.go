@@ -3,9 +3,11 @@ package commands
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
+	"github.com/ccfrost/camedia/camediaconfig"
 	"github.com/schollz/progressbar/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -99,6 +101,231 @@ func TestGetAvailableSpace(t *testing.T) {
 	space, err = getAvailableSpace(testFile)
 	require.NoError(t, err)
 	assert.Greater(t, space, uint64(0), "Available space should be greater than 0 for files too")
+}
+
+// createDummyFile creates dummy files for testing moveFiles.
+func createDummyFile(t *testing.T, path string, content string, modTime time.Time) {
+	t.Helper()
+	err := os.MkdirAll(filepath.Dir(path), 0755)
+	require.NoError(t, err, "Failed to create directory for dummy file: %s", filepath.Dir(path))
+	err = os.WriteFile(path, []byte(content), 0644)
+	require.NoError(t, err, "Failed to write dummy file: %s", path)
+	err = os.Chtimes(path, modTime, modTime)
+	require.NoError(t, err, "Failed to set mod time for dummy file: %s", path)
+}
+
+// setupMoveFilesTest sets up directories and config for moveFiles tests.
+func setupMoveFilesTest(t *testing.T) (config camediaconfig.CamediaConfig, srcRoot, photoStaging, videoStaging string, cleanup func()) {
+	t.Helper()
+	mediaRoot := t.TempDir()
+	sdcardRoot := t.TempDir()
+
+	srcRoot = filepath.Join(sdcardRoot, "DCIM")
+	photoStaging = filepath.Join(mediaRoot, "photos-staging")
+	videoStaging = filepath.Join(mediaRoot, "videos-staging")
+
+	// Create the base source DCIM directory
+	err := os.MkdirAll(srcRoot, 0755)
+	require.NoError(t, err)
+	// Create the base destination staging directories
+	err = os.MkdirAll(photoStaging, 0755)
+	require.NoError(t, err)
+	err = os.MkdirAll(videoStaging, 0755)
+	require.NoError(t, err)
+
+	config = camediaconfig.CamediaConfig{
+		MediaRoot: mediaRoot,
+		// Other config fields can be default/zero if not used by moveFiles directly
+	}
+
+	cleanup = func() {
+		// os.RemoveAll(mediaRoot) // Handled by t.TempDir()
+		// os.RemoveAll(sdcardRoot) // Handled by t.TempDir()
+	}
+
+	return config, srcRoot, photoStaging, videoStaging, cleanup
+}
+
+func TestMoveFiles(t *testing.T) {
+	bar := progressbar.DefaultBytesSilent(-1, "moving:")
+
+	// --- Test Case: Success, keepSrc=false ---
+	t.Run("SuccessKeepSrcFalse", func(t *testing.T) {
+		config, srcDir, photoStaging, videoStaging, cleanup := setupMoveFilesTest(t)
+		defer cleanup()
+
+		// Files with different dates and types
+		time1 := time.Date(2024, 5, 1, 10, 0, 0, 0, time.UTC)
+		time2 := time.Date(2024, 5, 2, 11, 0, 0, 0, time.UTC)
+		time3 := time.Date(2024, 5, 3, 12, 0, 0, 0, time.UTC)
+
+		srcPhoto1Path := filepath.Join(srcDir, "100CANON", "IMG_0001.JPG")
+		srcPhoto2Path := filepath.Join(srcDir, "100CANON", "IMG_0002.CR3")
+		srcPhoto3Path := filepath.Join(srcDir, "101CANON", "IMG_0004.JPG")
+		srcVideo1Path := filepath.Join(srcDir, "101CANON", "VID_0003.MP4")
+		srcUnsupportedPath := filepath.Join(srcDir, "100CANON", "NOTES.TXT")
+		srcMiscDirPath := filepath.Join(srcDir, "MISC", "OTHER.DAT") // Should be ignored by isDcimMediaDir
+
+		createDummyFile(t, srcPhoto1Path, "jpeg_content_1", time1)
+		createDummyFile(t, srcPhoto2Path, "raw_content_2", time2)
+		createDummyFile(t, srcPhoto3Path, "jpeg_content_4", time3)
+		createDummyFile(t, srcVideo1Path, "video_content_3", time1)
+		createDummyFile(t, srcUnsupportedPath, "unsupported", time1)
+		createDummyFile(t, srcMiscDirPath, "misc_data", time1)
+
+		// Expected target paths
+		expectedPhoto1Target := filepath.Join(photoStaging, "2024/05/01", "2024-05-01-IMG_0001.JPG")
+		expectedPhoto2Target := filepath.Join(photoStaging, "2024/05/02", "2024-05-02-IMG_0002.CR3")
+		expectedPhoto3Target := filepath.Join(photoStaging, "2024/05/03", "2024-05-03-IMG_0004.JPG")
+		expectedVideo1Target := filepath.Join(videoStaging, "2024/05/01", "2024-05-01-VID_0003.MP4")
+
+		// Run moveFiles
+		result, err := moveFiles(config, srcDir, false, bar) // keepSrc = false
+		require.NoError(t, err)
+
+		// Verify target files exist and content/modtime
+		content, err := os.ReadFile(expectedPhoto1Target)
+		require.NoError(t, err)
+		assert.Equal(t, "jpeg_content_1", string(content))
+		info, err := os.Stat(expectedPhoto1Target)
+		require.NoError(t, err)
+		assert.True(t, time1.Equal(info.ModTime()))
+
+		content, err = os.ReadFile(expectedPhoto2Target)
+		require.NoError(t, err)
+		assert.Equal(t, "raw_content_2", string(content))
+		info, err = os.Stat(expectedPhoto2Target)
+		require.NoError(t, err)
+		assert.True(t, time2.Equal(info.ModTime()))
+
+		// Verify third photo target
+		content, err = os.ReadFile(expectedPhoto3Target)
+		require.NoError(t, err)
+		assert.Equal(t, "jpeg_content_4", string(content))
+		info, err = os.Stat(expectedPhoto3Target)
+		require.NoError(t, err)
+		assert.True(t, time3.Equal(info.ModTime()))
+
+		content, err = os.ReadFile(expectedVideo1Target)
+		require.NoError(t, err)
+		assert.Equal(t, "video_content_3", string(content))
+		info, err = os.Stat(expectedVideo1Target)
+		require.NoError(t, err)
+		assert.True(t, time1.Equal(info.ModTime()))
+
+		// Verify source files were deleted
+		_, err = os.Stat(srcPhoto1Path)
+		assert.True(t, os.IsNotExist(err), "Source photo 1 should be deleted")
+		_, err = os.Stat(srcPhoto2Path)
+		assert.True(t, os.IsNotExist(err), "Source photo 2 should be deleted")
+		_, err = os.Stat(srcPhoto3Path) // Verify third photo source deleted
+		assert.True(t, os.IsNotExist(err), "Source photo 3 should be deleted")
+		_, err = os.Stat(srcVideo1Path)
+		assert.True(t, os.IsNotExist(err), "Source video 1 should be deleted")
+
+		// Verify unsupported/ignored files were NOT moved and NOT deleted
+		_, err = os.Stat(srcUnsupportedPath)
+		assert.NoError(t, err, "Unsupported source file should NOT be deleted")
+		_, err = os.Stat(filepath.Join(photoStaging, "2024/05/01", "2024-05-01-NOTES.TXT"))
+		assert.True(t, os.IsNotExist(err), "Unsupported file should NOT be moved")
+
+		_, err = os.Stat(srcMiscDirPath)
+		assert.NoError(t, err, "MISC dir source file should NOT be deleted")
+		_, err = os.Stat(filepath.Join(photoStaging, "2024/05/01", "2024-05-01-OTHER.DAT"))
+		assert.True(t, os.IsNotExist(err), "MISC dir file should NOT be moved")
+
+		// Verify ImportResult (Note: RelativeDir is the SOURCE directory)
+		// Now expect two entries for photos from different source dirs
+		expectedPhotoResult := []ImportDirEntry{
+			{RelativeDir: filepath.Dir(srcPhoto1Path), Count: 2}, // IMG_0001.JPG, IMG_0002.CR3 from 100CANON
+			{RelativeDir: filepath.Dir(srcPhoto3Path), Count: 1}, // IMG_0004.JPG from 101CANON
+		}
+		expectedVideoResult := []ImportDirEntry{
+			{RelativeDir: filepath.Dir(srcVideo1Path), Count: 1}, // VID_0003.MP4 from 101CANON
+		}
+		// Sort expected results for comparison as ElementsMatch doesn't care about order, but makes debugging easier
+		sort.Slice(expectedPhotoResult, func(i, j int) bool { return expectedPhotoResult[i].RelativeDir < expectedPhotoResult[j].RelativeDir })
+
+		assert.ElementsMatch(t, expectedPhotoResult, result.Photos)
+		assert.ElementsMatch(t, expectedVideoResult, result.Videos)
+	})
+
+	// --- Test Case: Success, keepSrc=true ---
+	t.Run("SuccessKeepSrcTrue", func(t *testing.T) {
+		config, srcDir, photoStaging, _, cleanup := setupMoveFilesTest(t)
+		defer cleanup()
+
+		time1 := time.Date(2024, 5, 1, 10, 0, 0, 0, time.UTC)
+		srcPhoto1Path := filepath.Join(srcDir, "100CANON", "IMG_0001.JPG")
+		createDummyFile(t, srcPhoto1Path, "jpeg_content_keep", time1)
+		expectedPhoto1Target := filepath.Join(photoStaging, "2024/05/01", "2024-05-01-IMG_0001.JPG")
+
+		// Run moveFiles
+		result, err := moveFiles(config, srcDir, true, bar) // keepSrc = true
+		require.NoError(t, err)
+
+		// Verify target file exists
+		_, err = os.Stat(expectedPhoto1Target)
+		require.NoError(t, err)
+
+		// Verify source file was NOT deleted
+		_, err = os.Stat(srcPhoto1Path)
+		assert.NoError(t, err, "Source photo 1 should NOT be deleted when keepSrc=true")
+
+		// Verify ImportResult
+		expectedPhotoResult := []ImportDirEntry{{RelativeDir: filepath.Dir(srcPhoto1Path), Count: 1}}
+		assert.ElementsMatch(t, expectedPhotoResult, result.Photos)
+		assert.Empty(t, result.Videos)
+	})
+
+	// --- Test Case: Empty Source Directory ---
+	t.Run("EmptySourceDir", func(t *testing.T) {
+		config, srcDir, _, _, cleanup := setupMoveFilesTest(t)
+		defer cleanup()
+
+		// Run moveFiles on an empty directory
+		result, err := moveFiles(config, srcDir, false, bar)
+		require.NoError(t, err)
+
+		// Verify ImportResult is empty
+		assert.Empty(t, result.Photos)
+		assert.Empty(t, result.Videos)
+	})
+
+	// --- Test Case: Copy Error (Destination Not Writable) ---
+	t.Run("ErrorCopyCannotWriteDest", func(t *testing.T) {
+		config, srcDir, photoStaging, _, cleanup := setupMoveFilesTest(t)
+		defer cleanup()
+
+		time1 := time.Date(2024, 5, 1, 10, 0, 0, 0, time.UTC)
+		srcPhoto1Path := filepath.Join(srcDir, "100CANON", "IMG_COPY_ERR.JPG")
+		createDummyFile(t, srcPhoto1Path, "copy_error_content", time1)
+
+		// Make the photo staging root read-only BEFORE calling moveFiles
+		err := os.Chmod(photoStaging, 0555)
+		require.NoError(t, err)
+		// Attempt to restore permissions during cleanup, might fail if test fails early
+		defer os.Chmod(photoStaging, 0755)
+
+		// Run moveFiles - expect failure during copyFile's MkdirAll or Create
+		result, err := moveFiles(config, srcDir, false, bar)
+		require.Error(t, err, "moveFiles should fail when destination is not writable")
+
+		// Check the error message indicates a permission or creation issue
+		assert.ErrorContains(t, err, "failed to create dir") // copyFile should fail here
+
+		// Verify ImportResult is empty because the operation failed
+		assert.Empty(t, result.Photos, "Photos result should be empty on error")
+		assert.Empty(t, result.Videos, "Videos result should be empty on error")
+
+		// Verify source file was NOT deleted because the copy failed
+		_, err = os.Stat(srcPhoto1Path)
+		assert.NoError(t, err, "Source file should NOT be deleted on copy error")
+	})
+
+	// Note: Testing os.Remove failure is complex to set up reliably across platforms
+	// without modifying code or requiring special permissions. The current code correctly
+	// returns the error from os.Remove if it occurs.
 }
 
 func TestCopyFile(t *testing.T) {
