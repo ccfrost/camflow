@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -146,6 +147,34 @@ func setupMoveFilesTest(t *testing.T) (config camediaconfig.CamediaConfig, srcRo
 	return config, srcRoot, photoStaging, videoStaging, cleanup
 }
 
+// Helper struct for defining test file scenarios
+type testFileCase struct {
+	srcRelPath string // Relative path within the source DCIM dir (e.g., "100CANON/IMG_0001.JPG")
+	content    string
+	modTime    time.Time
+	fileType   string // "photo", "video", "unsupported", "ignored"
+}
+
+// Helper function to calculate expected target path
+func calculateExpectedTargetPath(tc testFileCase, photoStaging, videoStaging string) string {
+	if tc.fileType != "photo" && tc.fileType != "video" {
+		return "" // No target for unsupported/ignored
+	}
+
+	year, month, day := tc.modTime.Date()
+	dateSubDir := fmt.Sprintf("%d/%02d/%02d", year, month, day)
+	baseName := filepath.Base(tc.srcRelPath)
+	targetBaseName := fmt.Sprintf("%d-%02d-%02d-%s", year, month, day, baseName)
+
+	var stagingDir string
+	if tc.fileType == "photo" {
+		stagingDir = photoStaging
+	} else {
+		stagingDir = videoStaging
+	}
+	return filepath.Join(stagingDir, dateSubDir, targetBaseName)
+}
+
 func TestMoveFiles(t *testing.T) {
 	bar := progressbar.DefaultBytesSilent(-1, "moving:")
 
@@ -154,128 +183,184 @@ func TestMoveFiles(t *testing.T) {
 		config, srcDir, photoStaging, videoStaging, cleanup := setupMoveFilesTest(t)
 		defer cleanup()
 
-		// Files with different dates and types
+		// Define test file scenarios declaratively
 		time1 := time.Date(2024, 5, 1, 10, 0, 0, 0, time.UTC)
 		time2 := time.Date(2024, 5, 2, 11, 0, 0, 0, time.UTC)
 		time3 := time.Date(2024, 5, 3, 12, 0, 0, 0, time.UTC)
 
-		srcPhoto1Path := filepath.Join(srcDir, "100CANON", "IMG_0001.JPG")
-		srcPhoto2Path := filepath.Join(srcDir, "100CANON", "IMG_0002.CR3")
-		srcPhoto3Path := filepath.Join(srcDir, "101CANON", "IMG_0004.JPG")
-		srcVideo1Path := filepath.Join(srcDir, "101CANON", "VID_0003.MP4")
-		srcUnsupportedPath := filepath.Join(srcDir, "100CANON", "NOTES.TXT")
-		srcMiscDirPath := filepath.Join(srcDir, "MISC", "OTHER.DAT") // Should be ignored by isDcimMediaDir
+		testCases := []testFileCase{
+			{srcRelPath: "100CANON/IMG_0001.JPG", content: "jpeg_content_1", modTime: time1, fileType: "photo"},
+			{srcRelPath: "100CANON/IMG_0002.CR3", content: "raw_content_2", modTime: time2, fileType: "photo"},
+			{srcRelPath: "101CANON/IMG_0004.JPG", content: "jpeg_content_4", modTime: time3, fileType: "photo"},
+			{srcRelPath: "101CANON/VID_0003.MP4", content: "video_content_3", modTime: time1, fileType: "video"},
+			{srcRelPath: "100CANON/NOTES.TXT", content: "unsupported", modTime: time1, fileType: "unsupported"},
+			{srcRelPath: "MISC/OTHER.DAT", content: "misc_data", modTime: time1, fileType: "ignored"}, // Ignored by isDcimMediaDir
+		}
 
-		createDummyFile(t, srcPhoto1Path, "jpeg_content_1", time1)
-		createDummyFile(t, srcPhoto2Path, "raw_content_2", time2)
-		createDummyFile(t, srcPhoto3Path, "jpeg_content_4", time3)
-		createDummyFile(t, srcVideo1Path, "video_content_3", time1)
-		createDummyFile(t, srcUnsupportedPath, "unsupported", time1)
-		createDummyFile(t, srcMiscDirPath, "misc_data", time1)
-
-		// Expected target paths
-		expectedPhoto1Target := filepath.Join(photoStaging, "2024/05/01", "2024-05-01-IMG_0001.JPG")
-		expectedPhoto2Target := filepath.Join(photoStaging, "2024/05/02", "2024-05-02-IMG_0002.CR3")
-		expectedPhoto3Target := filepath.Join(photoStaging, "2024/05/03", "2024-05-03-IMG_0004.JPG")
-		expectedVideo1Target := filepath.Join(videoStaging, "2024/05/01", "2024-05-01-VID_0003.MP4")
+		// Setup: Create source files
+		srcPaths := make(map[string]string) // Store full source paths for later verification
+		for _, tc := range testCases {
+			fullSrcPath := filepath.Join(srcDir, tc.srcRelPath)
+			srcPaths[tc.srcRelPath] = fullSrcPath
+			createDummyFile(t, fullSrcPath, tc.content, tc.modTime)
+		}
 
 		// Run moveFiles
 		result, err := moveFiles(config, srcDir, false, bar) // keepSrc = false
 		require.NoError(t, err)
 
-		// Verify target files exist and content/modtime
-		content, err := os.ReadFile(expectedPhoto1Target)
-		require.NoError(t, err)
-		assert.Equal(t, "jpeg_content_1", string(content))
-		info, err := os.Stat(expectedPhoto1Target)
-		require.NoError(t, err)
-		assert.True(t, time1.Equal(info.ModTime()))
+		// Verification: Check targets and source deletion
+		expectedPhotoResultMap := make(map[string]int)
+		expectedVideoResultMap := make(map[string]int)
 
-		content, err = os.ReadFile(expectedPhoto2Target)
-		require.NoError(t, err)
-		assert.Equal(t, "raw_content_2", string(content))
-		info, err = os.Stat(expectedPhoto2Target)
-		require.NoError(t, err)
-		assert.True(t, time2.Equal(info.ModTime()))
+		for _, tc := range testCases {
+			fullSrcPath := srcPaths[tc.srcRelPath]
+			expectedTarget := calculateExpectedTargetPath(tc, photoStaging, videoStaging)
 
-		// Verify third photo target
-		content, err = os.ReadFile(expectedPhoto3Target)
-		require.NoError(t, err)
-		assert.Equal(t, "jpeg_content_4", string(content))
-		info, err = os.Stat(expectedPhoto3Target)
-		require.NoError(t, err)
-		assert.True(t, time3.Equal(info.ModTime()))
+			if tc.fileType == "photo" || tc.fileType == "video" {
+				// Verify target file
+				require.NotEmpty(t, expectedTarget, "Expected target path should not be empty for %s", tc.srcRelPath)
+				content, err := os.ReadFile(expectedTarget)
+				require.NoError(t, err, "Failed to read target file %s for source %s", expectedTarget, tc.srcRelPath)
+				assert.Equal(t, tc.content, string(content), "Content mismatch for %s", tc.srcRelPath)
+				info, err := os.Stat(expectedTarget)
+				require.NoError(t, err, "Failed to stat target file %s for source %s", expectedTarget, tc.srcRelPath)
+				// Use Truncate for potentially higher precision OS/filesystems
+				assert.True(t, tc.modTime.Truncate(time.Second).Equal(info.ModTime().Truncate(time.Second)),
+					"ModTime mismatch for %s: expected %v, got %v", tc.srcRelPath, tc.modTime, info.ModTime())
 
-		content, err = os.ReadFile(expectedVideo1Target)
-		require.NoError(t, err)
-		assert.Equal(t, "video_content_3", string(content))
-		info, err = os.Stat(expectedVideo1Target)
-		require.NoError(t, err)
-		assert.True(t, time1.Equal(info.ModTime()))
+				// Verify source file deleted (since keepSrc=false)
+				_, err = os.Stat(fullSrcPath)
+				assert.True(t, os.IsNotExist(err), "Source file %s should be deleted", tc.srcRelPath)
 
-		// Verify source files were deleted
-		_, err = os.Stat(srcPhoto1Path)
-		assert.True(t, os.IsNotExist(err), "Source photo 1 should be deleted")
-		_, err = os.Stat(srcPhoto2Path)
-		assert.True(t, os.IsNotExist(err), "Source photo 2 should be deleted")
-		_, err = os.Stat(srcPhoto3Path) // Verify third photo source deleted
-		assert.True(t, os.IsNotExist(err), "Source photo 3 should be deleted")
-		_, err = os.Stat(srcVideo1Path)
-		assert.True(t, os.IsNotExist(err), "Source video 1 should be deleted")
+				// Add to expected result map
+				srcRelDir := filepath.Dir(fullSrcPath) // Use full path dir for map key
+				if tc.fileType == "photo" {
+					expectedPhotoResultMap[srcRelDir]++
+				} else {
+					expectedVideoResultMap[srcRelDir]++
+				}
 
-		// Verify unsupported/ignored files were NOT moved and NOT deleted
-		_, err = os.Stat(srcUnsupportedPath)
-		assert.NoError(t, err, "Unsupported source file should NOT be deleted")
-		_, err = os.Stat(filepath.Join(photoStaging, "2024/05/01", "2024-05-01-NOTES.TXT"))
-		assert.True(t, os.IsNotExist(err), "Unsupported file should NOT be moved")
-
-		_, err = os.Stat(srcMiscDirPath)
-		assert.NoError(t, err, "MISC dir source file should NOT be deleted")
-		_, err = os.Stat(filepath.Join(photoStaging, "2024/05/01", "2024-05-01-OTHER.DAT"))
-		assert.True(t, os.IsNotExist(err), "MISC dir file should NOT be moved")
-
-		// Verify ImportResult (Note: RelativeDir is the SOURCE directory)
-		// Now expect two entries for photos from different source dirs
-		expectedPhotoResult := []ImportDirEntry{
-			{RelativeDir: filepath.Dir(srcPhoto1Path), Count: 2}, // IMG_0001.JPG, IMG_0002.CR3 from 100CANON
-			{RelativeDir: filepath.Dir(srcPhoto3Path), Count: 1}, // IMG_0004.JPG from 101CANON
+			} else { // unsupported or ignored
+				// Verify target file does NOT exist
+				if expectedTarget != "" { // Should be empty, but check just in case
+					_, err = os.Stat(expectedTarget)
+					assert.True(t, os.IsNotExist(err), "Target file %s should NOT exist for unsupported/ignored source %s", expectedTarget, tc.srcRelPath)
+				}
+				// Verify source file was NOT deleted
+				_, err = os.Stat(fullSrcPath)
+				assert.NoError(t, err, "Source file %s should NOT be deleted", tc.srcRelPath)
+			}
 		}
-		expectedVideoResult := []ImportDirEntry{
-			{RelativeDir: filepath.Dir(srcVideo1Path), Count: 1}, // VID_0003.MP4 from 101CANON
+
+		// Convert expected result maps to slices for comparison
+		expectedPhotoResult := []ImportDirEntry{}
+		for dir, count := range expectedPhotoResultMap {
+			expectedPhotoResult = append(expectedPhotoResult, ImportDirEntry{RelativeDir: dir, Count: count})
 		}
-		// Sort expected results for comparison as ElementsMatch doesn't care about order, but makes debugging easier
+		expectedVideoResult := []ImportDirEntry{}
+		for dir, count := range expectedVideoResultMap {
+			expectedVideoResult = append(expectedVideoResult, ImportDirEntry{RelativeDir: dir, Count: count})
+		}
+
+		// Sort slices for consistent comparison with ElementsMatch (optional but good practice)
 		sort.Slice(expectedPhotoResult, func(i, j int) bool { return expectedPhotoResult[i].RelativeDir < expectedPhotoResult[j].RelativeDir })
+		sort.Slice(expectedVideoResult, func(i, j int) bool { return expectedVideoResult[i].RelativeDir < expectedVideoResult[j].RelativeDir })
+		sort.Slice(result.Photos, func(i, j int) bool { return result.Photos[i].RelativeDir < result.Photos[j].RelativeDir })
+		sort.Slice(result.Videos, func(i, j int) bool { return result.Videos[i].RelativeDir < result.Videos[j].RelativeDir })
 
-		assert.ElementsMatch(t, expectedPhotoResult, result.Photos)
-		assert.ElementsMatch(t, expectedVideoResult, result.Videos)
+		assert.ElementsMatch(t, expectedPhotoResult, result.Photos, "Photo import results mismatch")
+		assert.ElementsMatch(t, expectedVideoResult, result.Videos, "Video import results mismatch")
 	})
 
 	// --- Test Case: Success, keepSrc=true ---
 	t.Run("SuccessKeepSrcTrue", func(t *testing.T) {
-		config, srcDir, photoStaging, _, cleanup := setupMoveFilesTest(t)
+		config, srcDir, photoStaging, videoStaging, cleanup := setupMoveFilesTest(t)
 		defer cleanup()
 
+		// Define test file scenarios
 		time1 := time.Date(2024, 5, 1, 10, 0, 0, 0, time.UTC)
-		srcPhoto1Path := filepath.Join(srcDir, "100CANON", "IMG_0001.JPG")
-		createDummyFile(t, srcPhoto1Path, "jpeg_content_keep", time1)
-		expectedPhoto1Target := filepath.Join(photoStaging, "2024/05/01", "2024-05-01-IMG_0001.JPG")
+		time2 := time.Date(2024, 5, 2, 11, 0, 0, 0, time.UTC)
+
+		testCases := []testFileCase{
+			{srcRelPath: "100CANON/IMG_0001.JPG", content: "jpeg_content_keep", modTime: time1, fileType: "photo"},
+			{srcRelPath: "101CANON/VID_0002.MP4", content: "video_content_keep", modTime: time2, fileType: "video"},
+			{srcRelPath: "100CANON/NOTES.TXT", content: "unsupported_keep", modTime: time1, fileType: "unsupported"},
+		}
+
+		// Setup: Create source files
+		srcPaths := make(map[string]string)
+		for _, tc := range testCases {
+			fullSrcPath := filepath.Join(srcDir, tc.srcRelPath)
+			srcPaths[tc.srcRelPath] = fullSrcPath
+			createDummyFile(t, fullSrcPath, tc.content, tc.modTime)
+		}
 
 		// Run moveFiles
 		result, err := moveFiles(config, srcDir, true, bar) // keepSrc = true
 		require.NoError(t, err)
 
-		// Verify target file exists
-		_, err = os.Stat(expectedPhoto1Target)
-		require.NoError(t, err)
+		// Verification: Check targets and source *retention*
+		expectedPhotoResultMap := make(map[string]int)
+		expectedVideoResultMap := make(map[string]int)
 
-		// Verify source file was NOT deleted
-		_, err = os.Stat(srcPhoto1Path)
-		assert.NoError(t, err, "Source photo 1 should NOT be deleted when keepSrc=true")
+		for _, tc := range testCases {
+			fullSrcPath := srcPaths[tc.srcRelPath]
+			expectedTarget := calculateExpectedTargetPath(tc, photoStaging, videoStaging)
 
-		// Verify ImportResult
-		expectedPhotoResult := []ImportDirEntry{{RelativeDir: filepath.Dir(srcPhoto1Path), Count: 1}}
-		assert.ElementsMatch(t, expectedPhotoResult, result.Photos)
-		assert.Empty(t, result.Videos)
+			if tc.fileType == "photo" || tc.fileType == "video" {
+				// Verify target file
+				require.NotEmpty(t, expectedTarget, "Expected target path should not be empty for %s", tc.srcRelPath)
+				content, err := os.ReadFile(expectedTarget)
+				require.NoError(t, err, "Failed to read target file %s for source %s", expectedTarget, tc.srcRelPath)
+				assert.Equal(t, tc.content, string(content), "Content mismatch for %s", tc.srcRelPath)
+				info, err := os.Stat(expectedTarget)
+				require.NoError(t, err, "Failed to stat target file %s for source %s", expectedTarget, tc.srcRelPath)
+				assert.True(t, tc.modTime.Truncate(time.Second).Equal(info.ModTime().Truncate(time.Second)),
+					"ModTime mismatch for %s: expected %v, got %v", tc.srcRelPath, tc.modTime, info.ModTime())
+
+				// Verify source file was NOT deleted (since keepSrc=true)
+				_, err = os.Stat(fullSrcPath)
+				assert.NoError(t, err, "Source file %s should NOT be deleted when keepSrc=true", tc.srcRelPath)
+
+				// Add to expected result map
+				srcRelDir := filepath.Dir(fullSrcPath)
+				if tc.fileType == "photo" {
+					expectedPhotoResultMap[srcRelDir]++
+				} else {
+					expectedVideoResultMap[srcRelDir]++
+				}
+
+			} else { // unsupported or ignored
+				// Verify target file does NOT exist
+				if expectedTarget != "" {
+					_, err = os.Stat(expectedTarget)
+					assert.True(t, os.IsNotExist(err), "Target file %s should NOT exist for unsupported/ignored source %s", expectedTarget, tc.srcRelPath)
+				}
+				// Verify source file was NOT deleted
+				_, err = os.Stat(fullSrcPath)
+				assert.NoError(t, err, "Source file %s should NOT be deleted", tc.srcRelPath)
+			}
+		}
+
+		// Convert expected result maps to slices
+		expectedPhotoResult := []ImportDirEntry{}
+		for dir, count := range expectedPhotoResultMap {
+			expectedPhotoResult = append(expectedPhotoResult, ImportDirEntry{RelativeDir: dir, Count: count})
+		}
+		expectedVideoResult := []ImportDirEntry{}
+		for dir, count := range expectedVideoResultMap {
+			expectedVideoResult = append(expectedVideoResult, ImportDirEntry{RelativeDir: dir, Count: count})
+		}
+
+		// Sort slices for consistent comparison
+		sort.Slice(expectedPhotoResult, func(i, j int) bool { return expectedPhotoResult[i].RelativeDir < expectedPhotoResult[j].RelativeDir })
+		sort.Slice(expectedVideoResult, func(i, j int) bool { return expectedVideoResult[i].RelativeDir < expectedVideoResult[j].RelativeDir })
+		sort.Slice(result.Photos, func(i, j int) bool { return result.Photos[i].RelativeDir < result.Photos[j].RelativeDir })
+		sort.Slice(result.Videos, func(i, j int) bool { return result.Videos[i].RelativeDir < result.Videos[j].RelativeDir })
+
+		assert.ElementsMatch(t, expectedPhotoResult, result.Photos, "Photo import results mismatch (keepSrc=true)")
+		assert.ElementsMatch(t, expectedVideoResult, result.Videos, "Video import results mismatch (keepSrc=true)")
 	})
 
 	// --- Test Case: Empty Source Directory ---
