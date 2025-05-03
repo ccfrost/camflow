@@ -167,8 +167,10 @@ func moveFiles(config camediaconfig.CamediaConfig, srcDir string, keepSrc bool, 
 		switch filepath.Ext(dirEnt.Name()) {
 		case ".CR3", ".cr3", ".JPG", ".jpg":
 			stagingRoot = photoStagingRoot
+			photoDirs[filepath.Dir(path)]++
 		case ".MP4", ".mp4":
 			stagingRoot = videoStagingRoot
+			videoDirs[filepath.Dir(path)]++
 		default:
 			// Skip unsupported file types.
 			fmt.Printf("Skipping unsupported file: %s\n", path)
