@@ -116,26 +116,27 @@ func createDummyFile(t *testing.T, path string, content string, modTime time.Tim
 }
 
 // setupMoveFilesTest sets up directories and config for moveFiles tests.
-func setupMoveFilesTest(t *testing.T) (config camediaconfig.CamediaConfig, srcRoot, photoStaging, videoStaging string, cleanup func()) {
+func setupMoveFilesTest(t *testing.T) (config camediaconfig.CamediaConfig, srcRoot, photosOrigRoot, videosOrigStagingRoot string, cleanup func()) {
 	t.Helper()
-	mediaRoot := t.TempDir()
 	sdcardRoot := t.TempDir()
+	mediaRoot := t.TempDir()
 
 	srcRoot = filepath.Join(sdcardRoot, "DCIM")
-	photoStaging = filepath.Join(mediaRoot, "photos-staging")
-	videoStaging = filepath.Join(mediaRoot, "videos-staging")
+	photosOrigRoot = filepath.Join(mediaRoot, "photos-orig")
+	videosOrigStagingRoot = filepath.Join(mediaRoot, "videos-orig-staging")
 
 	// Create the base source DCIM directory
 	err := os.MkdirAll(srcRoot, 0755)
 	require.NoError(t, err)
-	// Create the base destination staging directories
-	err = os.MkdirAll(photoStaging, 0755)
+	// Create the base destination directories
+	err = os.MkdirAll(photosOrigRoot, 0755)
 	require.NoError(t, err)
-	err = os.MkdirAll(videoStaging, 0755)
+	err = os.MkdirAll(videosOrigStagingRoot, 0755)
 	require.NoError(t, err)
 
 	config = camediaconfig.CamediaConfig{
-		MediaRoot: mediaRoot,
+		PhotosOrigRoot:        photosOrigRoot,
+		VideosOrigStagingRoot: videosOrigStagingRoot,
 		// Other config fields can be default/zero if not used by moveFiles directly
 	}
 
@@ -144,7 +145,7 @@ func setupMoveFilesTest(t *testing.T) (config camediaconfig.CamediaConfig, srcRo
 		// os.RemoveAll(sdcardRoot) // Handled by t.TempDir()
 	}
 
-	return config, srcRoot, photoStaging, videoStaging, cleanup
+	return config, srcRoot, photosOrigRoot, videosOrigStagingRoot, cleanup
 }
 
 // Helper struct for defining test file scenarios

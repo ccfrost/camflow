@@ -40,7 +40,9 @@ func Import(config camediaconfig.CamediaConfig, sdcardDir string, keepSrc bool, 
 	}
 
 	// Check that there is sufficient space to move the files.
-	targetAvailable, err := getAvailableSpace(config.MediaRoot)
+	// TODO: check whether VideosStagingRoot is on the same filesystem as PhotosOrigRoot
+	// and check apppropriately.
+	targetAvailable, err := getAvailableSpace(config.PhotosOrigRoot)
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("failed to get available space: %w", err)
 	}
@@ -48,7 +50,7 @@ func Import(config camediaconfig.CamediaConfig, sdcardDir string, keepSrc bool, 
 	if uint64(totalSize) > targetAvailable {
 		return ImportResult{}, fmt.Errorf(
 			"not enough space in %s: need %d GiB more: %d GiB needed, %d GiB available",
-			config.MediaRoot, totalSize/GiB, targetAvailable/GiB, (uint64(totalSize)-targetAvailable)/GiB)
+			config.PhotosOrigRoot, totalSize/GiB, targetAvailable/GiB, (uint64(totalSize)-targetAvailable)/GiB)
 	}
 
 	// Move the files into the target dirs.
@@ -148,9 +150,6 @@ func moveFiles(config camediaconfig.CamediaConfig, srcDir string, keepSrc bool, 
 	photoDirs := make(map[string]int)
 	videoDirs := make(map[string]int)
 
-	photoStagingRoot := config.PhotoStagingDir()
-	videoStagingRoot := config.VideoStagingDir()
-
 	err := filepath.WalkDir(srcDir, func(path string, dirEnt fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -163,13 +162,13 @@ func moveFiles(config camediaconfig.CamediaConfig, srcDir string, keepSrc bool, 
 		}
 
 		// Determine photo vs video based on file extension.
-		var stagingRoot string
+		var targetRoot string
 		switch filepath.Ext(dirEnt.Name()) {
 		case ".CR3", ".cr3", ".JPG", ".jpg":
-			stagingRoot = photoStagingRoot
+			targetRoot = config.PhotosOrigRoot
 			photoDirs[filepath.Dir(path)]++
 		case ".MP4", ".mp4":
-			stagingRoot = videoStagingRoot
+			targetRoot = config.VideosOrigStagingRoot
 			videoDirs[filepath.Dir(path)]++
 		default:
 			// Skip unsupported file types.
@@ -184,7 +183,7 @@ func moveFiles(config camediaconfig.CamediaConfig, srcDir string, keepSrc bool, 
 		}
 		relativeDir := info.ModTime().Format("2006/01/02")
 		dirEntPrefix := info.ModTime().Format("2006-01-02-")
-		targetPath := filepath.Join(stagingRoot, relativeDir, dirEntPrefix+dirEnt.Name())
+		targetPath := filepath.Join(targetRoot, relativeDir, dirEntPrefix+dirEnt.Name())
 
 		// Note: this assumes that there are no duplicate camera file names created on the same day.
 		// That could happen, eg if the camera's counter is reset or if enough photos are taken in that day,

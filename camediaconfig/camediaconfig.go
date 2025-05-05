@@ -20,7 +20,12 @@ type CamediaConfig struct {
 
 	DefaultAlbums []string `mapstructure:"default_albums"`
 
-	MediaRoot string `mapstructure:"media_root"`
+	PhotosOrigRoot         string `mapstructure:"photos_orig_root"`
+	PhotosExportStagingDir string `mapstructure:"photos_export_staging_dir"`
+	PhotosExportDir        string `mapstructure:"photos_export_dir"`
+
+	VideosOrigStagingRoot string `mapstructure:"videos_orig_staging_root"`
+	VideosOrigRoot        string `mapstructure:"videos_orig_root"`
 
 	GooglePhotos struct {
 		ClientId     string `mapstructure:"client_id"`
@@ -40,18 +45,13 @@ func (c *CamediaConfig) ConfigPath() string {
 	return c.configPath
 }
 
-func (c *CamediaConfig) PhotoStagingDir() string {
-	return filepath.Join(c.MediaRoot, "photos-staging")
-}
-
-func (c *CamediaConfig) VideoStagingDir() string {
-	return filepath.Join(c.MediaRoot, "videos-staging")
-}
-
 func (c *CamediaConfig) Validate() error {
-	// Everything needs MediaRoot and this checks that there is a config.
-	if c.MediaRoot == "" {
-		return fmt.Errorf("media_root is not set")
+	// Check that at least a base set of fields have values.
+	if c.PhotosOrigRoot == "" || c.PhotosExportStagingDir == "" || c.PhotosExportDir == "" {
+		return fmt.Errorf("missing photos field")
+	}
+	if c.VideosOrigStagingRoot == "" || c.VideosOrigRoot == "" {
+		return fmt.Errorf("missing videos field")
 	}
 	// TODO: validate any other fields?
 	return nil
