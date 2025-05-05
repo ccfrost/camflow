@@ -234,7 +234,7 @@ func TestMoveFiles(t *testing.T) {
 				assert.True(t, os.IsNotExist(err), "Source file %s should be deleted", tc.srcRelPath)
 
 				// Add to expected result map
-				srcRelDir := filepath.Dir(fullSrcPath) // Use full path dir for map key
+				srcRelDir := filepath.Dir(fullSrcPath)
 				if tc.fileType == "photo" {
 					expectedPhotoResultMap[srcRelDir]++
 				} else {
