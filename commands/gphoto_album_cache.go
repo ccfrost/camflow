@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	gphotos "github.com/gphotosuploader/google-photos-api-client-go/v3"
+	"golang.org/x/time/rate"
 )
 
 const albumCacheFileName = "google_photos_album_cache.json"
@@ -67,76 +68,107 @@ func (c *albumCache) save() error {
 	return nil
 }
 
-// getOrFetchAlbumIDs retrieves album IDs for the given titles, using the cache
-// and fetching from the API if necessary. It returns an error if any album is not found.
-func (c *albumCache) getOrFetchAlbumIDs(ctx context.Context, albumsService gphotos.AlbumsService, titles []string) ([]string, error) {
-	c.mu.Lock() // Lock for potential modification
+// getOrFetchAndCreateAlbumIDs retrieves album IDs for the given titles,
+// using the cache, fetching from the API, or creating them if necessary.
+// It uses a rate limiter for API calls and preserves the order of IDs.
+func (c *albumCache) getOrFetchAndCreateAlbumIDs(
+	ctx context.Context,
+	albumsService gphotos.AlbumsService,
+	titles []string,
+	limiter *rate.Limiter,
+) ([]string, error) {
+	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	ids := make([]string, 0, len(titles))
-	missingTitles := make([]string, 0)
-	titleSet := make(map[string]struct{}) // For quick lookup
+	finalIDs := make([]string, len(titles))
+	titlesToProcessMap := make(map[string]int) // title -> original index
+	processedCount := 0
 
-	// TODO: is ids correct if there was a non-cached entry?
-	for _, title := range titles {
+	// 1. Check cache first and prepare for processing
+	for i, title := range titles {
 		if id, found := c.Albums[title]; found {
-			ids = append(ids, id)
-			titleSet[title] = struct{}{}
+			finalIDs[i] = id
+			processedCount++
 		} else {
-			missingTitles = append(missingTitles, title)
-			titleSet[title] = struct{}{}
+			titlesToProcessMap[title] = i // Store original index for later placement
 		}
 	}
 
-	if len(missingTitles) == 0 {
-		return ids, nil // All found in cache
+	if processedCount == len(titles) {
+		return finalIDs, nil // All found in cache and correctly ordered
 	}
 
-	fmt.Printf("Cache miss for albums: %v. Fetching from Google Photos...\n", missingTitles)
+	fmt.Printf("Cache miss for some albums. Titles needing processing: %v. Fetching from Google Photos...\n", getKeys(titlesToProcessMap))
+	needsSave := false
 
-	// Fetch all albums from Google Photos API
+	// 2. Fetch all albums from Google Photos API to find existing ones among titlesToProcessMap
+	if err := limiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("rate limiter error before listing albums: %w", err)
+	}
 	fetchedAlbums, err := albumsService.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list albums from Google Photos API: %w", err)
 	}
 
-	foundCount := 0
-	needsSave := false
 	for _, album := range fetchedAlbums {
-		if _, needed := titleSet[album.Title]; needed {
-			// TODO: update cache for already cached names, in case the id changed.
-			if _, alreadyCached := c.Albums[album.Title]; !alreadyCached {
-				c.Albums[album.Title] = album.ID
-				fmt.Printf("Found and cached album: '%s' (ID: %s)\n", album.Title, album.ID)
-				needsSave = true
-			}
-			// Check if this fetched album was one we were missing
-			for i, missing := range missingTitles {
-				if album.Title == missing {
-					ids = append(ids, album.ID)
-					// Remove from missing list (swap with last element and shrink)
-					missingTitles[i] = missingTitles[len(missingTitles)-1]
-					missingTitles = missingTitles[:len(missingTitles)-1]
-					foundCount++
-					break
-				}
-			}
+		if originalIndex, needed := titlesToProcessMap[album.Title]; needed {
+			fmt.Printf("Found album online: '%s' (ID: %s)\n", album.Title, album.ID)
+			c.Albums[album.Title] = album.ID // Update cache
+			finalIDs[originalIndex] = album.ID
+			delete(titlesToProcessMap, album.Title) // Mark as processed
+			needsSave = true
+			processedCount++
 		}
 	}
 
-	// Save synchronously if changes were made
+	// 3. Create albums that are still in titlesToProcessMap (i.e., not cached, not found online)
+	for titleToCreate, originalIndex := range titlesToProcessMap {
+		fmt.Printf("Album '%s' not found in cache or online. Creating...\n", titleToCreate)
+		if err := limiter.Wait(ctx); err != nil {
+			return nil, fmt.Errorf("rate limiter error before creating album '%s': %w", titleToCreate, err)
+		}
+		newAlbum, err := albumsService.Create(ctx, titleToCreate)
+		if err != nil {
+			// If creation fails, this is a significant issue for the intended operation.
+			return nil, fmt.Errorf("failed to create album '%s': %w", titleToCreate, err)
+		}
+		fmt.Printf("Successfully created and cached album: '%s' (ID: %s)\n", newAlbum.Title, newAlbum.ID)
+		c.Albums[newAlbum.Title] = newAlbum.ID
+		finalIDs[originalIndex] = newAlbum.ID
+		// No need to delete from titlesToProcessMap here as we are iterating over it
+		needsSave = true
+		processedCount++
+	}
+
+	// 4. Save cache if any changes were made
 	if needsSave {
 		fmt.Println("Saving updated album cache...")
 		if err := c.save(); err != nil {
-			// Return the save error, as it might indicate a persistent problem
 			return nil, fmt.Errorf("error saving updated album cache: %w", err)
 		}
 	}
 
-	// Check if any titles are still missing after fetching
-	if len(missingTitles) > 0 {
-		return nil, fmt.Errorf("the following albums were not found in Google Photos: %v", missingTitles)
+	// Final check: ensure all titles were processed and have an ID.
+	if processedCount != len(titles) {
+		// This indicates a logic error or an unhandled case.
+		// Collect missing titles for a more informative error.
+		missingDebug := []string{}
+		for i, id := range finalIDs {
+			if id == "" {
+				missingDebug = append(missingDebug, titles[i])
+			}
+		}
+		return finalIDs, fmt.Errorf("could not resolve all album titles; expected %d IDs, processed %d. Missing for: %v", len(titles), processedCount, missingDebug)
 	}
 
-	return ids, nil
+	return finalIDs, nil
+}
+
+// Helper function to get keys from a map for printing (order not guaranteed)
+func getKeys(m map[string]int) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }

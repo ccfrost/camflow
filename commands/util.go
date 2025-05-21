@@ -1,12 +1,5 @@
 package commands
 
-import (
-	"fmt"
-	"os"
-	"path/filepath"
-	"runtime"
-)
-
 // TODO: delete
 /*
 // videoStagingDirFunc defines the type for the function that gets the staging directory.
@@ -34,6 +27,8 @@ func videoStagingDir() (string, error) {
 
 // videoStagingDir returns the path to the video staging directory.
 // Note that the path may not exist.
+// TODO: remove?
+/*
 func videoStagingDir() (string, error) {
 	const appName = "camedia"
 
@@ -67,3 +62,4 @@ func videoStagingDir() (string, error) {
 
 	return appStagingDir, nil
 }
+*/
