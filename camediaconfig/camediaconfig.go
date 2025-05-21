@@ -18,8 +18,6 @@ type CamediaConfig struct {
 	// The path from which this config was loaded.
 	configPath string `mapstructure:"-"` // Mark as transient for mapstructure
 
-	DefaultAlbums []string `mapstructure:"default_albums"`
-
 	PhotosOrigRoot         string `mapstructure:"photos_orig_root"`
 	PhotosExportStagingDir string `mapstructure:"photos_export_staging_dir"`
 	PhotosExportDir        string `mapstructure:"photos_export_dir"`
@@ -31,6 +29,8 @@ type CamediaConfig struct {
 		ClientId     string `mapstructure:"client_id"`
 		ClientSecret string `mapstructure:"client_secret"`
 		RedirectURI  string `mapstructure:"redirect_uri"`
+
+		DefaultAlbums []string `mapstructure:"default_albums"`
 
 		ToFavAlbumMinNumStars int            `mapstructure:"to_fav_album_min_num_stars"`
 		ToFavAlbumName        string         `mapstructure:"to_fav_album_name"`
