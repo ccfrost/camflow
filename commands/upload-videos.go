@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings" // Added import
 	"time"
 
 	"github.com/ccfrost/camedia/camediaconfig"
@@ -99,20 +100,41 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, confi
 		return fmt.Errorf("failed to load album cache: %w", err)
 	}
 
-	var defaultAlbums map[string]string
+	// Prepare map for albumID -> albumTitle for videos
+	resolvedTargetAlbums := make(map[string]string)
+
 	if len(config.GooglePhotos.DefaultAlbums) > 0 {
-		var targetAlbumIDs []string
-		targetAlbumIDs, err = cache.getOrFetchAndCreateAlbumIDs(ctx, gphotosClient.Albums, config.GooglePhotos.DefaultAlbums, limiter)
-		if err != nil {
-			return err
+		// Filter out any empty album titles to avoid processing them
+		var validAlbumTitles []string
+		for _, title := range config.GooglePhotos.DefaultAlbums {
+			if strings.TrimSpace(title) != "" {
+				validAlbumTitles = append(validAlbumTitles, title)
+			}
 		}
-		if len(targetAlbumIDs) > 0 {
-			fmt.Printf("Target album IDs resolved/created: %v\n", targetAlbumIDs)
-		}
-		for i, id := range targetAlbumIDs {
-			defaultAlbums[id] = config.GooglePhotos.DefaultAlbums[i]
+
+		if len(validAlbumTitles) > 0 {
+			albumIDs, errAlbumResolve := cache.getOrFetchAndCreateAlbumIDs(ctx, gphotosClient.Albums, validAlbumTitles, limiter)
+			if errAlbumResolve != nil {
+				return fmt.Errorf("failed to resolve or create album IDs for titles %v: %w", validAlbumTitles, errAlbumResolve)
+			}
+			
+			if len(albumIDs) > 0 { // Only print if IDs were actually found/created
+				fmt.Printf("Target album IDs resolved/created: %v for titles: %v\n", albumIDs, validAlbumTitles)
+			}
+			
+			// Populate resolvedTargetAlbums, mapping ID to its corresponding Title
+			// This assumes getOrFetchAndCreateAlbumIDs returns IDs in the same order as titles
+			// and that all titles successfully resolve to an ID if no error is returned.
+			for i, id := range albumIDs {
+				if id != "" { 
+					resolvedTargetAlbums[id] = validAlbumTitles[i]
+				}
+			}
+		} else if len(config.GooglePhotos.DefaultAlbums) > 0 { // Original list had titles, but all were empty/whitespace
+			fmt.Println("Warning: DefaultAlbums list in config contains only empty or whitespace titles.")
 		}
 	}
+	// If resolvedTargetAlbums is empty at this point, videos are uploaded to library only.
 
 	// --- Upload Loop ---
 
@@ -122,8 +144,8 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, confi
 	)
 
 	for _, videoInfo := range videosToUpload {
-		// Pass limiter to uploadVideo
-		if err := uploadVideo(ctx, config, keepStaging, gphotosClient, videoInfo.path, videoInfo.size, defaultAlbums, bar, limiter); err != nil {
+		// Pass resolvedTargetAlbums (albumID -> albumTitle map) to uploadVideo
+		if err := uploadVideo(ctx, config, keepStaging, gphotosClient, videoInfo.path, videoInfo.size, resolvedTargetAlbums, bar, limiter); err != nil {
 			// If uploadVideo returns an error (e.g., context canceled during rate limit wait),
 			// propagate it up to stop the entire process.
 			return err

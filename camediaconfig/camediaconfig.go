@@ -13,6 +13,19 @@ type KeywordAlbum struct {
 	Album   string `mapstructure:"album"`
 }
 
+// GooglePhotosConfig defines the configuration specific to Google Photos.
+type GooglePhotosConfig struct {
+	ClientId     string `mapstructure:"client_id"`
+	ClientSecret string `mapstructure:"client_secret"`
+	RedirectURI  string `mapstructure:"redirect_uri"`
+
+	DefaultAlbums []string `mapstructure:"default_albums"`
+
+	ToFavAlbumMinNumStars int            `mapstructure:"to_fav_album_min_num_stars"`
+	ToFavAlbumName        string         `mapstructure:"to_fav_album_name"`
+	KeywordAlbums         []KeywordAlbum `mapstructure:"keyword_albums"`
+}
+
 // CamediaConfig defines the configuration for Camedia.
 type CamediaConfig struct {
 	// The path from which this config was loaded.
@@ -25,17 +38,7 @@ type CamediaConfig struct {
 	VideosOrigStagingRoot string `mapstructure:"videos_orig_staging_root"`
 	VideosOrigRoot        string `mapstructure:"videos_orig_root"`
 
-	GooglePhotos struct {
-		ClientId     string `mapstructure:"client_id"`
-		ClientSecret string `mapstructure:"client_secret"`
-		RedirectURI  string `mapstructure:"redirect_uri"`
-
-		DefaultAlbums []string `mapstructure:"default_albums"`
-
-		ToFavAlbumMinNumStars int            `mapstructure:"to_fav_album_min_num_stars"`
-		ToFavAlbumName        string         `mapstructure:"to_fav_album_name"`
-		KeywordAlbums         []KeywordAlbum `mapstructure:"keyword_albums"`
-	} `mapstructure:"google_photos"`
+	GooglePhotos GooglePhotosConfig `mapstructure:"google_photos"`
 
 	// TODO: connect to todoist
 }
