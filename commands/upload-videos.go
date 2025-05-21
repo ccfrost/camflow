@@ -28,12 +28,11 @@ type videoFileInfo struct {
 // Takes configDir to locate token and cache files, and a gphotosClient for API interaction.
 func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, configDir string, keepStaging bool, gphotosClient *gphotos.Client) error {
 	// Get staging directory
-	stagingDir := config.VideosOrigStagingRoot // Use config directly
+	stagingDir := config.VideosOrigStagingRoot
 	if stagingDir == "" {
 		return fmt.Errorf("video staging directory (VideosOrigStagingRoot) not configured")
 	}
 
-	// Check if staging dir exists
 	if _, err := os.Stat(stagingDir); os.IsNotExist(err) {
 		fmt.Printf("Video staging directory '%s' does not exist, nothing to upload.\n", stagingDir)
 		return nil
@@ -41,6 +40,7 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, confi
 
 	// --- Initialize Rate Limiter ---
 	// Limit to 5 operations per second, allowing bursts of up to 10.
+	// TODO: check the actual rate limits for Google Photos API.
 	limiter := rate.NewLimiter(rate.Every(time.Second/5), 10)
 
 	// List all video files in staging, store path and size, calculate total size
@@ -72,20 +72,17 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, confi
 		}
 		return nil
 	})
-
 	if err != nil { // This error is from WalkDir itself, e.g. root dir not found.
 		return fmt.Errorf("failed to walk video staging dir '%s': %w", stagingDir, err)
 	}
 	if len(walkErrs) > 0 {
 		fmt.Printf("Encountered %d errors during directory walk. Proceeding with successfully found files.\n", len(walkErrs))
-		// Potentially return a composite error here if desired, or just log and continue.
 	}
 
 	if len(videosToUpload) == 0 {
 		fmt.Println("No videos found in staging directory.")
 		return nil
 	}
-
 	fmt.Printf("Found %d videos to upload (total size: %.1f GB).\n", len(videosToUpload), float64(totalSize)/1024/1024/1024)
 
 	// --- Get Album IDs (and create if they don't exist) ---
@@ -102,18 +99,18 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, confi
 		return fmt.Errorf("failed to load album cache: %w", err)
 	}
 
-	var targetAlbumIDs []string
-	if len(config.GooglePhotos.DefaultAlbums) > 0 && cache != nil { // Ensure cache is usable
-		// This function will need to be implemented/modified in gphoto_album_cache.go
-		// to handle creation and use the limiter.
+	var defaultAlbums map[string]string
+	if len(config.GooglePhotos.DefaultAlbums) > 0 {
+		var targetAlbumIDs []string
 		targetAlbumIDs, err = cache.getOrFetchAndCreateAlbumIDs(ctx, gphotosClient.Albums, config.GooglePhotos.DefaultAlbums, limiter)
 		if err != nil {
-			// If resolving/creating albums fails, we might still want to upload to the library.
-			// Or, make this a hard failure. For now, log and continue without albums.
-			fmt.Printf("Warning: Failed to resolve or create album IDs: %v. Videos will be uploaded without adding to these default albums.\n", err)
-			targetAlbumIDs = []string{} // Ensure it's empty
-		} else if len(targetAlbumIDs) > 0 {
+			return err
+		}
+		if len(targetAlbumIDs) > 0 {
 			fmt.Printf("Target album IDs resolved/created: %v\n", targetAlbumIDs)
+		}
+		for i, id := range targetAlbumIDs {
+			defaultAlbums[id] = config.GooglePhotos.DefaultAlbums[i]
 		}
 	}
 
@@ -126,7 +123,7 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, confi
 
 	for _, videoInfo := range videosToUpload {
 		// Pass limiter to uploadVideo
-		if err := uploadVideo(ctx, config, keepStaging, gphotosClient, videoInfo.path, videoInfo.size, targetAlbumIDs, bar, limiter); err != nil {
+		if err := uploadVideo(ctx, config, keepStaging, gphotosClient, videoInfo.path, videoInfo.size, defaultAlbums, bar, limiter); err != nil {
 			// If uploadVideo returns an error (e.g., context canceled during rate limit wait),
 			// propagate it up to stop the entire process.
 			return err
@@ -142,7 +139,8 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, confi
 // uploadVideo uploads a single video "videoPath" of size "fileSize" to google photos.
 // It updates "bar" with the bytes it has uploaded.
 // It deletes the file after uploading if "keepStaging" is false.
-func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepStaging bool, gphotosClient *gphotos.Client, videoPath string, fileSize int64, targetAlbumIDs []string, bar *progressbar.ProgressBar, limiter *rate.Limiter) error {
+// "targetAlbumIDs" are the ids for DefaultAlbums in the config.
+func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepStaging bool, gphotosClient *gphotos.Client, videoPath string, fileSize int64, targetAlbums map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter) error {
 	filename := filepath.Base(videoPath)
 	bar.Describe(fmt.Sprintf("Uploading %s", filename))
 
@@ -155,10 +153,15 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 		return fmt.Errorf("rate limiter error before uploading %s: %w", filename, err)
 	}
 
+	// TODO: consider parallelizing uploads.
+	// TODO: consider do resumable uploads.
+	// TODO: consider updating progress bar with actual upload progress.
 	uploadToken, err := gphotosClient.Uploader.UploadFile(ctx, videoPath)
 	if err != nil {
-		fmt.Printf("\nError uploading file %s: %v. Skipping.\n", filename, err)
-		return nil // Skip to the next video, progress bar will be updated by defer
+		// TODO: only log error and skip? Want to make sure user notices.
+		// fmt.Printf("\nError uploading file %s: %v. Skipping.\n", filename, err)
+		// return nil // Skip to the next video, progress bar will be updated by defer
+		return fmt.Errorf("failed to upload file %s: %w", filename, err)
 	}
 
 	// Wait before creating media item
@@ -169,6 +172,7 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 		UploadToken: uploadToken,
 		Filename:    filename,
 	}
+	// TODO: consider batching.
 	mediaItem, err := gphotosClient.MediaItems.Create(ctx, simpleMediaItem)
 	if err != nil {
 		fmt.Printf("\nError creating media item for %s (token: %s): %v. Skipping.\n", filename, uploadToken, err)
@@ -176,31 +180,13 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 	}
 	fmt.Printf("\nSuccessfully created media item for %s (ID: %s)\n", filename, mediaItem.ID)
 
+	// TODO: consider batch adding items to albums.
 	successfullyAddedToAll := true
-	if len(targetAlbumIDs) > 0 {
+	if len(targetAlbums) > 0 {
 		addedCount := 0
-		failedAlbums := []string{}
-		albumIDToTitle := make(map[string]string)
+		var failedAlbums []string
 
-		// Reconstruct albumIDToTitle map based on config.DefaultAlbums and resolved targetAlbumIDs
-		// This assumes targetAlbumIDs are in the same order as DefaultAlbums or that
-		// getOrFetchAndCreateAlbumIDs provides a reliable way to map them.
-		// A safer way would be for getOrFetchAndCreateAlbumIDs to return a map[title]id or []struct{Title, ID}
-		// For now, let's assume a direct mapping or that titles are fetched if needed.
-		// This part might need refinement based on how getOrFetchAndCreateAlbumIDs is implemented.
-		// For simplicity, we'll use DefaultAlbums for titles if lengths match.
-		if len(config.GooglePhotos.DefaultAlbums) == len(targetAlbumIDs) {
-			for i, id := range targetAlbumIDs {
-				albumIDToTitle[id] = config.GooglePhotos.DefaultAlbums[i]
-			}
-		}
-
-		for _, albumID := range targetAlbumIDs {
-			albumTitle := albumIDToTitle[albumID]
-			if albumTitle == "" { // Fallback if title mapping wasn't perfect
-				albumTitle = albumID // Or fetch title from API if critical
-			}
-
+		for albumTitle, albumID := range targetAlbums {
 			// Wait before adding to album
 			if err := limiter.Wait(ctx); err != nil {
 				return fmt.Errorf("rate limiter error before adding %s to album %s: %w", filename, albumTitle, err)
@@ -227,10 +213,9 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 		if err := os.Remove(videoPath); err != nil {
 			fmt.Printf("Error deleting %s from staging: %v\n", videoPath, err)
 		}
-	} else if !successfullyAddedToAll && !keepStaging { // Only print if we attempted to add to albums and failed
+	} else if !successfullyAddedToAll && !keepStaging {
 		fmt.Printf("Skipping deletion of %s due to failure adding to some albums.\n", videoPath)
 	}
-	// No message if keepStaging is true
 
-	return nil // Progress bar updated by defer
+	return nil
 }
