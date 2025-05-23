@@ -186,6 +186,8 @@ func TestUploadVideos_FilesToUpload_WithAlbums_CreatesAndAddsToAlbum(t *testing.
 	tempConfigDir := t.TempDir() // For album cache
 
 	ctrl := gomock.NewController(t)
+	// TODO: do Finish in all tests.
+	defer ctrl.Finish()                                    // Ensures all expectations are checked
 	mockGPhotosClient := NewMockGPhotosClient(ctrl)        // Changed from localMocks.NewMockGPhotosClient
 	mockAlbumsSvc := NewMockAppAlbumsService(ctrl)         // Changed from localMocks.NewMockAppAlbumsService
 	mockUploaderSvc := NewMockMediaUploader(ctrl)          // Changed from localMocks.NewMockMediaUploader

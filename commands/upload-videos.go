@@ -118,16 +118,16 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, confi
 			if errAlbumResolve != nil {
 				return fmt.Errorf("failed to resolve or create album IDs for titles %v: %w", validAlbumTitles, errAlbumResolve)
 			}
-			
+
 			if len(albumIDs) > 0 { // Only print if IDs were actually found/created
 				fmt.Printf("Target album IDs resolved/created: %v for titles: %v\n", albumIDs, validAlbumTitles)
 			}
-			
+
 			// Populate resolvedTargetAlbums, mapping ID to its corresponding Title
 			// This assumes getOrFetchAndCreateAlbumIDs returns IDs in the same order as titles
 			// and that all titles successfully resolve to an ID if no error is returned.
 			for i, id := range albumIDs {
-				if id != "" { 
+				if id != "" {
 					resolvedTargetAlbums[id] = validAlbumTitles[i]
 				}
 			}
@@ -213,7 +213,7 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 
 		// Use the AppAlbumsService from our GPhotosClient interface
 		albumsService := gphotosClient.Albums()
-		for albumTitle, albumID := range targetAlbums {
+		for albumID, albumTitle := range targetAlbums {
 			// Wait before adding to album
 			if err := limiter.Wait(ctx); err != nil {
 				return fmt.Errorf("rate limiter error before adding %s to album %s: %w", filename, albumTitle, err)

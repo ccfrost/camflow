@@ -58,9 +58,8 @@ func loadAlbumCache(path string) (*albumCache, error) {
 }
 
 // save saves the album cache to disk.
+// The caller (getOrFetchAndCreateAlbumIDs) is expected to hold c.mu.Lock().
 func (c *albumCache) save() error {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
 	f, err := os.OpenFile(c.path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to open album cache file %s for writing: %w", c.path, err)
