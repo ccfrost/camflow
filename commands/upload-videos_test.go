@@ -457,8 +457,3 @@ func TestUploadVideos_ContextCancellationDuringLimiterWait(t *testing.T) {
 		t.Errorf("Expected %s to be kept in staging after context cancellation, but it was deleted", videoFileName)
 	}
 }
-
-/*
-// TestUploadVideos_StagingDirUnreadableByWalkDir - Needs OS-specific permission setup.
-func TestUploadVideos_StagingDirUnreadableByWalkDir(t *testing
-*/
