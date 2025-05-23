@@ -19,6 +19,31 @@ type GPhotosClient interface {
 	Uploader() gphotosUploader.MediaUploader
 }
 
+// gphotosClientWrapper wraps gphotos.Client to satisfy the GPhotosClient interface.
+type gphotosClientWrapper struct {
+	*gphotosUploader.Client
+}
+
+// Albums returns an AppAlbumsService.
+func (w *gphotosClientWrapper) Albums() AppAlbumsService {
+	return w.Client.Albums
+}
+
+// MediaItems returns an AppMediaItemsService.
+func (w *gphotosClientWrapper) MediaItems() AppMediaItemsService {
+	return w.Client.MediaItems
+}
+
+// Uploader returns a MediaUploader.
+func (w *gphotosClientWrapper) Uploader() gphotosUploader.MediaUploader {
+	return w.Client.Uploader
+}
+
+// NewGPhotosClientWrapper creates a new GPhotosClient that wraps the gphotos.Client.
+func NewGPhotosClientWrapper(client *gphotosUploader.Client) GPhotosClient {
+	return &gphotosClientWrapper{Client: client}
+}
+
 // AppAlbumsService defines the interface for album-related operations we use.
 type AppAlbumsService interface {
 	List(ctx context.Context) ([]albums.Album, error)

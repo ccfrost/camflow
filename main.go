@@ -117,7 +117,9 @@ Successfully uploaded videos are deleted from staging unless --keep is specified
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}
-			if err := commands.UploadVideos(ctx, config, configDir, keep, gphotosClient); err != nil {
+			wrappedGphotosClient := commands.NewGPhotosClientWrapper(gphotosClient)
+
+			if err := commands.UploadVideos(ctx, config, configDir, keep, wrappedGphotosClient); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}
