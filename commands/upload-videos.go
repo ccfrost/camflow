@@ -6,11 +6,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings" // Added import
+	"strings"
 	"time"
 
 	"github.com/ccfrost/camedia/camediaconfig"
-	gphotos "github.com/gphotosuploader/google-photos-api-client-go/v3"
 	"github.com/gphotosuploader/google-photos-api-client-go/v3/media_items"
 	"github.com/schollz/progressbar/v3"
 	"golang.org/x/time/rate"
@@ -27,7 +26,7 @@ type videoFileInfo struct {
 // Uploaded videos are deleted from staging unless keepStaging is true.
 // The function is idempotent - if interrupted, it can be recalled to resume.
 // Takes configDir to locate token and cache files, and a gphotosClient for API interaction.
-func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, configDir string, keepStaging bool, gphotosClient *gphotos.Client) error {
+func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, configDir string, keepStaging bool, gphotosClient GPhotosClient) error {
 	// Get staging directory
 	stagingDir := config.VideosOrigStagingRoot
 	if stagingDir == "" {
@@ -113,7 +112,9 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, confi
 		}
 
 		if len(validAlbumTitles) > 0 {
-			albumIDs, errAlbumResolve := cache.getOrFetchAndCreateAlbumIDs(ctx, gphotosClient.Albums, validAlbumTitles, limiter)
+			// Use the AppAlbumsService from our GPhotosClient interface
+			albumsService := gphotosClient.Albums()
+			albumIDs, errAlbumResolve := cache.getOrFetchAndCreateAlbumIDs(ctx, albumsService, validAlbumTitles, limiter)
 			if errAlbumResolve != nil {
 				return fmt.Errorf("failed to resolve or create album IDs for titles %v: %w", validAlbumTitles, errAlbumResolve)
 			}
@@ -162,7 +163,7 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, confi
 // It updates "bar" with the bytes it has uploaded.
 // It deletes the file after uploading if "keepStaging" is false.
 // "targetAlbumIDs" are the ids for DefaultAlbums in the config.
-func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepStaging bool, gphotosClient *gphotos.Client, videoPath string, fileSize int64, targetAlbums map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter) error {
+func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepStaging bool, gphotosClient GPhotosClient, videoPath string, fileSize int64, targetAlbums map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter) error {
 	filename := filepath.Base(videoPath)
 	bar.Describe(fmt.Sprintf("Uploading %s", filename))
 
@@ -178,7 +179,7 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 	// TODO: consider parallelizing uploads.
 	// TODO: consider do resumable uploads.
 	// TODO: consider updating progress bar with actual upload progress.
-	uploadToken, err := gphotosClient.Uploader.UploadFile(ctx, videoPath)
+	uploadToken, err := gphotosClient.Uploader().UploadFile(ctx, videoPath)
 	if err != nil {
 		// TODO: only log error and skip? Want to make sure user notices.
 		// fmt.Printf("\nError uploading file %s: %v. Skipping.\n", filename, err)
@@ -195,7 +196,9 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 		Filename:    filename,
 	}
 	// TODO: consider batching.
-	mediaItem, err := gphotosClient.MediaItems.Create(ctx, simpleMediaItem)
+	// Use the AppMediaItemsService from our GPhotosClient interface
+	mediaItemsService := gphotosClient.MediaItems()
+	mediaItem, err := mediaItemsService.Create(ctx, simpleMediaItem)
 	if err != nil {
 		fmt.Printf("\nError creating media item for %s (token: %s): %v. Skipping.\n", filename, uploadToken, err)
 		return nil // Skip to the next video, progress bar will be updated by defer
@@ -208,12 +211,14 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 		addedCount := 0
 		var failedAlbums []string
 
+		// Use the AppAlbumsService from our GPhotosClient interface
+		albumsService := gphotosClient.Albums()
 		for albumTitle, albumID := range targetAlbums {
 			// Wait before adding to album
 			if err := limiter.Wait(ctx); err != nil {
 				return fmt.Errorf("rate limiter error before adding %s to album %s: %w", filename, albumTitle, err)
 			}
-			err = gphotosClient.Albums.AddMediaItems(ctx, albumID, []string{mediaItem.ID})
+			err = albumsService.AddMediaItems(ctx, albumID, []string{mediaItem.ID})
 			if err != nil {
 				fmt.Printf("Error adding media item %s to album '%s' (ID: %s): %v\n", mediaItem.ID, albumTitle, albumID, err)
 				failedAlbums = append(failedAlbums, albumTitle)

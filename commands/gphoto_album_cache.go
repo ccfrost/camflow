@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"sync"
 
-	gphotos "github.com/gphotosuploader/google-photos-api-client-go/v3"
 	"golang.org/x/time/rate"
 )
 
@@ -47,6 +46,13 @@ func loadAlbumCache(path string) (*albumCache, error) {
 		// If decoding fails, log it and return an empty cache, forcing a refresh.
 		fmt.Printf("Warning: Failed to decode album cache file %s, cache will be rebuilt: %v\n", path, err)
 		cache.Albums = make(map[string]string) // Reset to empty map
+	} else {
+		// Successfully decoded. Check if cache.Albums is nil (e.g. due to "albums": null in JSON)
+		// This can happen if the JSON file explicitly sets the 'albums' key to null.
+		if cache.Albums == nil {
+			fmt.Printf("Warning: Album cache file %s decoded successfully, but 'albums' field was null. Initializing as empty map.\n", path)
+			cache.Albums = make(map[string]string)
+		}
 	}
 	return cache, nil
 }
@@ -73,7 +79,7 @@ func (c *albumCache) save() error {
 // It uses a rate limiter for API calls and preserves the order of IDs.
 func (c *albumCache) getOrFetchAndCreateAlbumIDs(
 	ctx context.Context,
-	albumsService gphotos.AlbumsService,
+	albumsService AppAlbumsService, // Changed to AppAlbumsService
 	titles []string,
 	limiter *rate.Limiter,
 ) ([]string, error) {
@@ -105,12 +111,12 @@ func (c *albumCache) getOrFetchAndCreateAlbumIDs(
 	if err := limiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("rate limiter error before listing albums: %w", err)
 	}
-	fetchedAlbums, err := albumsService.List(ctx)
+	fetchedAlbums, err := albumsService.List(ctx) // Removed opts ...albums.ListOption
 	if err != nil {
 		return nil, fmt.Errorf("failed to list albums from Google Photos API: %w", err)
 	}
 
-	for _, album := range fetchedAlbums {
+	for _, album := range fetchedAlbums { // Iterate directly over the slice
 		if originalIndex, needed := titlesToProcessMap[album.Title]; needed {
 			fmt.Printf("Found album online: '%s' (ID: %s)\n", album.Title, album.ID)
 			c.Albums[album.Title] = album.ID // Update cache
@@ -127,7 +133,7 @@ func (c *albumCache) getOrFetchAndCreateAlbumIDs(
 		if err := limiter.Wait(ctx); err != nil {
 			return nil, fmt.Errorf("rate limiter error before creating album '%s': %w", titleToCreate, err)
 		}
-		newAlbum, err := albumsService.Create(ctx, titleToCreate)
+		newAlbum, err := albumsService.Create(ctx, titleToCreate) // Removed options ...albums.CreateOption
 		if err != nil {
 			// If creation fails, this is a significant issue for the intended operation.
 			return nil, fmt.Errorf("failed to create album '%s': %w", titleToCreate, err)
