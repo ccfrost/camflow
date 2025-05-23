@@ -43,16 +43,13 @@ func loadAlbumCache(path string) (*albumCache, error) {
 	}
 	defer f.Close()
 	if err := json.NewDecoder(f).Decode(&cache); err != nil {
-		// If decoding fails, log it and return an empty cache, forcing a refresh.
-		fmt.Printf("Warning: Failed to decode album cache file %s, cache will be rebuilt: %v\n", path, err)
-		cache.Albums = make(map[string]string) // Reset to empty map
-	} else {
-		// Successfully decoded. Check if cache.Albums is nil (e.g. due to "albums": null in JSON)
-		// This can happen if the JSON file explicitly sets the 'albums' key to null.
-		if cache.Albums == nil {
-			fmt.Printf("Warning: Album cache file %s decoded successfully, but 'albums' field was null. Initializing as empty map.\n", path)
-			cache.Albums = make(map[string]string)
-		}
+		return nil, fmt.Errorf("failed to decode album cache file %s: %w", path, err)
+	}
+	// Successfully decoded. Check if cache.Albums is nil (e.g. due to "albums": null in JSON)
+	// This can happen if the JSON file explicitly sets the 'albums' key to null.
+	if cache.Albums == nil {
+		fmt.Printf("Warning: Album cache file %s decoded successfully, but 'albums' field was null. Initializing as empty map.\n", path)
+		cache.Albums = make(map[string]string)
 	}
 	return cache, nil
 }
