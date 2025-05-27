@@ -81,12 +81,17 @@ func Import(config camediaconfig.CamediaConfig, sdcardDir string, keepSrc bool, 
 	}
 
 	// Eject the sdcard, because there is nothing else to do with it.
-	cmd := exec.Command("diskutil", "eject", sdcardDir)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return ImportResult{}, fmt.Errorf("failed to eject disk at %s: %s, error: %w", sdcardDir, string(output), err)
+	// Only attempt to eject if this appears to be a real mounted volume under /Volumes/
+	if strings.HasPrefix(sdcardDir, "/Volumes/") {
+		cmd := exec.Command("diskutil", "eject", sdcardDir)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return ImportResult{}, fmt.Errorf("failed to eject disk at %s: %s, error: %w", sdcardDir, string(output), err)
+		}
+		fmt.Printf("Ejected sdcard\n")
+	} else {
+		fmt.Printf("Skipping disk ejection for non-volume path: %s\n", sdcardDir)
 	}
-	fmt.Printf("Ejected sdcard\n")
 
 	return importRes, nil
 }
