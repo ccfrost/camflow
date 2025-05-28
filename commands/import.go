@@ -42,6 +42,8 @@ func Import(config camediaconfig.CamediaConfig, sdcardDir string, keepSrc bool, 
 	// Check that there is sufficient space to move the files.
 	// TODO: check whether VideosStagingRoot is on the same filesystem as PhotosOrigRoot
 	// and check apppropriately.
+	// TODO: when we move from staging to final, we should check that there is enough space?
+	// TODO: or just remove this, and let the OS handle it?
 	targetAvailable, err := getAvailableSpace(config.PhotosOrigRoot)
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("failed to get available space: %w", err)
