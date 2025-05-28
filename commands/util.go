@@ -1,5 +1,11 @@
 package commands
 
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
 // TODO: delete
 /*
 // videoStagingDirFunc defines the type for the function that gets the staging directory.
@@ -63,3 +69,17 @@ func videoStagingDir() (string, error) {
 	return appStagingDir, nil
 }
 */
+
+// getCacheDirPath determines where to store the a cache file with the given file base name.
+func getCacheDirPath(cacheDirFlag, fileBaseName string) (string, error) {
+	// Prefer user-specific cache dir if specified.
+	if cacheDirFlag != "" {
+		return filepath.Join(cacheDirFlag, fileBaseName), nil
+	}
+
+	// Fall back to user cache dir.
+	if dir, err := os.UserCacheDir(); err == nil {
+		return filepath.Join(dir, "camedia", fileBaseName), nil
+	}
+	return "", fmt.Errorf("unable to determine cache dir")
+}

@@ -3,8 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath" // Added for filepath.Dir
+	"os" // Added for filepath.Dir
 	"time"
 
 	"github.com/ccfrost/camedia/camediaconfig"
@@ -16,7 +15,7 @@ import (
 const camedia = "camedia"
 
 func main() {
-	var configPath string
+	var configPathFlag, cacheDirFlag string
 	var config camediaconfig.CamediaConfig
 
 	rootCmd := cobra.Command{
@@ -24,7 +23,7 @@ func main() {
 		Short: "Manage camera media files",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			var err error
-			config, err = camediaconfig.LoadConfig(configPath)
+			config, err = camediaconfig.LoadConfig(configPathFlag)
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
@@ -34,7 +33,8 @@ func main() {
 			return nil
 		},
 	}
-	rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", "", "Path to the configuration file")
+	rootCmd.PersistentFlags().StringVarP(&configPathFlag, "config", "c", "", "Path to the configuration file")
+	rootCmd.PersistentFlags().StringVar(&cacheDirFlag, "cache-dir", "", "Dir to store cache files")
 
 	// TODO: add version command.
 
@@ -71,17 +71,17 @@ func main() {
 				optColon = ":"
 			}
 			fmt.Printf("Imported %d photos:\n", len(res.Photos))
-			for dirName, count := range res.Photos {
-				fmt.Printf("\t%s: %d photos\n", dirName, count)
+			for _, photodir := range res.Photos {
+				fmt.Printf("\t%s: %d photos\n", photodir.RelativeDir, photodir.Count)
 			}
 
 			optColon = ""
 			if len(res.Videos) > 0 {
 				optColon = ":"
 			}
-			fmt.Printf("Imported %d videos%s\n", optColon, len(res.Videos))
-			for dirName, count := range res.Videos {
-				fmt.Printf("\t%s: %d videos\n", dirName, count)
+			fmt.Printf("Imported %d videos%s\n", len(res.Videos), optColon)
+			for _, videodir := range res.Videos {
+				fmt.Printf("\t%s: %d videos\n", videodir.RelativeDir, videodir.Count)
 			}
 		},
 	}
@@ -106,8 +106,7 @@ Successfully uploaded videos are deleted from staging unless --keep is specified
 			}
 
 			ctx := context.Background()
-			configDir := filepath.Dir(config.ConfigPath())
-			gphotosHttpClient, err := commands.GetAuthenticatedGooglePhotosClient(ctx, config, configDir)
+			gphotosHttpClient, err := commands.GetAuthenticatedGooglePhotosClient(ctx, config, cacheDirFlag)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
@@ -119,7 +118,7 @@ Successfully uploaded videos are deleted from staging unless --keep is specified
 			}
 			wrappedGphotosClient := commands.NewGPhotosClientWrapper(gphotosClient)
 
-			if err := commands.UploadVideos(ctx, config, configDir, keep, wrappedGphotosClient); err != nil {
+			if err := commands.UploadVideos(ctx, config, cacheDirFlag, keep, wrappedGphotosClient); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}

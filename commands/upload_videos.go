@@ -26,7 +26,7 @@ type videoFileInfo struct {
 // Uploaded videos are deleted from staging unless keepStaging is true.
 // The function is idempotent - if interrupted, it can be recalled to resume.
 // Takes configDir to locate token and cache files, and a gphotosClient for API interaction.
-func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, configDir string, keepStaging bool, gphotosClient GPhotosClient) error {
+func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, cacheDirFlag string, keepStaging bool, gphotosClient GPhotosClient) error {
 	// Get staging directory
 	stagingDir := config.VideosOrigStagingRoot
 	if stagingDir == "" {
@@ -90,7 +90,7 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, confi
 		fmt.Println("Warning: No default albums specified in config. Videos will only be uploaded to the library.")
 	}
 
-	albumCachePath, err := getAlbumCachePath(configDir)
+	albumCachePath, err := getAlbumCachePath(cacheDirFlag)
 	if err != nil {
 		return fmt.Errorf("failed to get album cache path: %w", err)
 	}

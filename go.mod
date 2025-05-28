@@ -17,7 +17,6 @@ require (
 	cloud.google.com/go/compute/metadata v0.6.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
-	github.com/go-chi/chi/v5 v5.2.1 // indirect
 	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
 	github.com/gphotosuploader/googlemirror v0.5.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect

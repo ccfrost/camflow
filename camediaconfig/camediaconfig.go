@@ -43,11 +43,6 @@ type CamediaConfig struct {
 	// TODO: connect to todoist
 }
 
-// ConfigPath returns the absolute path from which the configuration was loaded.
-func (c *CamediaConfig) ConfigPath() string {
-	return c.configPath
-}
-
 func (c *CamediaConfig) Validate() error {
 	// Check that at least a base set of fields have values.
 	if c.PhotosOrigRoot == "" || c.PhotosExportStagingDir == "" || c.PhotosExportDir == "" {
@@ -67,16 +62,9 @@ func getConfigPath(configPathFlag string) (string, error) {
 		return configPathFlag, nil
 	}
 
-	const defaultFilename = "config.toml"
-
 	// Fall back to user config dir.
 	if dir, err := os.UserConfigDir(); err == nil {
-		return filepath.Join(dir, "camedia", defaultFilename), nil
-	}
-
-	// Fall back to home directory.
-	if dir, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(dir, defaultFilename), nil
+		return filepath.Join(dir, "camedia", "config.toml"), nil
 	}
 
 	return "", fmt.Errorf("unable to determine config file path")

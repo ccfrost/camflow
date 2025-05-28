@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 
 	"github.com/ccfrost/camedia/camediaconfig"
 	"golang.org/x/oauth2"
@@ -15,15 +14,12 @@ import (
 
 // --- OAuth2 & Client Setup ---
 
-const (
-	googlePhotosScope = "https://www.googleapis.com/auth/photoslibrary.appendonly"
-	tokenFileName     = "google_photos_token.json"
-)
+const googlePhotosScope = "https://www.googleapis.com/auth/photoslibrary.appendonly"
 
 // GetAuthenticatedGooglePhotosClient creates an authenticated HTTP client using OAuth2 credentials.
 // It handles token loading, refreshing, and saving.
 // Takes configDir to locate the token file.
-func GetAuthenticatedGooglePhotosClient(ctx context.Context, config camediaconfig.CamediaConfig, configDir string) (*http.Client, error) {
+func GetAuthenticatedGooglePhotosClient(ctx context.Context, config camediaconfig.CamediaConfig, cacheDir string) (*http.Client, error) {
 	if config.GooglePhotos.ClientId == "" || config.GooglePhotos.ClientSecret == "" {
 		return nil, fmt.Errorf("google Photos ClientId or ClientSecret not configured")
 	}
@@ -45,7 +41,7 @@ func GetAuthenticatedGooglePhotosClient(ctx context.Context, config camediaconfi
 		Endpoint:     google.Endpoint,
 	}
 
-	tokenFilePath, err := getTokenFilePath(configDir)
+	tokenFilePath, err := getTokenFilePath(cacheDir)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get token file path: %w", err)
 	}
@@ -84,12 +80,9 @@ func GetAuthenticatedGooglePhotosClient(ctx context.Context, config camediaconfi
 	return conf.Client(ctx, token), nil
 }
 
-// getTokenFilePath constructs the path to the token file based on the config directory.
-func getTokenFilePath(configDir string) (string, error) {
-	if configDir == "." || configDir == "" {
-		return "", fmt.Errorf("config directory path is empty or invalid")
-	}
-	return filepath.Join(configDir, tokenFileName), nil
+// getTokenFilePath determines where to store the token file.
+func getTokenFilePath(cacheDirFlag string) (string, error) {
+	return getCacheDirPath(cacheDirFlag, "google_photos_token.json")
 }
 
 // saveToken saves the OAuth2 token to the specified file path.
