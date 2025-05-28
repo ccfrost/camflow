@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync" // For wg in context cancellation test
 	"testing"
 	"time"
@@ -14,6 +13,8 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/gphotosuploader/google-photos-api-client-go/v3/albums"      // For types like albums.Album
 	"github.com/gphotosuploader/google-photos-api-client-go/v3/media_items" // For types like media_items.SimpleMediaItem
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // --- Test Helper Functions ---
@@ -30,17 +31,13 @@ func newTestConfig(stagingRoot string, defaultAlbums []string) camediaconfig.Cam
 func createTempDirWithFiles(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "test_staging_")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
+	require.NoError(t, err, "Failed to create temp dir: %v", err)
 	// t.Cleanup(func() { os.RemoveAll(dir) }) // t.TempDir does this if used as base
 
 	for name, content := range files {
 		filePath := filepath.Join(dir, name)
 		err := os.WriteFile(filePath, []byte(content), 0644)
-		if err != nil {
-			t.Fatalf("Failed to write file %s: %v", filePath, err)
-		}
+		require.NoError(t, err, "Failed to write file %s: %v", filePath, err)
 	}
 	return dir
 }
@@ -53,12 +50,8 @@ func TestUploadVideos_StagingDirNotConfigured(t *testing.T) {
 	mockGPhotosClient := NewMockGPhotosClient(ctrl) // Changed from localMocks.NewMockGPhotosClient
 
 	err := UploadVideos(context.Background(), cfg, t.TempDir(), false, mockGPhotosClient)
-	if err == nil {
-		t.Errorf("Expected an error when staging dir is not configured, got nil")
-	}
-	if err != nil && !strings.Contains(err.Error(), "video staging directory (VideosOrigStagingRoot) not configured") {
-		t.Errorf("Expected error message about staging dir not configured, got: %v", err)
-	}
+	require.Error(t, err, "Expected an error when staging dir is not configured, got nil")
+	assert.Contains(t, err.Error(), "video staging directory (VideosOrigStagingRoot) not configured", "Expected error message about staging dir not configured, got: %v", err)
 }
 
 func TestUploadVideos_StagingDirDoesNotExist(t *testing.T) {
@@ -69,9 +62,7 @@ func TestUploadVideos_StagingDirDoesNotExist(t *testing.T) {
 	mockGPhotosClient := NewMockGPhotosClient(ctrl) // Changed from localMocks.NewMockGPhotosClient
 
 	err := UploadVideos(context.Background(), cfg, t.TempDir(), false, mockGPhotosClient)
-	if err != nil {
-		t.Errorf("Expected no error when staging dir does not exist, got: %v", err)
-	}
+	assert.NoError(t, err, "Expected no error when staging dir does not exist, got: %v", err)
 }
 
 func TestUploadVideos_EmptyStagingDir(t *testing.T) {
@@ -81,9 +72,7 @@ func TestUploadVideos_EmptyStagingDir(t *testing.T) {
 	mockGPhotosClient := NewMockGPhotosClient(ctrl) // Changed from localMocks.NewMockGPhotosClient
 
 	err := UploadVideos(context.Background(), cfg, t.TempDir(), false, mockGPhotosClient)
-	if err != nil {
-		t.Errorf("Expected no error for empty staging dir, got: %v", err)
-	}
+	assert.NoError(t, err, "Expected no error for empty staging dir, got: %v", err)
 }
 
 func TestUploadVideos_FilesToUpload_NoAlbums_DeleteFiles(t *testing.T) {
@@ -117,13 +106,11 @@ func TestUploadVideos_FilesToUpload_NoAlbums_DeleteFiles(t *testing.T) {
 	}
 
 	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepStaging */, mockGPhotosClient)
-	if err != nil {
-		t.Fatalf("UploadVideos failed: %v", err)
-	}
+	require.NoError(t, err, "UploadVideos failed: %v", err)
 
 	files, _ := os.ReadDir(stagingDir)
-	if len(files) != 0 {
-		t.Errorf("Expected staging directory to be empty, but found %d files", len(files))
+	assert.Empty(t, files, "Expected staging directory to be empty, but found %d files", len(files))
+	if len(files) != 0 { // Keep detailed logging if assert fails
 		for _, f := range files {
 			t.Logf("Found file: %s", f.Name())
 		}
@@ -155,13 +142,10 @@ func TestUploadVideos_FilesToUpload_NoAlbums_KeepFiles(t *testing.T) {
 		Return(&media_items.MediaItem{ID: mediaItemID, Filename: videoFile}, nil)
 
 	err := UploadVideos(ctx, cfg, tempConfigDir, true /* keepStaging */, mockGPhotosClient)
-	if err != nil {
-		t.Fatalf("UploadVideos failed: %v", err)
-	}
+	require.NoError(t, err, "UploadVideos failed: %v", err)
 
-	if _, statErr := os.Stat(filepath.Join(stagingDir, videoFile)); os.IsNotExist(statErr) {
-		t.Errorf("Expected %s to be kept in staging, but it was deleted", videoFile)
-	}
+	_, statErr := os.Stat(filepath.Join(stagingDir, videoFile))
+	assert.NoError(t, statErr, "Expected %s to be kept in staging, but it was deleted (os.IsNotExist was true for stat error: %v)", videoFile, statErr)
 }
 
 // TestUploadVideos_FilesToUpload_WithAlbums_CreatesAndAddsToAlbum tests uploading a video,
@@ -173,12 +157,10 @@ func TestUploadVideos_FilesToUpload_WithAlbums_CreatesAndAddsToAlbum(t *testing.
 	baseStagingDir := filepath.Dir(videoFilePath)
 
 	// Create the single video file in its own unique staging dir to avoid interference
-	if err := os.MkdirAll(baseStagingDir, 0755); err != nil {
-		t.Fatalf("Failed to create base staging dir: %v", err)
-	}
-	if err := os.WriteFile(videoFilePath, []byte("content"), 0644); err != nil {
-		t.Fatalf("Failed to write video file: %v", err)
-	}
+	err := os.MkdirAll(baseStagingDir, 0755)
+	require.NoError(t, err, "Failed to create base staging dir: %v", err)
+	err = os.WriteFile(videoFilePath, []byte("content"), 0644)
+	require.NoError(t, err, "Failed to write video file: %v", err)
 
 	albumTitle := "NewAlbumToCreate"
 	albumTitles := []string{albumTitle}
@@ -216,15 +198,12 @@ func TestUploadVideos_FilesToUpload_WithAlbums_CreatesAndAddsToAlbum(t *testing.
 	mockAlbumsSvc.EXPECT().AddMediaItems(gomock.Any(), createdAlbumID, []string{mediaItemID}).
 		Return(nil) // Successful addition
 
-	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepStaging */, mockGPhotosClient)
-	if err != nil {
-		t.Fatalf("UploadVideos failed: %v", err)
-	}
+	err = UploadVideos(ctx, cfg, tempConfigDir, false /* keepStaging */, mockGPhotosClient)
+	require.NoError(t, err, "UploadVideos failed: %v", err)
 
 	// Verify file is deleted
-	if _, statErr := os.Stat(videoFilePath); !os.IsNotExist(statErr) {
-		t.Errorf("Expected video file %s to be deleted, but it still exists. Error: %v", videoFilePath, statErr)
-	}
+	_, statErr := os.Stat(videoFilePath)
+	assert.True(t, os.IsNotExist(statErr), "Expected video file %s to be deleted, but it still exists. Error: %v", videoFilePath, statErr)
 }
 
 func TestUploadVideos_ErrorLoadAlbumCache(t *testing.T) {
@@ -247,12 +226,8 @@ func TestUploadVideos_ErrorLoadAlbumCache(t *testing.T) {
 	mockGPhotosClient := NewMockGPhotosClient(ctrl) // Changed from localMocks.NewMockGPhotosClient
 
 	uploadErr := UploadVideos(ctx, cfg, tempConfigDir, false, mockGPhotosClient)
-	if uploadErr == nil {
-		t.Fatalf("UploadVideos expected to fail due to malformed album cache, but succeeded")
-	}
-	if !strings.Contains(uploadErr.Error(), "failed to load album cache") {
-		t.Errorf("Expected error about loading album cache, got: %v", uploadErr)
-	}
+	require.Error(t, uploadErr, "UploadVideos expected to fail due to malformed album cache, but succeeded")
+	assert.Contains(t, uploadErr.Error(), "failed to load album cache", "Expected error about loading album cache, got: %v", uploadErr)
 }
 
 func TestUploadVideos_ErrorGetOrCreateAlbumIDs(t *testing.T) {
@@ -274,12 +249,8 @@ func TestUploadVideos_ErrorGetOrCreateAlbumIDs(t *testing.T) {
 	mockAlbumsSvc.EXPECT().List(gomock.Any()).Return(nil, errors.New(expectedErrStr))
 
 	err := UploadVideos(ctx, cfg, tempConfigDir, false, mockGPhotosClient)
-	if err == nil {
-		t.Fatalf("UploadVideos expected to fail due to error in getOrFetchAndCreateAlbumIDs, but succeeded")
-	}
-	if !strings.Contains(err.Error(), expectedErrStr) {
-		t.Errorf("Expected error '%s', got: %v", expectedErrStr, err)
-	}
+	require.Error(t, err, "UploadVideos expected to fail due to error in getOrFetchAndCreateAlbumIDs, but succeeded")
+	assert.Contains(t, err.Error(), expectedErrStr, "Expected error '%s', got: %v", expectedErrStr, err)
 }
 
 func TestUploadVideos_ErrorUploadFile(t *testing.T) {
@@ -301,16 +272,13 @@ func TestUploadVideos_ErrorUploadFile(t *testing.T) {
 		Return("", errors.New(expectedErrStr))
 
 	err := UploadVideos(ctx, cfg, tempConfigDir, false, mockGPhotosClient)
-	if err == nil {
-		t.Fatalf("UploadVideos expected to fail due to UploadFile error, but succeeded")
-	}
-	if !strings.Contains(err.Error(), "failed to upload file") || !strings.Contains(err.Error(), videoFileName) || !strings.Contains(err.Error(), expectedErrStr) {
-		t.Errorf("Expected error about failing to upload file '%s' with underlying error '%s', got: %v", videoFileName, expectedErrStr, err)
-	}
+	require.Error(t, err, "UploadVideos expected to fail due to UploadFile error, but succeeded")
+	assert.Contains(t, err.Error(), "failed to upload file", "Error message mismatch")
+	assert.Contains(t, err.Error(), videoFileName, "Error message should contain filename")
+	assert.Contains(t, err.Error(), expectedErrStr, "Error message should contain original error")
 
-	if _, statErr := os.Stat(filepath.Join(stagingDir, videoFileName)); os.IsNotExist(statErr) {
-		t.Errorf("Expected %s to be kept in staging after upload failure, but it was deleted", videoFileName)
-	}
+	_, statErr := os.Stat(filepath.Join(stagingDir, videoFileName))
+	assert.NoError(t, statErr, "Expected %s to be kept in staging after upload failure, but it was deleted (os.IsNotExist was true for stat error: %v)", videoFileName, statErr)
 }
 
 func TestUploadVideos_ErrorCreateMediaItem(t *testing.T) {
@@ -338,13 +306,12 @@ func TestUploadVideos_ErrorCreateMediaItem(t *testing.T) {
 		Return(nil, errors.New(expectedErrStr))
 
 	err := UploadVideos(ctx, cfg, tempConfigDir, false, mockGPhotosClient)
-	if err != nil {
-		t.Fatalf("UploadVideos failed unexpectedly: %v. Expected to continue on CreateMediaItem error.", err)
-	}
+	// The main UploadVideos function currently continues on CreateMediaItem error, so no top-level error is expected here.
+	// It logs the error and proceeds. If this behavior changes, this check needs an update.
+	assert.NoError(t, err, "UploadVideos failed unexpectedly: %v. Expected to continue on CreateMediaItem error.", err)
 
-	if _, statErr := os.Stat(filepath.Join(stagingDir, videoFileName)); os.IsNotExist(statErr) {
-		t.Errorf("Expected %s to be kept in staging after CreateMediaItem failure, but it was deleted", videoFileName)
-	}
+	_, statErr := os.Stat(filepath.Join(stagingDir, videoFileName))
+	assert.NoError(t, statErr, "Expected %s to be kept in staging after CreateMediaItem failure, but it was deleted (os.IsNotExist was true for stat error: %v)", videoFileName, statErr)
 }
 
 func TestUploadVideos_ErrorAddMediaToAlbum_FileKept_WhenAlbumExists(t *testing.T) {
@@ -353,12 +320,10 @@ func TestUploadVideos_ErrorAddMediaToAlbum_FileKept_WhenAlbumExists(t *testing.T
 	videoFilePath := filepath.Join(t.TempDir(), videoFileName)
 	baseStagingDir := filepath.Dir(videoFilePath)
 
-	if err := os.MkdirAll(baseStagingDir, 0755); err != nil {
-		t.Fatalf("Failed to create base staging dir: %v", err)
-	}
-	if err := os.WriteFile(videoFilePath, []byte("content"), 0644); err != nil {
-		t.Fatalf("Failed to write video file: %v", err)
-	}
+	err := os.MkdirAll(baseStagingDir, 0755)
+	require.NoError(t, err, "Failed to create base staging dir: %v", err)
+	err = os.WriteFile(videoFilePath, []byte("content"), 0644)
+	require.NoError(t, err, "Failed to write video file: %v", err)
 
 	albumTitle := "ExistingAlbum"
 	cfg := newTestConfig(baseStagingDir, []string{albumTitle})
@@ -393,17 +358,12 @@ func TestUploadVideos_ErrorAddMediaToAlbum_FileKept_WhenAlbumExists(t *testing.T
 	mockAlbumsSvc.EXPECT().AddMediaItems(gomock.Any(), existingAlbumID, []string{mediaItemID}).
 		Return(errors.New(expectedAddError))
 
-	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepStaging */, mockGPhotosClient)
-	if err != nil {
-		// The main UploadVideos function currently continues on AddMediaItems error, so no top-level error is expected here.
-		// It logs the error and proceeds. If this behavior changes, this check needs an update.
-		t.Fatalf("UploadVideos returned an unexpected error: %v. Expected to continue on AddMediaItems error.", err)
-	}
+	err = UploadVideos(ctx, cfg, tempConfigDir, false /* keepStaging */, mockGPhotosClient)
+	require.NoError(t, err, "UploadVideos returned an unexpected error: %v. Expected to continue on AddMediaItems error.", err)
 
 	// Verify file is NOT deleted because add to album failed
-	if _, statErr := os.Stat(videoFilePath); os.IsNotExist(statErr) {
-		t.Errorf("Expected video file %s to be kept after AddMediaItems failure, but it was deleted", videoFilePath)
-	}
+	_, statErr := os.Stat(videoFilePath)
+	assert.NoError(t, statErr, "Expected video file %s to be kept after AddMediaItems failure, but it was deleted (os.IsNotExist was true for stat error: %v)", videoFilePath, statErr)
 }
 
 func TestUploadVideos_ContextCancellationDuringLimiterWait(t *testing.T) {
@@ -446,14 +406,120 @@ func TestUploadVideos_ContextCancellationDuringLimiterWait(t *testing.T) {
 	cancel()                          // Cancel the context
 	wg.Wait()                         // Wait for UploadVideos to complete or fail
 
-	if errUpload == nil {
-		t.Fatalf("Expected an error due to context cancellation, got nil")
-	}
-	if !errors.Is(errUpload, context.Canceled) && !errors.Is(errUpload, context.DeadlineExceeded) {
-		t.Errorf("Expected context.Canceled or context.DeadlineExceeded, got %v", errUpload)
-	}
+	require.Error(t, errUpload, "Expected an error due to context cancellation, got nil")
+	// Check if the error is context.Canceled or context.DeadlineExceeded
+	isContextError := errors.Is(errUpload, context.Canceled) || errors.Is(errUpload, context.DeadlineExceeded)
+	assert.True(t, isContextError, "Expected context.Canceled or context.DeadlineExceeded, got %v", errUpload)
 
-	if _, statErr := os.Stat(filepath.Join(stagingDir, videoFileName)); os.IsNotExist(statErr) {
-		t.Errorf("Expected %s to be kept in staging after context cancellation, but it was deleted", videoFileName)
-	}
+
+	_, statErr := os.Stat(filepath.Join(stagingDir, videoFileName))
+	assert.NoError(t, statErr, "Expected %s to be kept in staging after context cancellation, but it was deleted (os.IsNotExist was true for stat error: %v)", videoFileName, statErr)
+}
+
+// TestUploadVideos_FilesToUpload_WithAlbums_AlbumExists tests uploading a video,
+// using an existing album, adding the video to it, and deleting the local file.
+func TestUploadVideos_FilesToUpload_WithAlbums_AlbumExists(t *testing.T) {
+	ctx := context.Background()
+	videoFileName := "video_existing_album.mp4"
+	videoFilePath := filepath.Join(t.TempDir(), videoFileName)
+	baseStagingDir := filepath.Dir(videoFilePath)
+
+	err := os.MkdirAll(baseStagingDir, 0755)
+	require.NoError(t, err, "Failed to create base staging dir: %v", err)
+	err = os.WriteFile(videoFilePath, []byte("content_existing_album"), 0644)
+	require.NoError(t, err, "Failed to write video file: %v", err)
+
+	existingAlbumTitle := "MyExistingHolidayAlbum"
+	existingAlbumID := "album-id-for-" + existingAlbumTitle
+	albumTitles := []string{existingAlbumTitle}
+	cfg := newTestConfig(baseStagingDir, albumTitles)
+	tempConfigDir := t.TempDir() // For album cache
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockGPhotosClient := NewMockGPhotosClient(ctrl)
+	mockAlbumsSvc := NewMockAppAlbumsService(ctrl)
+	mockUploaderSvc := NewMockMediaUploader(ctrl)
+	mockMediaItemsSvc := NewMockAppMediaItemsService(ctrl)
+
+	mockGPhotosClient.EXPECT().Albums().Return(mockAlbumsSvc).AnyTimes()
+	mockGPhotosClient.EXPECT().Uploader().Return(mockUploaderSvc).AnyTimes()
+	mockGPhotosClient.EXPECT().MediaItems().Return(mockMediaItemsSvc).AnyTimes()
+
+	// Mock for getOrFetchAndCreateAlbumIDs: album found
+	mockAlbumsSvc.EXPECT().List(gomock.Any()).Return([]albums.Album{{ID: existingAlbumID, Title: existingAlbumTitle}}, nil)
+	mockAlbumsSvc.EXPECT().Create(gomock.Any(), gomock.Any()).Times(0) // Ensure Create is NOT called
+
+	// Mock for uploadVideo: upload, create media item, add to album
+	uploadToken := "token_for_" + videoFileName
+	mediaItemID := "media_id_for_" + videoFileName
+
+	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), videoFilePath).Return(uploadToken, nil)
+	mockMediaItemsSvc.EXPECT().Create(gomock.Any(), media_items.SimpleMediaItem{UploadToken: uploadToken, Filename: videoFileName}).
+		Return(&media_items.MediaItem{ID: mediaItemID, Filename: videoFileName}, nil)
+	mockAlbumsSvc.EXPECT().AddMediaItems(gomock.Any(), existingAlbumID, []string{mediaItemID}).Return(nil)
+
+	err = UploadVideos(ctx, cfg, tempConfigDir, false /* keepStaging */, mockGPhotosClient)
+	require.NoError(t, err, "UploadVideos failed: %v", err)
+
+	_, statErr := os.Stat(videoFilePath)
+	assert.True(t, os.IsNotExist(statErr), "Expected video file %s to be deleted, but it still exists. Error: %v", videoFilePath, statErr)
+}
+
+
+// TestUploadVideos_ErrorAddMediaToAlbum_FileKept_WhenAlbumIsCreated tests that if adding a media item
+// to a NEWLY CREATED album fails, the local file is kept.
+func TestUploadVideos_ErrorAddMediaToAlbum_FileKept_WhenAlbumIsCreated(t *testing.T) {
+	ctx := context.Background()
+	videoFileName := "video_new_album_fail.mp4"
+	videoFilePath := filepath.Join(t.TempDir(), videoFileName)
+	baseStagingDir := filepath.Dir(videoFilePath)
+
+	err := os.MkdirAll(baseStagingDir, 0755)
+	require.NoError(t, err, "Failed to create base staging dir: %v", err)
+	err = os.WriteFile(videoFilePath, []byte("content_new_album_fail"), 0644)
+	require.NoError(t, err, "Failed to write video file: %v", err)
+
+	newAlbumTitle := "MyNewAlbumForFailureTest"
+	albumTitles := []string{newAlbumTitle}
+	cfg := newTestConfig(baseStagingDir, albumTitles)
+	tempConfigDir := t.TempDir()
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockGPhotosClient := NewMockGPhotosClient(ctrl)
+	mockAlbumsSvc := NewMockAppAlbumsService(ctrl)
+	mockUploaderSvc := NewMockMediaUploader(ctrl)
+	mockMediaItemsSvc := NewMockAppMediaItemsService(ctrl)
+
+	mockGPhotosClient.EXPECT().Albums().Return(mockAlbumsSvc).AnyTimes()
+	mockGPhotosClient.EXPECT().Uploader().Return(mockUploaderSvc).AnyTimes()
+	mockGPhotosClient.EXPECT().MediaItems().Return(mockMediaItemsSvc).AnyTimes()
+
+	// Mock for getOrFetchAndCreateAlbumIDs: album not found, then created
+	mockAlbumsSvc.EXPECT().List(gomock.Any()).Return([]albums.Album{}, nil) // Simulate album not found
+	createdAlbumID := "album-id-for-" + newAlbumTitle
+	mockAlbumsSvc.EXPECT().Create(gomock.Any(), newAlbumTitle).
+		Return(&albums.Album{ID: createdAlbumID, Title: newAlbumTitle}, nil)
+
+	// Mock for uploadVideo: upload, create media item
+	uploadToken := "token_for_" + videoFileName
+	mediaItemID := "media_id_for_" + videoFileName
+	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), videoFilePath).Return(uploadToken, nil)
+	mockMediaItemsSvc.EXPECT().Create(gomock.Any(), media_items.SimpleMediaItem{UploadToken: uploadToken, Filename: videoFileName}).
+		Return(&media_items.MediaItem{ID: mediaItemID, Filename: videoFileName}, nil)
+
+	// Mock for AddMediaItems: simulate failure
+	expectedAddError := "simulated add to newly created album failure"
+	mockAlbumsSvc.EXPECT().AddMediaItems(gomock.Any(), createdAlbumID, []string{mediaItemID}).
+		Return(errors.New(expectedAddError))
+
+	err = UploadVideos(ctx, cfg, tempConfigDir, false /* keepStaging */, mockGPhotosClient)
+	// As per current logic, AddMediaItems errors are logged but don't cause UploadVideos to return an error.
+	// It continues processing. If this behavior changes, this test needs an update.
+	assert.NoError(t, err, "UploadVideos returned an unexpected error: %v", err)
+
+
+	_, statErr := os.Stat(videoFilePath)
+	assert.NoError(t, statErr, "Expected video file %s to be kept after AddMediaItems failure (new album), but it was deleted. Error: %v", videoFilePath, statErr)
 }
