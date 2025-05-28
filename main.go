@@ -66,11 +66,12 @@ func main() {
 				os.Exit(1)
 			}
 
+			// TODO: change relative dirs to print target rather than sdcard dir names (and counts?).
 			optColon := ""
 			if len(res.Photos) > 0 {
 				optColon = ":"
 			}
-			fmt.Printf("Imported %d photos:\n", len(res.Photos))
+			fmt.Printf("Imported %d photo dirs:\n", len(res.Photos))
 			for _, photodir := range res.Photos {
 				fmt.Printf("\t%s: %d photos\n", photodir.RelativeDir, photodir.Count)
 			}
@@ -79,7 +80,7 @@ func main() {
 			if len(res.Videos) > 0 {
 				optColon = ":"
 			}
-			fmt.Printf("Imported %d videos%s\n", len(res.Videos), optColon)
+			fmt.Printf("Imported %d video dirs%s\n", len(res.Videos), optColon)
 			for _, videodir := range res.Videos {
 				fmt.Printf("\t%s: %d videos\n", videodir.RelativeDir, videodir.Count)
 			}
