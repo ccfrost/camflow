@@ -411,7 +411,6 @@ func TestUploadVideos_ContextCancellationDuringLimiterWait(t *testing.T) {
 	isContextError := errors.Is(errUpload, context.Canceled) || errors.Is(errUpload, context.DeadlineExceeded)
 	assert.True(t, isContextError, "Expected context.Canceled or context.DeadlineExceeded, got %v", errUpload)
 
-
 	_, statErr := os.Stat(filepath.Join(stagingDir, videoFileName))
 	assert.NoError(t, statErr, "Expected %s to be kept in staging after context cancellation, but it was deleted (os.IsNotExist was true for stat error: %v)", videoFileName, statErr)
 }
@@ -466,7 +465,6 @@ func TestUploadVideos_FilesToUpload_WithAlbums_AlbumExists(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "Expected video file %s to be deleted, but it still exists. Error: %v", videoFilePath, statErr)
 }
 
-
 // TestUploadVideos_ErrorAddMediaToAlbum_FileKept_WhenAlbumIsCreated tests that if adding a media item
 // to a NEWLY CREATED album fails, the local file is kept.
 func TestUploadVideos_ErrorAddMediaToAlbum_FileKept_WhenAlbumIsCreated(t *testing.T) {
@@ -518,7 +516,6 @@ func TestUploadVideos_ErrorAddMediaToAlbum_FileKept_WhenAlbumIsCreated(t *testin
 	// As per current logic, AddMediaItems errors are logged but don't cause UploadVideos to return an error.
 	// It continues processing. If this behavior changes, this test needs an update.
 	assert.NoError(t, err, "UploadVideos returned an unexpected error: %v", err)
-
 
 	_, statErr := os.Stat(videoFilePath)
 	assert.NoError(t, statErr, "Expected video file %s to be kept after AddMediaItems failure (new album), but it was deleted. Error: %v", videoFilePath, statErr)
