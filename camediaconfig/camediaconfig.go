@@ -28,9 +28,6 @@ type GooglePhotosConfig struct {
 
 // CamediaConfig defines the configuration for Camedia.
 type CamediaConfig struct {
-	// The path from which this config was loaded.
-	configPath string `mapstructure:"-"` // Mark as transient for mapstructure
-
 	PhotosOrigRoot         string `mapstructure:"photos_orig_root"`
 	PhotosExportStagingDir string `mapstructure:"photos_export_staging_dir"`
 	PhotosExportDir        string `mapstructure:"photos_export_dir"`
@@ -43,6 +40,19 @@ type CamediaConfig struct {
 	// TODO: connect to todoist
 }
 
+func (c *GooglePhotosConfig) Validate() error {
+	// Check that at least a base set of fields have values.
+	if c.ClientId == "" || c.ClientSecret == "" {
+		return fmt.Errorf("missing google photos client_id or client_secret")
+	}
+	if c.RedirectURI == "" {
+		c.RedirectURI = "http://localhost:8080" // Default redirect URI
+		fmt.Printf("Warning: google_photos.redirect_uri not set in config, using default: %s\n", c.RedirectURI)
+	}
+	// Allow empty DefaultAlbums, ToFavAlbumName, and KeywordAlbums.
+	return nil
+}
+
 func (c *CamediaConfig) Validate() error {
 	// Check that at least a base set of fields have values.
 	if c.PhotosOrigRoot == "" || c.PhotosExportStagingDir == "" || c.PhotosExportDir == "" {
@@ -51,8 +61,7 @@ func (c *CamediaConfig) Validate() error {
 	if c.VideosOrigStagingRoot == "" || c.VideosOrigRoot == "" {
 		return fmt.Errorf("missing videos field")
 	}
-	// TODO: validate any other fields?
-	return nil
+	return c.GooglePhotos.Validate()
 }
 
 // getConfigPath determines where to store the config file.
@@ -63,10 +72,9 @@ func getConfigPath(configPathFlag string) (string, error) {
 	}
 
 	// Fall back to user config dir.
-	if dir, err := os.UserConfigDir(); err == nil {
+	if dir, err := os.UserConfigDir(); err != nil {
 		return filepath.Join(dir, "camedia", "config.toml"), nil
 	}
-
 	return "", fmt.Errorf("unable to determine config file path")
 }
 
@@ -87,29 +95,5 @@ func LoadConfig(configPathFlag string) (CamediaConfig, error) {
 		return CamediaConfig{}, err
 	}
 
-	// Store the path from which the config was loaded.
-	config.configPath = path
-
 	return config, nil
-}
-
-// saveConfig writes the config to a file.
-// TODO: unused and not fully implemented
-func saveConfig(configPathFlag string, config CamediaConfig) error {
-	path, err := getConfigPath(configPathFlag)
-	if err != nil {
-		return err
-	}
-
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-
-	/* TODO:
-	   viper.Set("username", config.Username)
-	   viper.Set("api_key", config.APIKey)
-	*/
-
-	return viper.WriteConfigAs(path)
 }
