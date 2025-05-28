@@ -227,43 +227,43 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 		}
 	}
 
-	if successfullyAddedToAll && !keepStaging {
-		if config.VideosOrigRoot == "" {
-			// This case should ideally be caught by config validation earlier.
-			// If VideosOrigRoot is not set, we can't move, so we log and effectively "keep" the file in staging.
-			fmt.Printf("\\nWarning: VideosOrigRoot is not configured. Skipping move of %s from staging.\\n", videoPath)
-		} else {
-			relPath, err := filepath.Rel(config.VideosOrigStagingRoot, videoPath)
-			if err != nil {
-				return fmt.Errorf("failed to get relative path for %s from staging root %s: %w", videoPath, config.VideosOrigStagingRoot, err)
-			}
-			destPath := filepath.Join(config.VideosOrigRoot, relPath)
-			destDir := filepath.Dir(destPath)
-
-			// Check for collision at destination
-			if _, err := os.Stat(destPath); err == nil {
-				return fmt.Errorf("failed to move %s: destination file %s already exists", videoPath, destPath)
-			} else if !os.IsNotExist(err) {
-				return fmt.Errorf("failed to move %s: error checking destination %s: %w", videoPath, destPath, err)
-			}
-
-			fmt.Printf("\\nMoving %s to %s...\\n", videoPath, destPath)
-			if err := os.MkdirAll(destDir, 0755); err != nil {
-				return fmt.Errorf("failed to create destination directory %s for moving %s: %w", destDir, videoPath, err)
-			}
-
-			// XXX: os.Rename requires source and destination to be on the same filesystem for atomic move.
-			// If they are on different filesystems, it may fail or behave differently.
-			if err := os.Rename(videoPath, destPath); err != nil {
-				return fmt.Errorf("failed to move %s from staging to %s: %w", videoPath, destPath, err)
-			}
-			fmt.Printf("Successfully moved %s to %s\\n", videoPath, destPath)
+	if !successfullyAddedToAll {
+		if !keepStaging {
+			fmt.Printf("Warning: %s was not successfully added to all target albums. It will not be moved from staging.\n", videoBasename)
 		}
-	} else if !successfullyAddedToAll && !keepStaging {
-		fmt.Printf("\\nSkipping move of %s from staging due to failure adding to some albums.\\n", videoPath)
-	} else if keepStaging {
-		fmt.Printf("\\nKeeping %s in staging directory as per keepStaging flag.\\n", videoPath)
+		return nil
 	}
+
+	if keepStaging {
+		fmt.Printf("\nKeeping %s in staging directory as per keepStaging flag.\n", videoPath)
+		return nil
+	}
+
+	relPath, err := filepath.Rel(config.VideosOrigStagingRoot, videoPath)
+	if err != nil {
+		return fmt.Errorf("failed to get relative path for %s from staging root %s: %w", videoPath, config.VideosOrigStagingRoot, err)
+	}
+	destPath := filepath.Join(config.VideosOrigRoot, relPath)
+	destDir := filepath.Dir(destPath)
+
+	// Check for collision at destination
+	if _, err := os.Stat(destPath); err == nil {
+		return fmt.Errorf("failed to move %s: destination file %s already exists", videoPath, destPath)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to move %s: error checking destination %s: %w", videoPath, destPath, err)
+	}
+
+	fmt.Printf("\\Moving %s to %s...\n", videoPath, destPath)
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return fmt.Errorf("failed to create destination directory %s for moving %s: %w", destDir, videoPath, err)
+	}
+
+	// XXX: os.Rename requires source and destination to be on the same filesystem for atomic move.
+	// If they are on different filesystems, it may fail or behave differently.
+	if err := os.Rename(videoPath, destPath); err != nil {
+		return fmt.Errorf("failed to move %s from staging to %s: %w", videoPath, destPath, err)
+	}
+	fmt.Printf("Successfully moved %s to %s\n", videoPath, destPath)
 
 	return nil
 }
