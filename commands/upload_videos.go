@@ -160,46 +160,43 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, cache
 // It deletes the file after uploading if "keepStaging" is false.
 // "targetAlbumIDs" are the ids for DefaultAlbums in the config.
 func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepStaging bool, gphotosClient GPhotosClient, videoPath string, fileSize int64, targetAlbums map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter) error {
-	filename := filepath.Base(videoPath)
-	bar.Describe(fmt.Sprintf("Uploading %s", filename))
+	videoBasename := filepath.Base(videoPath)
+	bar.Describe(fmt.Sprintf("Uploading %s", videoBasename))
 
 	// Defer the progress bar update to ensure it happens once per file attempt.
-	// This also simplifies logic as we don't need to call bar.Add64 in multiple error paths.
 	defer bar.Add64(fileSize)
 
 	// Wait before uploading file
 	if err := limiter.Wait(ctx); err != nil {
-		return fmt.Errorf("rate limiter error before uploading %s: %w", filename, err)
+		return fmt.Errorf("rate limiter error before uploading %s: %w", videoBasename, err)
 	}
 
 	// TODO: consider parallelizing uploads.
 	// TODO: consider do resumable uploads.
-	// TODO: consider updating progress bar with actual upload progress.
+	// TODO: consider updating progress bar with actual upload progress. (gphotos UploadFile calls NewUploadFromFile, which returns a file, so it is close.)
 	uploadToken, err := gphotosClient.Uploader().UploadFile(ctx, videoPath)
 	if err != nil {
 		// TODO: only log error and skip? Want to make sure user notices.
-		// fmt.Printf("\nError uploading file %s: %v. Skipping.\n", filename, err)
+		// fmt.Printf("\nError uploading file %s: %v. Skipping.\n", videoBasename, err)
 		// return nil // Skip to the next video, progress bar will be updated by defer
-		return fmt.Errorf("failed to upload file %s: %w", filename, err)
+		return fmt.Errorf("failed to upload file %s: %w", videoBasename, err)
 	}
 
 	// Wait before creating media item
 	if err := limiter.Wait(ctx); err != nil {
-		return fmt.Errorf("rate limiter error before creating media item for %s: %w", filename, err)
+		return fmt.Errorf("rate limiter error before creating media item for %s: %w", videoBasename, err)
 	}
 	simpleMediaItem := media_items.SimpleMediaItem{
 		UploadToken: uploadToken,
-		Filename:    filename,
+		Filename:    videoBasename,
 	}
 	// TODO: consider batching.
-	// Use the AppMediaItemsService from our GPhotosClient interface
-	mediaItemsService := gphotosClient.MediaItems()
-	mediaItem, err := mediaItemsService.Create(ctx, simpleMediaItem)
+	mediaItem, err := gphotosClient.MediaItems().Create(ctx, simpleMediaItem)
 	if err != nil {
-		fmt.Printf("\nError creating media item for %s (token: %s): %v. Skipping.\n", filename, uploadToken, err)
+		fmt.Printf("\nError creating media item for %s (token: %s): %v. Skipping.\n", videoBasename, uploadToken, err)
 		return nil // Skip to the next video, progress bar will be updated by defer
 	}
-	fmt.Printf("\nSuccessfully created media item for %s (ID: %s)\n", filename, mediaItem.ID)
+	fmt.Printf("\nSuccessfully created media item for %s (ID: %s)\n", videoBasename, mediaItem.ID)
 
 	// TODO: consider batch adding items to albums.
 	successfullyAddedToAll := true
@@ -207,12 +204,11 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 		addedCount := 0
 		var failedAlbums []string
 
-		// Use the AppAlbumsService from our GPhotosClient interface
 		albumsService := gphotosClient.Albums()
 		for albumID, albumTitle := range targetAlbums {
 			// Wait before adding to album
 			if err := limiter.Wait(ctx); err != nil {
-				return fmt.Errorf("rate limiter error before adding %s to album %s: %w", filename, albumTitle, err)
+				return fmt.Errorf("rate limiter error before adding %s to album %s: %w", videoBasename, albumTitle, err)
 			}
 			err = albumsService.AddMediaItems(ctx, albumID, []string{mediaItem.ID})
 			if err != nil {
@@ -225,9 +221,9 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 			}
 		}
 		if len(failedAlbums) > 0 {
-			fmt.Printf("Warning: Failed to add %s to %d albums: %v\n", filename, len(failedAlbums), failedAlbums)
-		} else if addedCount > 0 { // Only print success if albums were targeted and all succeeded
-			fmt.Printf("Successfully added %s to all %d target albums.\n", filename, addedCount)
+			fmt.Printf("Warning: Failed to add %s to %d albums: %v\n", videoBasename, len(failedAlbums), failedAlbums)
+		} else if addedCount > 0 {
+			fmt.Printf("Successfully added %s to all %d target albums.\n", videoBasename, addedCount)
 		}
 	}
 
