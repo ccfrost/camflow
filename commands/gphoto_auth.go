@@ -14,8 +14,6 @@ import (
 
 // --- OAuth2 & Client Setup ---
 
-const googlePhotosScope = "https://www.googleapis.com/auth/photoslibrary.appendonly"
-
 // GetAuthenticatedGooglePhotosClient creates an authenticated HTTP client using OAuth2 credentials.
 // It handles token loading, refreshing, and saving.
 // Takes configDir to locate the token file.
@@ -37,8 +35,12 @@ func GetAuthenticatedGooglePhotosClient(ctx context.Context, config camediaconfi
 		ClientID:     config.GooglePhotos.ClientId,
 		ClientSecret: config.GooglePhotos.ClientSecret,
 		RedirectURL:  redirectURI,
-		Scopes:       []string{googlePhotosScope},
-		Endpoint:     google.Endpoint,
+		Scopes: []string{
+			"https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata",
+			"https://www.googleapis.com/auth/photoslibrary.appendonly",
+			"https://www.googleapis.com/auth/photoslibrary.edit.appcreateddata",
+		},
+		Endpoint: google.Endpoint,
 	}
 
 	tokenFilePath, err := getTokenFilePath(cacheDir)
