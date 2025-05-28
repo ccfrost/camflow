@@ -58,18 +58,18 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, cache
 			walkErrs = append(walkErrs, err)
 			return nil // Continue walking
 		}
-		if !d.IsDir() {
-			// Assume all files in the video staging dir are videos
-			info, statErr := d.Info()
-			if statErr != nil {
-				fmt.Printf("Warning: Could not get file info for %s: %v. Skipping.\n", path, statErr)
-				walkErrs = append(walkErrs, statErr)
-				return nil // Continue walking, skip this file
-			}
-			// Store path and size
-			videosToUpload = append(videosToUpload, videoFileInfo{path: path, size: info.Size()})
-			totalSize += info.Size()
+
+		if d.IsDir() {
+			return nil
 		}
+
+		// Assume all files in the video staging dir are videos
+		info, statErr := d.Info()
+		if statErr != nil {
+			return fmt.Errorf("failed to get file info for %s: %w", path, statErr)
+		}
+		videosToUpload = append(videosToUpload, videoFileInfo{path: path, size: info.Size()})
+		totalSize += info.Size()
 		return nil
 	})
 	if err != nil { // This error is from WalkDir itself, e.g. root dir not found.
@@ -94,7 +94,7 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, cache
 	if err != nil {
 		return fmt.Errorf("failed to get album cache path: %w", err)
 	}
-	cache, err := loadAlbumCache(albumCachePath)
+	albumCache, err := loadAlbumCache(albumCachePath)
 	if err != nil {
 		return fmt.Errorf("failed to load album cache: %w", err)
 	}
@@ -114,7 +114,7 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, cache
 		if len(validAlbumTitles) > 0 {
 			// Use the AppAlbumsService from our GPhotosClient interface
 			albumsService := gphotosClient.Albums()
-			albumIDs, errAlbumResolve := cache.getOrFetchAndCreateAlbumIDs(ctx, albumsService, validAlbumTitles, limiter)
+			albumIDs, errAlbumResolve := albumCache.getOrFetchAndCreateAlbumIDs(ctx, albumsService, validAlbumTitles, limiter)
 			if errAlbumResolve != nil {
 				return fmt.Errorf("failed to resolve or create album IDs for titles %v: %w", validAlbumTitles, errAlbumResolve)
 			}
