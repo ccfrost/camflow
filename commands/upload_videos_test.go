@@ -75,12 +75,19 @@ func TestUploadVideos_EmptyStagingDir(t *testing.T) {
 	assert.NoError(t, err, "Expected no error for empty staging dir, got: %v", err)
 }
 
-func TestUploadVideos_FilesToUpload_NoAlbums_DeleteFiles(t *testing.T) {
+func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles(t *testing.T) {
 	ctx := context.Background()
 	filesToCreate := map[string]string{"video1.mp4": "content1", "video2.mov": "content2"}
 	stagingDir := createTempDirWithFiles(t, filesToCreate)
 	t.Cleanup(func() { os.RemoveAll(stagingDir) })
+
+	// Create a temporary directory for VideosOrigRoot
+	videosOrigDir := t.TempDir()
+	t.Cleanup(func() { os.RemoveAll(videosOrigDir) })
+
 	cfg := newTestConfig(stagingDir, nil) // No default albums
+	cfg.VideosOrigRoot = videosOrigDir    // Explicitly set VideosOrigRoot for move operation
+
 	tempConfigDir := t.TempDir()
 
 	ctrl := gomock.NewController(t)
@@ -108,13 +115,21 @@ func TestUploadVideos_FilesToUpload_NoAlbums_DeleteFiles(t *testing.T) {
 	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepStaging */, mockGPhotosClient)
 	require.NoError(t, err, "UploadVideos failed: %v", err)
 
-	files, _ := os.ReadDir(stagingDir)
-	assert.Empty(t, files, "Expected staging directory to be empty, but found %d files", len(files))
-	if len(files) != 0 { // Keep detailed logging if assert fails
-		for _, f := range files {
-			t.Logf("Found file: %s", f.Name())
-		}
+	// Verify files are moved from staging and exist in VideosOrigRoot
+	for baseName := range filesToCreate {
+		stagingPath := filepath.Join(stagingDir, baseName)
+		destPath := filepath.Join(videosOrigDir, baseName)
+
+		_, statErr := os.Stat(stagingPath)
+		assert.True(t, os.IsNotExist(statErr), "Expected file %s to be moved from staging %s, but it still exists", baseName, stagingDir)
+
+		_, statErr = os.Stat(destPath)
+		assert.NoError(t, statErr, "Expected file %s to be moved to %s, but it's not there", baseName, destPath)
 	}
+
+	// Check that staging dir is now empty (or contains only unexpected files if any error occurred before cleanup)
+	remainingFiles, _ := os.ReadDir(stagingDir)
+	assert.Empty(t, remainingFiles, "Expected staging directory to be empty after moves, but found %d files", len(remainingFiles))
 }
 
 func TestUploadVideos_FilesToUpload_NoAlbums_KeepFiles(t *testing.T) {
@@ -155,7 +170,7 @@ func TestUploadVideos_FilesToUpload_WithAlbums_CreatesAndAddsToAlbum(t *testing.
 	videoFileName := "video1.mp4"
 	// baseStagingDir will be a unique temp dir for this test's staging files
 	baseStagingDir := t.TempDir()
-	videoFilePath := filepath.Join(baseStagingDir, videoFileName) 
+	videoFilePath := filepath.Join(baseStagingDir, videoFileName)
 
 	err := os.WriteFile(videoFilePath, []byte("content"), 0644)
 	require.NoError(t, err, "Failed to write video file: %v", err)
