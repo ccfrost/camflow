@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ccfrost/camedia/camediaconfig"
 	"github.com/golang/mock/gomock"
 	"github.com/gphotosuploader/google-photos-api-client-go/v3/albums"      // For types like albums.Album
 	"github.com/gphotosuploader/google-photos-api-client-go/v3/media_items" // For types like media_items.SimpleMediaItem
@@ -18,40 +17,6 @@ import (
 )
 
 // --- Test Helper Functions ---
-
-func newTestConfig(t *testing.T, defaultAlbums []string) camediaconfig.CamediaConfig {
-	t.Helper()
-
-	tempDir := t.TempDir()
-	c := camediaconfig.CamediaConfig{
-		PhotosOrigRoot:         filepath.Join(tempDir, "PhotosOrigRoot"),
-		PhotosExportStagingDir: filepath.Join(tempDir, "PhotosExportStagingDir"),
-		PhotosExportDir:        filepath.Join(tempDir, "PhotosExportDir"),
-
-		VideosOrigStagingRoot: filepath.Join(tempDir, "VideosOrigStagingRoot"),
-		VideosOrigRoot:        filepath.Join(tempDir, "VideosOrigRoot"),
-
-		GooglePhotos: camediaconfig.GooglePhotosConfig{
-			ClientId:     "test-client-id",
-			ClientSecret: "test-client-secret",
-			RedirectURI:  "test-redirect-uri",
-
-			DefaultAlbums: defaultAlbums,
-
-			// Does not set ToFav or KeywordAlbums fields.
-		},
-	}
-	for _, dir := range []string{
-		c.PhotosOrigRoot,
-		c.PhotosExportStagingDir,
-		c.PhotosExportDir,
-		c.VideosOrigStagingRoot,
-		c.VideosOrigRoot,
-	} {
-		require.NoError(t, os.MkdirAll(dir, 0755), dir)
-	}
-	return c
-}
 
 func createTestFiles(t *testing.T, dir string, files map[string]string) string {
 	t.Helper()

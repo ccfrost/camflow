@@ -21,29 +21,20 @@ import (
 func TestImportAndUploadVideosIntegration(t *testing.T) {
 	ctx := context.Background()
 
-	// Setup test directories
-	sdCardRoot := t.TempDir()
-	mediaRoot := t.TempDir()
-	configDir := t.TempDir()
-
-	dcimDir := filepath.Join(sdCardRoot, "DCIM")
-	photosOrigRoot := filepath.Join(mediaRoot, "photos-orig")
-	videosOrigStagingRoot := filepath.Join(mediaRoot, "videos-orig-staging")
-
-	// Create directory structure
-	require.NoError(t, os.MkdirAll(dcimDir, 0755))
-	require.NoError(t, os.MkdirAll(photosOrigRoot, 0755))
-	require.NoError(t, os.MkdirAll(videosOrigStagingRoot, 0755))
-
-	// Create test config
+	// Setup test directories and config using the helper
 	defaultAlbums := []string{"Test Album 1", "Test Album 2"}
-	config := camediaconfig.CamediaConfig{
-		PhotosOrigRoot:        photosOrigRoot,
-		VideosOrigStagingRoot: videosOrigStagingRoot,
-		GooglePhotos: camediaconfig.GooglePhotosConfig{
-			DefaultAlbums: defaultAlbums,
-		},
-	}
+	config := newTestConfig(t, defaultAlbums) // Use helper from util_test.go
+	sdCardRoot := t.TempDir()                 // Still need a separate SD card root
+	configDir := t.TempDir()                  // For album cache, etc.
+
+	// DCIM directory needs to be under sdCardRoot
+	dcimDir := filepath.Join(sdCardRoot, "DCIM")
+	require.NoError(t, os.MkdirAll(dcimDir, 0755))
+
+	// The newTestConfig helper already creates PhotosOrigRoot and VideosOrigStagingRoot
+	photosOrigRoot := config.PhotosOrigRoot
+	videosOrigStagingRoot := config.VideosOrigStagingRoot
+	// VideosOrigRoot is also created by newTestConfig, can be accessed via config.VideosOrigRoot if needed for verification
 
 	// Define test files with specific modification times
 	testTime1 := time.Date(2024, 5, 15, 10, 30, 0, 0, time.UTC)
@@ -109,7 +100,7 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 		// Verify files were moved to correct locations
 		for _, tf := range testFiles {
 			srcPath := createdFiles[tf.relPath]
-			
+
 			// Source file should be deleted (keepSrc = false)
 			_, err := os.Stat(srcPath)
 			assert.True(t, os.IsNotExist(err), "Source file %s should be deleted", tf.relPath)
@@ -123,11 +114,11 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 			}
 
 			year, month, day := tf.modTime.Date()
-			dateSubDir := filepath.Join(targetRoot, 
+			dateSubDir := filepath.Join(targetRoot,
 				fmt.Sprintf("%d", year),
 				fmt.Sprintf("%02d", month),
 				fmt.Sprintf("%02d", day))
-			
+
 			baseName := filepath.Base(tf.relPath)
 			targetFileName := fmt.Sprintf("%d-%02d-%02d-%s", year, month, day, baseName)
 			expectedPath := filepath.Join(dateSubDir, targetFileName)
@@ -165,11 +156,11 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 		for _, tf := range testFiles {
 			if tf.fileType == "video" {
 				year, month, day := tf.modTime.Date()
-				dateSubDir := filepath.Join(videosOrigStagingRoot, 
+				dateSubDir := filepath.Join(videosOrigStagingRoot,
 					fmt.Sprintf("%d", year),
 					fmt.Sprintf("%02d", month),
 					fmt.Sprintf("%02d", day))
-				
+
 				baseName := filepath.Base(tf.relPath)
 				targetFileName := fmt.Sprintf("%d-%02d-%02d-%s", year, month, day, baseName)
 				videoPath := filepath.Join(dateSubDir, targetFileName)
@@ -228,11 +219,11 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 		for _, tf := range testFiles {
 			if tf.fileType == "photo" {
 				year, month, day := tf.modTime.Date()
-				dateSubDir := filepath.Join(photosOrigRoot, 
+				dateSubDir := filepath.Join(photosOrigRoot,
 					fmt.Sprintf("%d", year),
 					fmt.Sprintf("%02d", month),
 					fmt.Sprintf("%02d", day))
-				
+
 				baseName := filepath.Base(tf.relPath)
 				targetFileName := fmt.Sprintf("%d-%02d-%02d-%s", year, month, day, baseName)
 				photoPath := filepath.Join(dateSubDir, targetFileName)
@@ -256,34 +247,28 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 
 	t.Run("UploadError_GooglePhotosAPIFailure", func(t *testing.T) {
 		// Setup test directories with a video file
+		config := newTestConfig(t, []string{"Test Album"}) // Use helper
 		sdCardRoot := t.TempDir()
-		mediaRoot := t.TempDir()
-		configDir := t.TempDir()
+		configDir := t.TempDir() // For album cache
 
-		dcimDir := filepath.Join(sdCardRoot, "DCIM")
-		photosOrigRoot := filepath.Join(mediaRoot, "photos-orig")
-		videosOrigStagingRoot := filepath.Join(mediaRoot, "videos-orig-staging")
-
+		// DCIM directory needs to be under sdCardRoot
+		dcimDir := filepath.Join(sdCardRoot, "DCIM", "100CANON") // Specific path for the video file
 		require.NoError(t, os.MkdirAll(dcimDir, 0755))
-		require.NoError(t, os.MkdirAll(photosOrigRoot, 0755))
-		require.NoError(t, os.MkdirAll(videosOrigStagingRoot, 0755))
 
-		config := camediaconfig.CamediaConfig{
-			PhotosOrigRoot:        photosOrigRoot,
-			VideosOrigStagingRoot: videosOrigStagingRoot,
-			GooglePhotos: camediaconfig.GooglePhotosConfig{
-				DefaultAlbums: []string{"Test Album"},
-			},
-		}
+		// Config fields are now set by newTestConfig
+		// photosOrigRoot := config.PhotosOrigRoot // Not directly used in this specific sub-test for video
+		videosOrigStagingRoot := config.VideosOrigStagingRoot
 
 		// Create a test video file
 		testTime := time.Date(2024, 5, 15, 10, 30, 0, 0, time.UTC)
-		videoPath := filepath.Join(dcimDir, "100CANON", "VID_0001.MP4")
-		require.NoError(t, os.MkdirAll(filepath.Dir(videoPath), 0755))
+		videoPath := filepath.Join(dcimDir, "VID_0001.MP4") // Path within sdCardRoot/DCIM/100CANON
+		// require.NoError(t, os.MkdirAll(filepath.Dir(videoPath), 0755)) // dcimDir creation covers this
 		require.NoError(t, os.WriteFile(videoPath, []byte("video_content"), 0644))
 		require.NoError(t, os.Chtimes(videoPath, testTime, testTime))
 
 		// Import the video
+		// The Import command needs all photo paths in config to be valid for its own validation,
+		// even if we are only testing video upload failure. newTestConfig handles this.
 		_, err := Import(config, sdCardRoot, false, time.Now())
 		require.NoError(t, err)
 
@@ -332,7 +317,13 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 	t.Run("ConfigValidationError", func(t *testing.T) {
 		// Test with invalid configuration
 		invalidConfig := camediaconfig.CamediaConfig{
-			// Missing required paths
+			// Missing required paths. newTestConfig cannot be used here as it creates a valid config.
+			// To test Validate() properly for missing paths, we manually create an incomplete config.
+			GooglePhotos: camediaconfig.GooglePhotosConfig{ // Need this to avoid nil pointer if Validate() on it is called
+				ClientId:     "test",
+				ClientSecret: "test",
+				RedirectURI:  "test",
+			},
 		}
 
 		err := invalidConfig.Validate()
@@ -344,35 +335,28 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 func TestImportAndUploadVideosIntegration_KeepFlags(t *testing.T) {
 	ctx := context.Background()
 
-	// Setup test directories
+	// Setup test directories and config using the helper
+	config := newTestConfig(t, []string{"Test Album"}) // Use helper
 	sdCardRoot := t.TempDir()
-	mediaRoot := t.TempDir()
-	configDir := t.TempDir()
+	configDir := t.TempDir() // For album cache
 
-	dcimDir := filepath.Join(sdCardRoot, "DCIM")
-	photosOrigRoot := filepath.Join(mediaRoot, "photos-orig")
-	videosOrigStagingRoot := filepath.Join(mediaRoot, "videos-orig-staging")
-
+	// DCIM directory needs to be under sdCardRoot
+	dcimDir := filepath.Join(sdCardRoot, "DCIM", "100CANON")
 	require.NoError(t, os.MkdirAll(dcimDir, 0755))
-	require.NoError(t, os.MkdirAll(photosOrigRoot, 0755))
-	require.NoError(t, os.MkdirAll(videosOrigStagingRoot, 0755))
 
-	config := camediaconfig.CamediaConfig{
-		PhotosOrigRoot:        photosOrigRoot,
-		VideosOrigStagingRoot: videosOrigStagingRoot,
-		GooglePhotos: camediaconfig.GooglePhotosConfig{
-			DefaultAlbums: []string{"Test Album"},
-		},
-	}
+	// Config fields are now set by newTestConfig
+	// photosOrigRoot := config.PhotosOrigRoot // Not directly used here
+	videosOrigStagingRoot := config.VideosOrigStagingRoot
 
 	// Create a test video file
 	testTime := time.Date(2024, 5, 15, 10, 30, 0, 0, time.UTC)
-	videoPath := filepath.Join(dcimDir, "100CANON", "VID_0001.MP4")
-	require.NoError(t, os.MkdirAll(filepath.Dir(videoPath), 0755))
+	videoPath := filepath.Join(dcimDir, "VID_0001.MP4") // Path within sdCardRoot/DCIM/100CANON
+	// require.NoError(t, os.MkdirAll(filepath.Dir(videoPath), 0755)) // dcimDir creation covers this
 	require.NoError(t, os.WriteFile(videoPath, []byte("video_content"), 0644))
 	require.NoError(t, os.Chtimes(videoPath, testTime, testTime))
 
 	// Import with keepSrc = true
+	// The Import command needs all photo paths in config to be valid.
 	_, err := Import(config, sdCardRoot, true, time.Now())
 	require.NoError(t, err)
 
