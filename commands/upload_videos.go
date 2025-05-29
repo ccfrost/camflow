@@ -160,6 +160,10 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, cache
 // It deletes the file after uploading if "keepStaging" is false.
 // "targetAlbumIDs" are the ids for DefaultAlbums in the config.
 func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepStaging bool, gphotosClient GPhotosClient, videoPath string, fileSize int64, targetAlbums map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter) error {
+	if err := config.Validate(); err != nil {
+		return fmt.Errorf("invalid config: %w", err)
+	}
+
 	videoBasename := filepath.Base(videoPath)
 	bar.Describe(fmt.Sprintf("Uploading %s", videoBasename))
 

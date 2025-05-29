@@ -29,6 +29,10 @@ type ImportResult struct {
 // Import mvoes the DCIM/ files to the photo dir and the staging video dir.
 // It returns the relative target directory for the photos and any error.
 func Import(config camediaconfig.CamediaConfig, sdcardDir string, keepSrc bool, now time.Time) (ImportResult, error) {
+	if err := config.Validate(); err != nil {
+		return ImportResult{}, fmt.Errorf("invalid config: %w", err)
+	}
+
 	// Only look at files in $srcDir/DCIM/. Eg, ignore $srcDir/MISC/.
 	srcDir := filepath.Join(sdcardDir, "DCIM")
 

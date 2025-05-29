@@ -19,20 +19,42 @@ import (
 
 // --- Test Helper Functions ---
 
-func newTestConfig(stagingRoot string, defaultAlbums []string) camediaconfig.CamediaConfig {
-	return camediaconfig.CamediaConfig{
-		VideosOrigStagingRoot: stagingRoot,
+func newTestConfig(t *testing.T, defaultAlbums []string) camediaconfig.CamediaConfig {
+	t.Helper()
+
+	tempDir := t.TempDir()
+	c := camediaconfig.CamediaConfig{
+		PhotosOrigRoot:         filepath.Join(tempDir, "PhotosOrigRoot"),
+		PhotosExportStagingDir: filepath.Join(tempDir, "PhotosExportStagingDir"),
+		PhotosExportDir:        filepath.Join(tempDir, "PhotosExportDir"),
+
+		VideosOrigStagingRoot: filepath.Join(tempDir, "VideosOrigStagingRoot"),
+		VideosOrigRoot:        filepath.Join(tempDir, "VideosOrigRoot"),
+
 		GooglePhotos: camediaconfig.GooglePhotosConfig{
+			ClientId:     "test-client-id",
+			ClientSecret: "test-client-secret",
+			RedirectURI:  "test-redirect-uri",
+
 			DefaultAlbums: defaultAlbums,
+
+			// Does not set ToFav or KeywordAlbums fields.
 		},
 	}
+	for _, dir := range []string{
+		c.PhotosOrigRoot,
+		c.PhotosExportStagingDir,
+		c.PhotosExportDir,
+		c.VideosOrigStagingRoot,
+		c.VideosOrigRoot,
+	} {
+		require.NoError(t, os.MkdirAll(dir, 0755), dir)
+	}
+	return c
 }
 
-func createTempDirWithFiles(t *testing.T, files map[string]string) string {
+func createTestFiles(t *testing.T, dir string, files map[string]string) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "test_staging_")
-	require.NoError(t, err, "Failed to create temp dir: %v", err)
-	// t.Cleanup(func() { os.RemoveAll(dir) }) // t.TempDir does this if used as base
 
 	for name, content := range files {
 		filePath := filepath.Join(dir, name)
@@ -45,7 +67,10 @@ func createTempDirWithFiles(t *testing.T, files map[string]string) string {
 // --- Test Functions ---
 
 func TestUploadVideos_StagingDirNotConfigured(t *testing.T) {
-	cfg := newTestConfig("", nil)
+	cfg := newTestConfig(t, nil)
+	// Intentionally make VideosOrigStagingRoot unconfigured for this test case
+	cfg.VideosOrigStagingRoot = ""
+
 	ctrl := gomock.NewController(t)
 	mockGPhotosClient := NewMockGPhotosClient(ctrl) // Changed from localMocks.NewMockGPhotosClient
 
@@ -55,9 +80,8 @@ func TestUploadVideos_StagingDirNotConfigured(t *testing.T) {
 }
 
 func TestUploadVideos_StagingDirDoesNotExist(t *testing.T) {
-	baseTmpDir := t.TempDir()
-	nonExistentDir := filepath.Join(baseTmpDir, "nonexistent_subdir")
-	cfg := newTestConfig(nonExistentDir, nil)
+	cfg := newTestConfig(t, nil)
+	require.NoError(t, os.RemoveAll(cfg.VideosOrigStagingRoot))
 	ctrl := gomock.NewController(t)
 	mockGPhotosClient := NewMockGPhotosClient(ctrl) // Changed from localMocks.NewMockGPhotosClient
 
@@ -66,8 +90,7 @@ func TestUploadVideos_StagingDirDoesNotExist(t *testing.T) {
 }
 
 func TestUploadVideos_EmptyStagingDir(t *testing.T) {
-	stagingDir := t.TempDir()
-	cfg := newTestConfig(stagingDir, nil)
+	cfg := newTestConfig(t, nil)
 	ctrl := gomock.NewController(t)
 	mockGPhotosClient := NewMockGPhotosClient(ctrl) // Changed from localMocks.NewMockGPhotosClient
 
@@ -77,16 +100,10 @@ func TestUploadVideos_EmptyStagingDir(t *testing.T) {
 
 func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles(t *testing.T) {
 	ctx := context.Background()
+
+	cfg := newTestConfig(t, nil) // No default albums
 	filesToCreate := map[string]string{"video1.mp4": "content1", "video2.mov": "content2"}
-	stagingDir := createTempDirWithFiles(t, filesToCreate)
-	t.Cleanup(func() { os.RemoveAll(stagingDir) })
-
-	// Create a temporary directory for VideosOrigRoot
-	videosOrigDir := t.TempDir()
-	t.Cleanup(func() { os.RemoveAll(videosOrigDir) })
-
-	cfg := newTestConfig(stagingDir, nil) // No default albums
-	cfg.VideosOrigRoot = videosOrigDir    // Explicitly set VideosOrigRoot for move operation
+	stagingDir := createTestFiles(t, cfg.VideosOrigStagingRoot, filesToCreate)
 
 	tempConfigDir := t.TempDir()
 
@@ -118,7 +135,7 @@ func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles(t *testing.T) {
 	// Verify files are moved from staging and exist in VideosOrigRoot
 	for baseName := range filesToCreate {
 		stagingPath := filepath.Join(stagingDir, baseName)
-		destPath := filepath.Join(videosOrigDir, baseName)
+		destPath := filepath.Join(cfg.VideosOrigRoot, baseName)
 
 		_, statErr := os.Stat(stagingPath)
 		assert.True(t, os.IsNotExist(statErr), "Expected file %s to be moved from staging %s, but it still exists", baseName, stagingDir)
@@ -134,11 +151,10 @@ func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles(t *testing.T) {
 
 func TestUploadVideos_FilesToUpload_NoAlbums_KeepFiles(t *testing.T) {
 	ctx := context.Background()
-	videoFile := "video1.mp4"
-	stagingDir := createTempDirWithFiles(t, map[string]string{videoFile: "content1"})
-	t.Cleanup(func() { os.RemoveAll(stagingDir) })
 
-	cfg := newTestConfig(stagingDir, nil)
+	cfg := newTestConfig(t, nil)
+	videoFile := "video1.mp4"
+	createTestFiles(t, cfg.VideosOrigStagingRoot, map[string]string{videoFile: "content1"})
 	tempConfigDir := t.TempDir()
 
 	ctrl := gomock.NewController(t)
@@ -151,7 +167,7 @@ func TestUploadVideos_FilesToUpload_NoAlbums_KeepFiles(t *testing.T) {
 
 	uploadToken := "token_for_" + videoFile
 	mediaItemID := "id_for_" + videoFile
-	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), filepath.Join(stagingDir, videoFile)).
+	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), filepath.Join(cfg.VideosOrigStagingRoot, videoFile)).
 		Return(uploadToken, nil)
 	mockMediaItemsSvc.EXPECT().Create(gomock.Any(), media_items.SimpleMediaItem{UploadToken: uploadToken, Filename: videoFile}).
 		Return(&media_items.MediaItem{ID: mediaItemID, Filename: videoFile}, nil)
@@ -159,7 +175,7 @@ func TestUploadVideos_FilesToUpload_NoAlbums_KeepFiles(t *testing.T) {
 	err := UploadVideos(ctx, cfg, tempConfigDir, true /* keepStaging */, mockGPhotosClient)
 	require.NoError(t, err, "UploadVideos failed: %v", err)
 
-	_, statErr := os.Stat(filepath.Join(stagingDir, videoFile))
+	_, statErr := os.Stat(filepath.Join(cfg.VideosOrigStagingRoot, videoFile))
 	assert.NoError(t, statErr, "Expected %s to be kept in staging, but it was deleted (os.IsNotExist was true for stat error: %v)", videoFile, statErr)
 }
 
@@ -167,23 +183,15 @@ func TestUploadVideos_FilesToUpload_NoAlbums_KeepFiles(t *testing.T) {
 // creating a new album when it doesn't exist, adding the video to it, and moving the local file.
 func TestUploadVideos_FilesToUpload_WithAlbums_CreatesAndAddsToAlbum(t *testing.T) {
 	ctx := context.Background()
-	videoFileName := "video1.mp4"
-	// baseStagingDir will be a unique temp dir for this test's staging files
-	baseStagingDir := t.TempDir()
-	videoFilePath := filepath.Join(baseStagingDir, videoFileName)
-
-	err := os.WriteFile(videoFilePath, []byte("content"), 0644)
-	require.NoError(t, err, "Failed to write video file: %v", err)
-
-	// Setup a separate temp dir for VideosOrigRoot
-	videosOrigDir := t.TempDir()
-	t.Cleanup(func() { os.RemoveAll(videosOrigDir) })
 
 	albumTitle := "NewAlbumToCreate"
 	albumTitles := []string{albumTitle}
-	// Create config and set both staging and original roots
-	cfg := newTestConfig(baseStagingDir, albumTitles)
-	cfg.VideosOrigRoot = videosOrigDir // Set the destination for moved files
+	cfg := newTestConfig(t, albumTitles)
+
+	videoFileName := "video1.mp4"
+	videoFilePath := filepath.Join(cfg.VideosOrigStagingRoot, videoFileName)
+	err := os.WriteFile(videoFilePath, []byte("content"), 0644)
+	require.NoError(t, err, "Failed to write video file: %v", err)
 
 	tempConfigDir := t.TempDir() // For album cache
 
@@ -226,16 +234,16 @@ func TestUploadVideos_FilesToUpload_WithAlbums_CreatesAndAddsToAlbum(t *testing.
 	assert.True(t, os.IsNotExist(statErr), "Expected video file %s to be moved from staging, but it still exists. Error: %v", videoFilePath, statErr)
 
 	// Verify file exists in VideosOrigRoot
-	expectedDestPath := filepath.Join(videosOrigDir, videoFileName)
+	expectedDestPath := filepath.Join(cfg.VideosOrigRoot, videoFileName)
 	_, statErr = os.Stat(expectedDestPath)
 	assert.NoError(t, statErr, "Expected video file %s to be moved to %s, but it does not exist. Error: %v", videoFileName, expectedDestPath, statErr)
 }
 
 func TestUploadVideos_ErrorLoadAlbumCache(t *testing.T) {
 	ctx := context.Background()
-	stagingDir := createTempDirWithFiles(t, map[string]string{"video1.mp4": "content"})
-	t.Cleanup(func() { os.RemoveAll(stagingDir) })
-	cfg := newTestConfig(stagingDir, []string{"Album1"})
+
+	cfg := newTestConfig(t, []string{"Album1"})
+	createTestFiles(t, cfg.VideosOrigStagingRoot, map[string]string{"video1.mp4": "content"})
 
 	tempConfigDir := t.TempDir()
 	// Ensure the cache path logic in test matches the main code's getAlbumCachePath
@@ -257,10 +265,9 @@ func TestUploadVideos_ErrorLoadAlbumCache(t *testing.T) {
 
 func TestUploadVideos_ErrorGetOrCreateAlbumIDs(t *testing.T) {
 	ctx := context.Background()
-	stagingDir := createTempDirWithFiles(t, map[string]string{"video1.mp4": "content"})
-	t.Cleanup(func() { os.RemoveAll(stagingDir) })
 	albumTitles := []string{"AlbumThatCausesError"}
-	cfg := newTestConfig(stagingDir, albumTitles)
+	cfg := newTestConfig(t, albumTitles)
+	createTestFiles(t, cfg.VideosOrigStagingRoot, map[string]string{"video1.mp4": "content"})
 	tempConfigDir := t.TempDir()
 
 	ctrl := gomock.NewController(t)
@@ -280,10 +287,9 @@ func TestUploadVideos_ErrorGetOrCreateAlbumIDs(t *testing.T) {
 
 func TestUploadVideos_ErrorUploadFile(t *testing.T) {
 	ctx := context.Background()
+	cfg := newTestConfig(t, nil)
 	videoFileName := "video1.mp4"
-	stagingDir := createTempDirWithFiles(t, map[string]string{videoFileName: "content"})
-	t.Cleanup(func() { os.RemoveAll(stagingDir) })
-	cfg := newTestConfig(stagingDir, nil)
+	createTestFiles(t, cfg.VideosOrigStagingRoot, map[string]string{videoFileName: "content"})
 	tempConfigDir := t.TempDir()
 
 	ctrl := gomock.NewController(t)
@@ -293,7 +299,7 @@ func TestUploadVideos_ErrorUploadFile(t *testing.T) {
 	mockGPhotosClient.EXPECT().Uploader().Return(mockUploaderSvc).AnyTimes()
 
 	expectedErrStr := "simulated upload failure"
-	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), filepath.Join(stagingDir, videoFileName)).
+	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), filepath.Join(cfg.VideosOrigStagingRoot, videoFileName)).
 		Return("", errors.New(expectedErrStr))
 
 	err := UploadVideos(ctx, cfg, tempConfigDir, false, mockGPhotosClient)
@@ -302,16 +308,15 @@ func TestUploadVideos_ErrorUploadFile(t *testing.T) {
 	assert.Contains(t, err.Error(), videoFileName, "Error message should contain filename")
 	assert.Contains(t, err.Error(), expectedErrStr, "Error message should contain original error")
 
-	_, statErr := os.Stat(filepath.Join(stagingDir, videoFileName))
+	_, statErr := os.Stat(filepath.Join(cfg.VideosOrigStagingRoot, videoFileName))
 	assert.NoError(t, statErr, "Expected %s to be kept in staging after upload failure, but it was deleted (os.IsNotExist was true for stat error: %v)", videoFileName, statErr)
 }
 
 func TestUploadVideos_ErrorCreateMediaItem(t *testing.T) {
 	ctx := context.Background()
+	cfg := newTestConfig(t, nil)
 	videoFileName := "video1.mp4"
-	stagingDir := createTempDirWithFiles(t, map[string]string{videoFileName: "content"})
-	t.Cleanup(func() { os.RemoveAll(stagingDir) })
-	cfg := newTestConfig(stagingDir, nil)
+	createTestFiles(t, cfg.VideosOrigStagingRoot, map[string]string{videoFileName: "content"})
 	tempConfigDir := t.TempDir()
 
 	ctrl := gomock.NewController(t)
@@ -323,7 +328,7 @@ func TestUploadVideos_ErrorCreateMediaItem(t *testing.T) {
 	mockGPhotosClient.EXPECT().MediaItems().Return(mockMediaItemsSvc).AnyTimes()
 
 	uploadToken := "upload_token_for_" + videoFileName
-	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), filepath.Join(stagingDir, videoFileName)).
+	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), filepath.Join(cfg.VideosOrigStagingRoot, videoFileName)).
 		Return(uploadToken, nil)
 
 	expectedErrStr := "simulated create media item failure"
@@ -335,23 +340,20 @@ func TestUploadVideos_ErrorCreateMediaItem(t *testing.T) {
 	// It logs the error and proceeds. If this behavior changes, this check needs an update.
 	assert.NoError(t, err, "UploadVideos failed unexpectedly: %v. Expected to continue on CreateMediaItem error.", err)
 
-	_, statErr := os.Stat(filepath.Join(stagingDir, videoFileName))
+	_, statErr := os.Stat(filepath.Join(cfg.VideosOrigStagingRoot, videoFileName))
 	assert.NoError(t, statErr, "Expected %s to be kept in staging after CreateMediaItem failure, but it was deleted (os.IsNotExist was true for stat error: %v)", videoFileName, statErr)
 }
 
 func TestUploadVideos_ErrorAddMediaToAlbum_FileKept_WhenAlbumExists(t *testing.T) {
 	ctx := context.Background()
-	videoFileName := "video1.mp4"
-	videoFilePath := filepath.Join(t.TempDir(), videoFileName)
-	baseStagingDir := filepath.Dir(videoFilePath)
-
-	err := os.MkdirAll(baseStagingDir, 0755)
-	require.NoError(t, err, "Failed to create base staging dir: %v", err)
-	err = os.WriteFile(videoFilePath, []byte("content"), 0644)
-	require.NoError(t, err, "Failed to write video file: %v", err)
 
 	albumTitle := "ExistingAlbum"
-	cfg := newTestConfig(baseStagingDir, []string{albumTitle})
+	cfg := newTestConfig(t, []string{albumTitle})
+
+	videoFileName := "video1.mp4"
+	videoFilePath := filepath.Join(cfg.VideosOrigStagingRoot, videoFileName)
+	require.NoError(t, os.WriteFile(videoFilePath, []byte("content"), 0644))
+
 	tempConfigDir := t.TempDir() // For album cache
 
 	ctrl := gomock.NewController(t)
@@ -383,7 +385,7 @@ func TestUploadVideos_ErrorAddMediaToAlbum_FileKept_WhenAlbumExists(t *testing.T
 	mockAlbumsSvc.EXPECT().AddMediaItems(gomock.Any(), existingAlbumID, []string{mediaItemID}).
 		Return(errors.New(expectedAddError))
 
-	err = UploadVideos(ctx, cfg, tempConfigDir, false /* keepStaging */, mockGPhotosClient)
+	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepStaging */, mockGPhotosClient)
 	require.NoError(t, err, "UploadVideos returned an unexpected error: %v. Expected to continue on AddMediaItems error.", err)
 
 	// Verify file is NOT deleted because add to album failed
@@ -394,11 +396,11 @@ func TestUploadVideos_ErrorAddMediaToAlbum_FileKept_WhenAlbumExists(t *testing.T
 func TestUploadVideos_ContextCancellationDuringLimiterWait(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	videoFileName := "video1.mp4"
-	stagingDir := createTempDirWithFiles(t, map[string]string{videoFileName: "content"})
-	t.Cleanup(func() { os.RemoveAll(stagingDir) })
+	cfg := newTestConfig(t, nil)
 
-	cfg := newTestConfig(stagingDir, nil)
+	videoFileName := "video1.mp4"
+	createTestFiles(t, cfg.VideosOrigStagingRoot, map[string]string{videoFileName: "content"})
+
 	tempConfigDir := t.TempDir()
 
 	ctrl := gomock.NewController(t)
@@ -436,7 +438,7 @@ func TestUploadVideos_ContextCancellationDuringLimiterWait(t *testing.T) {
 	isContextError := errors.Is(errUpload, context.Canceled) || errors.Is(errUpload, context.DeadlineExceeded)
 	assert.True(t, isContextError, "Expected context.Canceled or context.DeadlineExceeded, got %v", errUpload)
 
-	_, statErr := os.Stat(filepath.Join(stagingDir, videoFileName))
+	_, statErr := os.Stat(filepath.Join(cfg.VideosOrigStagingRoot, videoFileName))
 	assert.NoError(t, statErr, "Expected %s to be kept in staging after context cancellation, but it was deleted (os.IsNotExist was true for stat error: %v)", videoFileName, statErr)
 }
 
@@ -444,23 +446,15 @@ func TestUploadVideos_ContextCancellationDuringLimiterWait(t *testing.T) {
 // using an existing album, adding the video to it, and moving the local file.
 func TestUploadVideos_FilesToUpload_WithAlbums_AlbumExists(t *testing.T) {
 	ctx := context.Background()
-	videoFileName := "existing_album_video.mp4"
-	// baseStagingDir will be a unique temp dir for this test's staging files
-	baseStagingDir := t.TempDir()
-	videoFilePath := filepath.Join(baseStagingDir, videoFileName)
-
-	err := os.WriteFile(videoFilePath, []byte("content for existing album test"), 0644)
-	require.NoError(t, err, "Failed to write video file: %v", err)
-
-	// Setup a separate temp dir for VideosOrigRoot
-	videosOrigDir := t.TempDir()
-	t.Cleanup(func() { os.RemoveAll(videosOrigDir) })
 
 	albumTitle := "MyExistingAlbum"
 	albumTitles := []string{albumTitle}
-	// Create config and set both staging and original roots
-	cfg := newTestConfig(baseStagingDir, albumTitles)
-	cfg.VideosOrigRoot = videosOrigDir // Set the destination for moved files
+	cfg := newTestConfig(t, albumTitles)
+
+	videoFileName := "existing_album_video.mp4"
+	videoFilePath := filepath.Join(cfg.VideosOrigStagingRoot, videoFileName)
+	err := os.WriteFile(videoFilePath, []byte("content for existing album test"), 0644)
+	require.NoError(t, err, "Failed to write video file: %v", err)
 
 	tempConfigDir := t.TempDir() // For album cache
 
@@ -500,7 +494,7 @@ func TestUploadVideos_FilesToUpload_WithAlbums_AlbumExists(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "Expected video file %s to be moved from staging, but it still exists. Error: %v", videoFilePath, statErr)
 
 	// Verify file exists in VideosOrigRoot
-	expectedDestPath := filepath.Join(videosOrigDir, videoFileName)
+	expectedDestPath := filepath.Join(cfg.VideosOrigRoot, videoFileName)
 	_, statErr = os.Stat(expectedDestPath)
 	assert.NoError(t, statErr, "Expected video file %s to be moved to %s, but it does not exist. Error: %v", videoFileName, expectedDestPath, statErr)
 }
