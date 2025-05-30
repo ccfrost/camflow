@@ -257,7 +257,7 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 		return fmt.Errorf("failed to move %s: error checking destination %s: %w", videoPath, destPath, err)
 	}
 
-	fmt.Printf("\\Moving %s to %s...\n", videoPath, destPath)
+	fmt.Printf("Moving %s to %s...\n", videoPath, destPath)
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return fmt.Errorf("failed to create destination directory %s for moving %s: %w", destDir, videoPath, err)
 	}
