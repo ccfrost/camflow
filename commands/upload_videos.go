@@ -269,5 +269,82 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 	}
 	fmt.Printf("Successfully moved %s to %s\n", videoPath, destPath)
 
+	if err := cleanupEmptyStagingDirectories(videoPath, config.VideosOrigStagingRoot); err != nil {
+		// Log the error but don't cause uploadVideo to fail, as cleanup is secondary.
+		fmt.Printf("Warning: cleanup of staging directories for %s failed: %v\n", videoPath, err)
+	}
+
 	return nil
+}
+
+// cleanupEmptyStagingDirectories removes empty parent directories of the moved video file
+// within the staging area. It cleans directories from the video's original parent
+// up to, but not including, the stagingRootPath.
+// It returns an error if any unexpected issue occurs during the cleanup process.
+func cleanupEmptyStagingDirectories(videoPath string, stagingRootPath string) error {
+	// This logic cleans up empty parent directories of the moved video,
+	// up to, but not including, the staging root directory.
+	cleanedStagingRoot := filepath.Clean(stagingRootPath)
+	currentDirToClean := filepath.Clean(filepath.Dir(videoPath))
+
+	// Loop to remove empty parent directories.
+	// The loop stops if currentDirToClean is the staging root,
+	// is outside the staging root, or is not empty.
+	for {
+		// Stop if currentDirToClean is no longer a strict subdirectory of cleanedStagingRoot,
+		// or if it's the staging root itself, or a root-like path.
+		// We use strings.HasPrefix to ensure we are within the staging root's path.
+		// We also check currentDirToClean != cleanedStagingRoot to ensure we don't process the root itself.
+		if !strings.HasPrefix(currentDirToClean, cleanedStagingRoot) ||
+			currentDirToClean == cleanedStagingRoot ||
+			currentDirToClean == "." ||
+			currentDirToClean == string(os.PathSeparator) {
+			return nil
+		}
+
+		// Ensure currentDirToClean is actually a child of cleanedStagingRoot, not just sharing a prefix.
+		// e.g. /tmp/staging-other should not be processed if root is /tmp/staging
+		if !strings.HasPrefix(currentDirToClean, cleanedStagingRoot+string(os.PathSeparator)) {
+			return nil
+		}
+
+		entries, err := os.ReadDir(currentDirToClean)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// Directory already gone, try its parent.
+				parent := filepath.Dir(currentDirToClean)
+				if parent == currentDirToClean {
+					// Safety break if at filesystem root
+					return nil
+				}
+				currentDirToClean = parent
+				continue
+			}
+			return fmt.Errorf("error reading directory %s during cleanup: %w", currentDirToClean, err)
+		}
+
+		if len(entries) != 0 {
+			// Directory is not empty, stop cleaning up this path.
+			return nil
+		}
+
+		// Directory is empty, attempt to remove it.
+		fmt.Printf("Attempting to remove empty staging subdirectory: %s\n", currentDirToClean)
+		if removeErr := os.Remove(currentDirToClean); removeErr != nil {
+			if !os.IsNotExist(removeErr) { // Don\'t warn if already gone
+				return fmt.Errorf("failed to remove empty staging subdirectory %s: %w", currentDirToClean, removeErr)
+			}
+			// If os.IsNotExist, it means it was already removed or disappeared, which is fine.
+			fmt.Printf("Staging subdirectory %s was already removed or disappeared.\n", currentDirToClean)
+		} else {
+			fmt.Printf("Successfully removed empty staging subdirectory: %s\n", currentDirToClean)
+		}
+
+		// Move to the parent directory for the next iteration.
+		parent := filepath.Dir(currentDirToClean)
+		if parent == currentDirToClean { // Safety break if at filesystem root
+			return nil
+		}
+		currentDirToClean = parent
+	}
 }
