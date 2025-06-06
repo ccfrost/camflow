@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,7 +84,7 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, cache
 		fmt.Println("No videos found in staging directory.")
 		return nil
 	}
-	fmt.Printf("Found %d videos to upload (total size: %.1f GB).\n", len(videosToUpload), float64(totalSize)/1024/1024/1024)
+	fmt.Printf("Found %d video(s) to upload (%.1f GB)\n", len(videosToUpload), math.Ceil(float64(totalSize)/1024/1024/1024))
 
 	// --- Get Album IDs (and create if they don't exist) ---
 	if len(config.GooglePhotos.DefaultAlbums) == 0 {
