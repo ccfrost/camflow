@@ -36,7 +36,7 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, cache
 	}
 
 	if _, err := os.Stat(stagingDir); os.IsNotExist(err) {
-		logger.Debug("Video staging directory does not exist, nothing to upload",
+		logger.Info("Video staging directory does not exist, nothing to upload",
 			slog.String("staging_dir", stagingDir))
 		return nil
 	}
@@ -57,7 +57,7 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, cache
 				return fmt.Errorf("staging directory '%s' disappeared or unreadable: %w", stagingDir, err)
 			}
 			// For other errors (e.g. permission on a sub-file/dir), log and try to continue.
-			logger.Debug("Error accessing path during walk, skipping",
+			logger.Error("Error accessing path during walk, skipping",
 				slog.String("path", path),
 				slog.String("error", err.Error()))
 			walkErrs = append(walkErrs, err)
@@ -81,21 +81,21 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, cache
 		return fmt.Errorf("failed to walk video staging dir '%s': %w", stagingDir, err)
 	}
 	if len(walkErrs) > 0 {
-		logger.Debug("Encountered errors during directory walk, proceeding with successfully found files",
+		logger.Warn("Encountered errors during directory walk, proceeding with successfully found files",
 			slog.Int("error_count", len(walkErrs)))
 	}
 
 	if len(videosToUpload) == 0 {
-		logger.Debug("No videos found in staging directory")
+		logger.Info("No videos found in staging directory")
 		return nil
 	}
-	logger.Debug("Found videos to upload",
+	logger.Info("Found videos to upload",
 		slog.Int("count", len(videosToUpload)),
 		slog.Float64("total_size_gb", math.Ceil(float64(totalSize)/1024/1024/1024)))
 
 	// --- Get Album IDs (and create if they don't exist) ---
 	if len(config.GooglePhotos.DefaultAlbums) == 0 {
-		logger.Debug("No default albums specified in config, videos will only be uploaded to the library")
+		logger.Warn("No default albums specified in config, videos will only be uploaded to the library")
 	}
 
 	albumCachePath, err := getAlbumCachePath(cacheDirFlag)
@@ -141,7 +141,7 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, cache
 				}
 			}
 		} else if len(config.GooglePhotos.DefaultAlbums) > 0 {
-			logger.Debug("DefaultAlbums list in config contains only empty or whitespace titles")
+			logger.Warn("DefaultAlbums list in config contains only empty or whitespace titles")
 		}
 	}
 	// If resolvedTargetAlbums is empty at this point, videos are uploaded to library only.
@@ -207,7 +207,7 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 	// TODO: consider batching.
 	mediaItem, err := gphotosClient.MediaItems().Create(ctx, simpleMediaItem)
 	if err != nil {
-		logger.Debug("Error creating media item, skipping",
+		logger.Error("Error creating media item, skipping",
 			slog.String("file", videoBasename),
 			slog.String("token", uploadToken),
 			slog.String("error", err.Error()))
@@ -231,7 +231,7 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 			}
 			err = albumsService.AddMediaItems(ctx, albumID, []string{mediaItem.ID})
 			if err != nil {
-				logger.Debug("Error adding media item to album",
+				logger.Error("Error adding media item to album",
 					slog.String("media_id", mediaItem.ID),
 					slog.String("album_title", albumTitle),
 					slog.String("album_id", albumID),
@@ -246,7 +246,7 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 			}
 		}
 		if len(failedAlbums) > 0 {
-			logger.Debug("Failed to add to some albums",
+			logger.Error("Failed to add to some albums",
 				slog.String("file", videoBasename),
 				slog.Int("failed_count", len(failedAlbums)),
 				slog.Any("failed_albums", failedAlbums))
@@ -259,7 +259,7 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 
 	if !successfullyAddedToAll {
 		if !keepStaging {
-			logger.Debug("Video was not successfully added to all target albums, it will not be moved from staging",
+			logger.Error("Video was not successfully added to all target albums, it will not be moved from staging",
 				slog.String("file", videoBasename))
 		}
 		return nil
@@ -303,7 +303,7 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 
 	if err := cleanupEmptyStagingDirectories(videoPath, config.VideosOrigStagingRoot); err != nil {
 		// Log the error but don't cause uploadVideo to fail, as cleanup is secondary.
-		logger.Debug("Warning: cleanup of staging directories failed",
+		logger.Error("Warning: cleanup of staging directories failed",
 			slog.String("video_path", videoPath),
 			slog.String("error", err.Error()))
 	}
@@ -363,8 +363,6 @@ func cleanupEmptyStagingDirectories(videoPath string, stagingRootPath string) er
 		}
 
 		// Directory is empty, attempt to remove it.
-		logger.Debug("Attempting to remove empty staging subdirectory",
-			slog.String("directory", currentDirToClean))
 		if removeErr := os.Remove(currentDirToClean); removeErr != nil {
 			if !os.IsNotExist(removeErr) { // Don\'t warn if already gone
 				return fmt.Errorf("failed to remove empty staging subdirectory %s: %w", currentDirToClean, removeErr)
