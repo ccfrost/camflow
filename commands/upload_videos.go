@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -35,7 +36,8 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, cache
 	}
 
 	if _, err := os.Stat(stagingDir); os.IsNotExist(err) {
-		fmt.Printf("Video staging directory '%s' does not exist, nothing to upload.\n", stagingDir)
+		logger.Debug("Video staging directory does not exist, nothing to upload",
+			slog.String("staging_dir", stagingDir))
 		return nil
 	}
 
@@ -55,7 +57,9 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, cache
 				return fmt.Errorf("staging directory '%s' disappeared or unreadable: %w", stagingDir, err)
 			}
 			// For other errors (e.g. permission on a sub-file/dir), log and try to continue.
-			fmt.Printf("Warning: Error accessing path %s during walk: %v. Skipping.\n", path, err)
+			logger.Debug("Error accessing path during walk, skipping",
+				slog.String("path", path),
+				slog.String("error", err.Error()))
 			walkErrs = append(walkErrs, err)
 			return nil // Continue walking
 		}
@@ -77,18 +81,21 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, cache
 		return fmt.Errorf("failed to walk video staging dir '%s': %w", stagingDir, err)
 	}
 	if len(walkErrs) > 0 {
-		fmt.Printf("Encountered %d errors during directory walk. Proceeding with successfully found files.\n", len(walkErrs))
+		logger.Debug("Encountered errors during directory walk, proceeding with successfully found files",
+			slog.Int("error_count", len(walkErrs)))
 	}
 
 	if len(videosToUpload) == 0 {
-		fmt.Println("No videos found in staging directory.")
+		logger.Debug("No videos found in staging directory")
 		return nil
 	}
-	fmt.Printf("Found %d video(s) to upload (%.1f GB)\n", len(videosToUpload), math.Ceil(float64(totalSize)/1024/1024/1024))
+	logger.Debug("Found videos to upload",
+		slog.Int("count", len(videosToUpload)),
+		slog.Float64("total_size_gb", math.Ceil(float64(totalSize)/1024/1024/1024)))
 
 	// --- Get Album IDs (and create if they don't exist) ---
 	if len(config.GooglePhotos.DefaultAlbums) == 0 {
-		fmt.Println("Warning: No default albums specified in config. Videos will only be uploaded to the library.")
+		logger.Debug("No default albums specified in config, videos will only be uploaded to the library")
 	}
 
 	albumCachePath, err := getAlbumCachePath(cacheDirFlag)
@@ -120,7 +127,9 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, cache
 			}
 
 			if len(albumIDs) > 0 { // Only print if IDs were actually found/created
-				fmt.Printf("Target album IDs resolved/created: %v for titles: %v\n", albumIDs, validAlbumTitles)
+				logger.Debug("Target album IDs resolved/created",
+					slog.Any("album_ids", albumIDs),
+					slog.Any("titles", validAlbumTitles))
 			}
 
 			// Populate resolvedTargetAlbums, mapping ID to its corresponding Title
@@ -132,7 +141,7 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, cache
 				}
 			}
 		} else if len(config.GooglePhotos.DefaultAlbums) > 0 {
-			fmt.Println("Warning: DefaultAlbums list in config contains only empty or whitespace titles.")
+			logger.Debug("DefaultAlbums list in config contains only empty or whitespace titles")
 		}
 	}
 	// If resolvedTargetAlbums is empty at this point, videos are uploaded to library only.
@@ -152,7 +161,7 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, cache
 
 	_ = bar.Finish() // Ignore error on finish
 
-	fmt.Println("\nVideo upload process finished.")
+	logger.Debug("Video upload process finished")
 	return nil
 }
 
@@ -198,10 +207,15 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 	// TODO: consider batching.
 	mediaItem, err := gphotosClient.MediaItems().Create(ctx, simpleMediaItem)
 	if err != nil {
-		fmt.Printf("\nError creating media item for %s (token: %s): %v. Skipping.\n", videoBasename, uploadToken, err)
+		logger.Debug("Error creating media item, skipping",
+			slog.String("file", videoBasename),
+			slog.String("token", uploadToken),
+			slog.String("error", err.Error()))
 		return nil // Skip to the next video, progress bar will be updated by defer
 	}
-	fmt.Printf("\nSuccessfully created media item for %s (ID: %s)\n", videoBasename, mediaItem.ID)
+	logger.Debug("Successfully created media item",
+		slog.String("file", videoBasename),
+		slog.String("media_id", mediaItem.ID))
 
 	// TODO: consider batch adding items to albums.
 	successfullyAddedToAll := true
@@ -217,30 +231,43 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 			}
 			err = albumsService.AddMediaItems(ctx, albumID, []string{mediaItem.ID})
 			if err != nil {
-				fmt.Printf("Error adding media item %s to album '%s' (ID: %s): %v\n", mediaItem.ID, albumTitle, albumID, err)
+				logger.Debug("Error adding media item to album",
+					slog.String("media_id", mediaItem.ID),
+					slog.String("album_title", albumTitle),
+					slog.String("album_id", albumID),
+					slog.String("error", err.Error()))
 				failedAlbums = append(failedAlbums, albumTitle)
 				successfullyAddedToAll = false
 			} else {
-				fmt.Printf("Added media item %s to album '%s'\n", mediaItem.ID, albumTitle)
+				logger.Debug("Added media item to album",
+					slog.String("media_id", mediaItem.ID),
+					slog.String("album_title", albumTitle))
 				addedCount++
 			}
 		}
 		if len(failedAlbums) > 0 {
-			fmt.Printf("Warning: Failed to add %s to %d albums: %v\n", videoBasename, len(failedAlbums), failedAlbums)
+			logger.Debug("Failed to add to some albums",
+				slog.String("file", videoBasename),
+				slog.Int("failed_count", len(failedAlbums)),
+				slog.Any("failed_albums", failedAlbums))
 		} else if addedCount > 0 {
-			fmt.Printf("Successfully added %s to all %d target albums.\n", videoBasename, addedCount)
+			logger.Debug("Successfully added to all target albums",
+				slog.String("file", videoBasename),
+				slog.Int("album_count", addedCount))
 		}
 	}
 
 	if !successfullyAddedToAll {
 		if !keepStaging {
-			fmt.Printf("Warning: %s was not successfully added to all target albums. It will not be moved from staging.\n", videoBasename)
+			logger.Debug("Video was not successfully added to all target albums, it will not be moved from staging",
+				slog.String("file", videoBasename))
 		}
 		return nil
 	}
 
 	if keepStaging {
-		fmt.Printf("\nKeeping %s in staging directory as per keepStaging flag.\n", videoPath)
+		logger.Debug("Keeping video in staging directory as per keepStaging flag",
+			slog.String("file", videoPath))
 		return nil
 	}
 
@@ -258,7 +285,9 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 		return fmt.Errorf("failed to move %s: error checking destination %s: %w", videoPath, destPath, err)
 	}
 
-	fmt.Printf("Moving %s to %s...\n", videoPath, destPath)
+	logger.Debug("Moving video file",
+		slog.String("from", videoPath),
+		slog.String("to", destPath))
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return fmt.Errorf("failed to create destination directory %s for moving %s: %w", destDir, videoPath, err)
 	}
@@ -268,11 +297,15 @@ func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepSt
 	if err := os.Rename(videoPath, destPath); err != nil {
 		return fmt.Errorf("failed to move %s from staging to %s: %w", videoPath, destPath, err)
 	}
-	fmt.Printf("Successfully moved %s to %s\n", videoPath, destPath)
+	logger.Debug("Successfully moved video file",
+		slog.String("from", videoPath),
+		slog.String("to", destPath))
 
 	if err := cleanupEmptyStagingDirectories(videoPath, config.VideosOrigStagingRoot); err != nil {
 		// Log the error but don't cause uploadVideo to fail, as cleanup is secondary.
-		fmt.Printf("Warning: cleanup of staging directories for %s failed: %v\n", videoPath, err)
+		logger.Debug("Warning: cleanup of staging directories failed",
+			slog.String("video_path", videoPath),
+			slog.String("error", err.Error()))
 	}
 
 	return nil
@@ -330,15 +363,18 @@ func cleanupEmptyStagingDirectories(videoPath string, stagingRootPath string) er
 		}
 
 		// Directory is empty, attempt to remove it.
-		fmt.Printf("Attempting to remove empty staging subdirectory: %s\n", currentDirToClean)
+		logger.Debug("Attempting to remove empty staging subdirectory",
+			slog.String("directory", currentDirToClean))
 		if removeErr := os.Remove(currentDirToClean); removeErr != nil {
 			if !os.IsNotExist(removeErr) { // Don\'t warn if already gone
 				return fmt.Errorf("failed to remove empty staging subdirectory %s: %w", currentDirToClean, removeErr)
 			}
 			// If os.IsNotExist, it means it was already removed or disappeared, which is fine.
-			fmt.Printf("Staging subdirectory %s was already removed or disappeared.\n", currentDirToClean)
+			logger.Debug("Staging subdirectory was already removed or disappeared",
+				slog.String("directory", currentDirToClean))
 		} else {
-			fmt.Printf("Successfully removed empty staging subdirectory: %s\n", currentDirToClean)
+			logger.Debug("Successfully removed empty staging subdirectory",
+				slog.String("directory", currentDirToClean))
 		}
 
 		// Move to the parent directory for the next iteration.
