@@ -5,15 +5,15 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ccfrost/camedia/camediaconfig"
+	"github.com/ccfrost/camflow/camflowconfig"
 	"github.com/stretchr/testify/require"
 )
 
-func newTestConfig(t *testing.T, defaultAlbums []string) camediaconfig.CamediaConfig {
+func newTestConfig(t *testing.T, defaultAlbums []string) camflowconfig.CamediaConfig {
 	t.Helper()
 
 	tempDir := t.TempDir()
-	c := camediaconfig.CamediaConfig{
+	c := camflowconfig.CamediaConfig{
 		PhotosOrigRoot:         filepath.Join(tempDir, "PhotosOrigRoot"),
 		PhotosExportStagingDir: filepath.Join(tempDir, "PhotosExportStagingDir"),
 		PhotosExportDir:        filepath.Join(tempDir, "PhotosExportDir"),
@@ -21,7 +21,7 @@ func newTestConfig(t *testing.T, defaultAlbums []string) camediaconfig.CamediaCo
 		VideosOrigStagingRoot: filepath.Join(tempDir, "VideosOrigStagingRoot"),
 		VideosOrigRoot:        filepath.Join(tempDir, "VideosOrigRoot"),
 
-		GooglePhotos: camediaconfig.GooglePhotosConfig{
+		GooglePhotos: camflowconfig.GooglePhotosConfig{
 			ClientId:     "test-client-id",
 			ClientSecret: "test-client-secret",
 			RedirectURI:  "test-redirect-uri",

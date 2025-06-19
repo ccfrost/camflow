@@ -239,7 +239,7 @@ func TestUploadVideos_ErrorLoadAlbumCache(t *testing.T) {
 
 	tempConfigDir := t.TempDir()
 	// Ensure the cache path logic in test matches the main code's getAlbumCachePath
-	// Assuming getAlbumCachePath uses configDir directly if provided, or os.UserConfigDir() + "camedia"
+	// Assuming getAlbumCachePath uses configDir directly if provided, or os.UserConfigDir() + "camflow"
 	// The constant is albumCacheFileName = "google_photos_album_cache.json"
 	// If configDir is tempConfigDir, then cache path is filepath.Join(tempConfigDir, "google_photos_album_cache.json")
 	// The main code uses: filepath.Join(configDir, albumCacheFileName)

@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/ccfrost/camedia/camediaconfig"
+	"github.com/ccfrost/camflow/camflowconfig"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -17,7 +17,7 @@ import (
 // GetAuthenticatedGooglePhotosClient creates an authenticated HTTP client using OAuth2 credentials.
 // It handles token loading, refreshing, and saving.
 // Takes configDir to locate the token file.
-func GetAuthenticatedGooglePhotosClient(ctx context.Context, config camediaconfig.CamediaConfig, cacheDir string) (*http.Client, error) {
+func GetAuthenticatedGooglePhotosClient(ctx context.Context, config camflowconfig.CamediaConfig, cacheDir string) (*http.Client, error) {
 	if config.GooglePhotos.ClientId == "" || config.GooglePhotos.ClientSecret == "" {
 		return nil, fmt.Errorf("google Photos ClientId or ClientSecret not configured")
 	}

@@ -1,4 +1,4 @@
-module github.com/ccfrost/camedia
+module github.com/ccfrost/camflow
 
 go 1.24.0
 

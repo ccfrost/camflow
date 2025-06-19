@@ -12,7 +12,7 @@ import (
 )
 
 // GPhotosClient defines the interface for Google Photos client operations
-// needed by the camedia commands.
+// needed by the camflow commands.
 type GPhotosClient interface {
 	Albums() AppAlbumsService
 	MediaItems() AppMediaItemsService

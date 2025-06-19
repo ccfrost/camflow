@@ -16,7 +16,7 @@ var videoStagingDirFunc = defaultVideoStagingDir
 // It uses XDG base directory specification.
 func defaultVideoStagingDir() (string, error) {
 	// TODO: CacheHome can be "".
-	stagingDir := filepath.Join(xdg.CacheHome, "camedia", "staging", "videos")
+	stagingDir := filepath.Join(xdg.CacheHome, "camflow", "staging", "videos")
 	err := os.MkdirAll(stagingDir, 0750) // Ensure the directory exists
 	if err != nil {
 		return "", fmt.Errorf("failed to create video staging directory %s: %w", stagingDir, err)
@@ -36,7 +36,7 @@ func videoStagingDir() (string, error) {
 // TODO: remove?
 /*
 func videoStagingDir() (string, error) {
-	const appName = "camedia"
+	const appName = "camflow"
 
 	var baseCacheDir string
 	var err error
@@ -79,7 +79,7 @@ func getCacheDirPath(cacheDirFlag, fileBaseName string) (string, error) {
 
 	// Fall back to user cache dir.
 	if dir, err := os.UserCacheDir(); err == nil {
-		return filepath.Join(dir, "camedia", fileBaseName), nil
+		return filepath.Join(dir, "camflow", fileBaseName), nil
 	}
 	return "", fmt.Errorf("unable to determine cache dir")
 }

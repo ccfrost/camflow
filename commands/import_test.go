@@ -8,14 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ccfrost/camedia/camediaconfig"
+	"github.com/ccfrost/camflow/camflowconfig"
 	"github.com/schollz/progressbar/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGetFilesAndSize(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "camedia-test-*")
+	tmpDir, err := os.MkdirTemp("", "camflow-test-*")
 	require.NoError(t, err, "Failed to create temp directory")
 	defer os.RemoveAll(tmpDir)
 
@@ -81,7 +81,7 @@ func TestGetFilesAndSize(t *testing.T) {
 
 func TestGetAvailableSpace(t *testing.T) {
 	// Create a temporary directory for testing
-	tmpDir, err := os.MkdirTemp("", "camedia-test-*")
+	tmpDir, err := os.MkdirTemp("", "camflow-test-*")
 	require.NoError(t, err, "Failed to create temp directory")
 	defer os.RemoveAll(tmpDir)
 
@@ -116,7 +116,7 @@ func createDummyFile(t *testing.T, path string, content string, modTime time.Tim
 }
 
 // setupMoveFilesTest sets up directories and config for moveFiles tests.
-func setupMoveFilesTest(t *testing.T) (config camediaconfig.CamediaConfig, srcRoot, photosOrigRoot, videosOrigStagingRoot string, cleanup func()) {
+func setupMoveFilesTest(t *testing.T) (config camflowconfig.CamediaConfig, srcRoot, photosOrigRoot, videosOrigStagingRoot string, cleanup func()) {
 	t.Helper()
 	sdcardRoot := t.TempDir()
 	mediaRoot := t.TempDir()
@@ -134,7 +134,7 @@ func setupMoveFilesTest(t *testing.T) (config camediaconfig.CamediaConfig, srcRo
 	err = os.MkdirAll(videosOrigStagingRoot, 0755)
 	require.NoError(t, err)
 
-	config = camediaconfig.CamediaConfig{
+	config = camflowconfig.CamediaConfig{
 		PhotosOrigRoot:        photosOrigRoot,
 		VideosOrigStagingRoot: videosOrigStagingRoot,
 		// Other config fields can be default/zero if not used by moveFiles directly
@@ -561,7 +561,7 @@ func TestIsDcimMediaDir(t *testing.T) {
 }
 
 func TestDeleteEmptyDirs(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "camedia-test-*")
+	tmpDir, err := os.MkdirTemp("", "camflow-test-*")
 	require.NoError(t, err, "Failed to create temp directory")
 	defer os.RemoveAll(tmpDir)
 

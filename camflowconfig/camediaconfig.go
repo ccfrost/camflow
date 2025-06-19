@@ -1,4 +1,4 @@
-package camediaconfig
+package camflowconfig
 
 import (
 	"fmt"
@@ -73,7 +73,7 @@ func getConfigPath(configPathFlag string) (string, error) {
 
 	// Fall back to user config dir.
 	if dir, err := os.UserConfigDir(); err == nil {
-		return filepath.Join(dir, "camedia", "config.toml"), nil
+		return filepath.Join(dir, "camflow", "config.toml"), nil
 	}
 	return "", fmt.Errorf("unable to determine config file path")
 }

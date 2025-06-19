@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ccfrost/camedia/camediaconfig"
+	"github.com/ccfrost/camflow/camflowconfig"
 	"github.com/gphotosuploader/google-photos-api-client-go/v3/media_items"
 	"github.com/schollz/progressbar/v3"
 	"golang.org/x/time/rate"
@@ -28,7 +28,7 @@ type videoFileInfo struct {
 // Uploaded videos are moved from staging to VideosOrigRoot unless keepStaging is true.
 // The function is idempotent - if interrupted, it can be recalled to resume.
 // Takes configDir to locate token and cache files, and a gphotosClient for API interaction.
-func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, cacheDirFlag string, keepStaging bool, gphotosClient GPhotosClient) error {
+func UploadVideos(ctx context.Context, config camflowconfig.CamediaConfig, cacheDirFlag string, keepStaging bool, gphotosClient GPhotosClient) error {
 	// Get staging directory
 	stagingDir := config.VideosOrigStagingRoot
 	if stagingDir == "" {
@@ -169,7 +169,7 @@ func UploadVideos(ctx context.Context, config camediaconfig.CamediaConfig, cache
 // It updates "bar" with the bytes it has uploaded.
 // It deletes the file after uploading if "keepStaging" is false.
 // "targetAlbumIDs" are the ids for DefaultAlbums in the config.
-func uploadVideo(ctx context.Context, config camediaconfig.CamediaConfig, keepStaging bool, gphotosClient GPhotosClient, videoPath string, fileSize int64, targetAlbums map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter) error {
+func uploadVideo(ctx context.Context, config camflowconfig.CamediaConfig, keepStaging bool, gphotosClient GPhotosClient, videoPath string, fileSize int64, targetAlbums map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter) error {
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}

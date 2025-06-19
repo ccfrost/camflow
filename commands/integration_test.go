@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ccfrost/camedia/camediaconfig"
+	"github.com/ccfrost/camflow/camflowconfig"
 	"github.com/golang/mock/gomock"
 	"github.com/gphotosuploader/google-photos-api-client-go/v3/albums"
 	"github.com/gphotosuploader/google-photos-api-client-go/v3/media_items"
@@ -316,10 +316,10 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 
 	t.Run("ConfigValidationError", func(t *testing.T) {
 		// Test with invalid configuration
-		invalidConfig := camediaconfig.CamediaConfig{
+		invalidConfig := camflowconfig.CamediaConfig{
 			// Missing required paths. newTestConfig cannot be used here as it creates a valid config.
 			// To test Validate() properly for missing paths, we manually create an incomplete config.
-			GooglePhotos: camediaconfig.GooglePhotosConfig{ // Need this to avoid nil pointer if Validate() on it is called
+			GooglePhotos: camflowconfig.GooglePhotosConfig{ // Need this to avoid nil pointer if Validate() on it is called
 				ClientId:     "test",
 				ClientSecret: "test",
 				RedirectURI:  "test",

@@ -6,24 +6,24 @@ import (
 	"os" // Added for filepath.Dir
 	"time"
 
-	"github.com/ccfrost/camedia/camediaconfig"
-	"github.com/ccfrost/camedia/commands"
+	"github.com/ccfrost/camflow/camflowconfig"
+	"github.com/ccfrost/camflow/commands"
 	gphotos "github.com/gphotosuploader/google-photos-api-client-go/v3"
 	"github.com/spf13/cobra"
 )
 
-const camedia = "camedia"
+const camflow = "camflow"
 
 func main() {
 	var configPathFlag, cacheDirFlag string
-	var config camediaconfig.CamediaConfig
+	var config camflowconfig.CamediaConfig
 
 	rootCmd := cobra.Command{
-		Use:   camedia,
+		Use:   camflow,
 		Short: "Manage camera media files",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			var err error
-			config, err = camediaconfig.LoadConfig(configPathFlag)
+			config, err = camflowconfig.LoadConfig(configPathFlag)
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
