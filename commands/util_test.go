@@ -14,12 +14,12 @@ func newTestConfig(t *testing.T, defaultAlbums []string) camflowconfig.CamediaCo
 
 	tempDir := t.TempDir()
 	c := camflowconfig.CamediaConfig{
-		PhotosOrigRoot:         filepath.Join(tempDir, "PhotosOrigRoot"),
-		PhotosExportStagingDir: filepath.Join(tempDir, "PhotosExportStagingDir"),
-		PhotosExportDir:        filepath.Join(tempDir, "PhotosExportDir"),
+		PhotosToProcessRoot:         filepath.Join(tempDir, "PhotosToProcessRoot"),
+		PhotosExportQueueDir: filepath.Join(tempDir, "PhotosExportQueueDir"),
+		PhotosExportedRoot:        filepath.Join(tempDir, "PhotosExportedRoot"),
 
-		VideosOrigStagingRoot: filepath.Join(tempDir, "VideosOrigStagingRoot"),
-		VideosOrigRoot:        filepath.Join(tempDir, "VideosOrigRoot"),
+		VideosExportQueueRoot: filepath.Join(tempDir, "VideosExportQueueRoot"),
+		VideosExportedRoot:        filepath.Join(tempDir, "VideosExportedRoot"),
 
 		GooglePhotos: camflowconfig.GooglePhotosConfig{
 			ClientId:     "test-client-id",
@@ -32,11 +32,11 @@ func newTestConfig(t *testing.T, defaultAlbums []string) camflowconfig.CamediaCo
 		},
 	}
 	for _, dir := range []string{
-		c.PhotosOrigRoot,
-		c.PhotosExportStagingDir,
-		c.PhotosExportDir,
-		c.VideosOrigStagingRoot,
-		c.VideosOrigRoot,
+		c.PhotosToProcessRoot,
+		c.PhotosExportQueueDir,
+		c.PhotosExportedRoot,
+		c.VideosExportQueueRoot,
+		c.VideosExportedRoot,
 	} {
 		require.NoError(t, os.MkdirAll(dir, 0755), dir)
 	}

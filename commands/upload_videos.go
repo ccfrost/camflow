@@ -23,21 +23,20 @@ type videoFileInfo struct {
 	size int64
 }
 
-// UploadVideos uploads videos from the staging video dir to Google Photos.
+// UploadVideos uploads videos from the video export queue dir to Google Photos.
 // Videos are added to all albums in config.DefaultAlbums.
-// Uploaded videos are moved from staging to VideosOrigRoot unless keepStaging is true.
+// Uploaded videos are moved from export queue to VideosExportedRoot unless keepTargetRoot is true.
 // The function is idempotent - if interrupted, it can be recalled to resume.
 // Takes configDir to locate token and cache files, and a gphotosClient for API interaction.
-func UploadVideos(ctx context.Context, config camflowconfig.CamediaConfig, cacheDirFlag string, keepStaging bool, gphotosClient GPhotosClient) error {
-	// Get staging directory
-	stagingDir := config.VideosOrigStagingRoot
-	if stagingDir == "" {
-		return fmt.Errorf("video staging directory (VideosOrigStagingRoot) not configured")
+func UploadVideos(ctx context.Context, config camflowconfig.CamediaConfig, cacheDirFlag string, keepTargetRoot bool, gphotosClient GPhotosClient) error {
+	exportQueueDir := config.VideosExportQueueRoot
+	if exportQueueDir == "" {
+		return fmt.Errorf("video export queue directory (VideosExportQueueRoot) not configured")
 	}
 
-	if _, err := os.Stat(stagingDir); os.IsNotExist(err) {
-		logger.Info("Video staging directory does not exist, nothing to upload",
-			slog.String("staging_dir", stagingDir))
+	if _, err := os.Stat(exportQueueDir); os.IsNotExist(err) {
+		logger.Info("Video export queue directory does not exist, nothing to upload",
+			slog.String("export_queue_dir", exportQueueDir))
 		return nil
 	}
 
@@ -46,15 +45,15 @@ func UploadVideos(ctx context.Context, config camflowconfig.CamediaConfig, cache
 	// TODO: check the actual rate limits for Google Photos API.
 	limiter := rate.NewLimiter(rate.Every(time.Second/5), 10)
 
-	// List all video files in staging, store path and size, calculate total size
+	// List all video files in export queue, store path and size, calculate total size
 	var videosToUpload []videoFileInfo
 	var totalSize int64
 	var walkErrs []error
-	err := filepath.WalkDir(stagingDir, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(exportQueueDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			// If the error is about the root stagingDir itself not existing, propagate it.
-			if path == stagingDir && os.IsNotExist(err) {
-				return fmt.Errorf("staging directory '%s' disappeared or unreadable: %w", stagingDir, err)
+			// If the error is about the root exportQueueDir itself not existing, propagate it.
+			if path == exportQueueDir && os.IsNotExist(err) {
+				return fmt.Errorf("export queue directory '%s' disappeared or unreadable: %w", exportQueueDir, err)
 			}
 			// For other errors (e.g. permission on a sub-file/dir), log and try to continue.
 			logger.Error("Error accessing path during walk, skipping",
@@ -68,7 +67,7 @@ func UploadVideos(ctx context.Context, config camflowconfig.CamediaConfig, cache
 			return nil
 		}
 
-		// Assume all files in the video staging dir are videos
+		// Assume all files in the video export queue dir are videos
 		info, statErr := d.Info()
 		if statErr != nil {
 			return fmt.Errorf("failed to get file info for %s: %w", path, statErr)
@@ -78,7 +77,7 @@ func UploadVideos(ctx context.Context, config camflowconfig.CamediaConfig, cache
 		return nil
 	})
 	if err != nil { // This error is from WalkDir itself, e.g. root dir not found.
-		return fmt.Errorf("failed to walk video staging dir '%s': %w", stagingDir, err)
+		return fmt.Errorf("failed to walk video export queue dir '%s': %w", exportQueueDir, err)
 	}
 	if len(walkErrs) > 0 {
 		logger.Warn("Encountered errors during directory walk, proceeding with successfully found files",
@@ -86,7 +85,7 @@ func UploadVideos(ctx context.Context, config camflowconfig.CamediaConfig, cache
 	}
 
 	if len(videosToUpload) == 0 {
-		logger.Info("No videos found in staging directory")
+		logger.Info("No videos found in export queue directory")
 		return nil
 	}
 	logger.Info("Found videos to upload",
@@ -154,7 +153,7 @@ func UploadVideos(ctx context.Context, config camflowconfig.CamediaConfig, cache
 	)
 
 	for _, videoInfo := range videosToUpload {
-		if err := uploadVideo(ctx, config, keepStaging, gphotosClient, videoInfo.path, videoInfo.size, resolvedTargetAlbums, bar, limiter); err != nil {
+		if err := uploadVideo(ctx, config, keepTargetRoot, gphotosClient, videoInfo.path, videoInfo.size, resolvedTargetAlbums, bar, limiter); err != nil {
 			return err
 		}
 	}
@@ -167,9 +166,9 @@ func UploadVideos(ctx context.Context, config camflowconfig.CamediaConfig, cache
 
 // uploadVideo uploads a single video "videoPath" of size "fileSize" to google photos.
 // It updates "bar" with the bytes it has uploaded.
-// It deletes the file after uploading if "keepStaging" is false.
+// It deletes the file after uploading if "keepTargetRoot" is false.
 // "targetAlbumIDs" are the ids for DefaultAlbums in the config.
-func uploadVideo(ctx context.Context, config camflowconfig.CamediaConfig, keepStaging bool, gphotosClient GPhotosClient, videoPath string, fileSize int64, targetAlbums map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter) error {
+func uploadVideo(ctx context.Context, config camflowconfig.CamediaConfig, keepTargetRoot bool, gphotosClient GPhotosClient, videoPath string, fileSize int64, targetAlbums map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter) error {
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
@@ -258,24 +257,24 @@ func uploadVideo(ctx context.Context, config camflowconfig.CamediaConfig, keepSt
 	}
 
 	if !successfullyAddedToAll {
-		if !keepStaging {
-			logger.Error("Video was not successfully added to all target albums, it will not be moved from staging",
+		if !keepTargetRoot {
+			logger.Error("Video was not successfully added to all target albums, it will not be moved from export queue",
 				slog.String("file", videoBasename))
 		}
 		return nil
 	}
 
-	if keepStaging {
-		logger.Debug("Keeping video in staging directory as per keepStaging flag",
+	if keepTargetRoot {
+		logger.Debug("Keeping video in export queue directory as per keepTargetRoot flag",
 			slog.String("file", videoPath))
 		return nil
 	}
 
-	relPath, err := filepath.Rel(config.VideosOrigStagingRoot, videoPath)
+	relPath, err := filepath.Rel(config.VideosExportQueueRoot, videoPath)
 	if err != nil {
-		return fmt.Errorf("failed to get relative path for %s from staging root %s: %w", videoPath, config.VideosOrigStagingRoot, err)
+		return fmt.Errorf("failed to get relative path for %s from export queue root %s: %w", videoPath, config.VideosExportQueueRoot, err)
 	}
-	destPath := filepath.Join(config.VideosOrigRoot, relPath)
+	destPath := filepath.Join(config.VideosExportedRoot, relPath)
 	destDir := filepath.Dir(destPath)
 
 	// Check for collision at destination
@@ -295,15 +294,15 @@ func uploadVideo(ctx context.Context, config camflowconfig.CamediaConfig, keepSt
 	// XXX: os.Rename requires source and destination to be on the same filesystem for atomic move.
 	// If they are on different filesystems, it may fail or behave differently.
 	if err := os.Rename(videoPath, destPath); err != nil {
-		return fmt.Errorf("failed to move %s from staging to %s: %w", videoPath, destPath, err)
+		return fmt.Errorf("failed to move %s from export queue to %s: %w", videoPath, destPath, err)
 	}
 	logger.Debug("Successfully moved video file",
 		slog.String("from", videoPath),
 		slog.String("to", destPath))
 
-	if err := cleanupEmptyStagingDirectories(videoPath, config.VideosOrigStagingRoot); err != nil {
+	if err := cleanupEmptyTargetRootDirectories(videoPath, config.VideosExportQueueRoot); err != nil {
 		// Log the error but don't cause uploadVideo to fail, as cleanup is secondary.
-		logger.Error("Warning: cleanup of staging directories failed",
+		logger.Error("Warning: cleanup of export queue directories failed",
 			slog.String("video_path", videoPath),
 			slog.String("error", err.Error()))
 	}
@@ -311,34 +310,34 @@ func uploadVideo(ctx context.Context, config camflowconfig.CamediaConfig, keepSt
 	return nil
 }
 
-// cleanupEmptyStagingDirectories removes empty parent directories of the moved video file
-// within the staging area. It cleans directories from the video's original parent
-// up to, but not including, the stagingRootPath.
+// cleanupEmptyTargetRootDirectories removes empty parent directories of the moved video file
+// within the export queue area. It cleans directories from the video's original parent
+// up to, but not including, the exportQueueDir.
 // It returns an error if any unexpected issue occurs during the cleanup process.
-func cleanupEmptyStagingDirectories(videoPath string, stagingRootPath string) error {
+func cleanupEmptyTargetRootDirectories(videoPath string, exportQueueRootPath string) error {
 	// This logic cleans up empty parent directories of the moved video,
-	// up to, but not including, the staging root directory.
-	cleanedStagingRoot := filepath.Clean(stagingRootPath)
+	// up to, but not including, the export queue root directory.
+	cleanedTargetRootRoot := filepath.Clean(exportQueueRootPath)
 	currentDirToClean := filepath.Clean(filepath.Dir(videoPath))
 
 	// Loop to remove empty parent directories.
-	// The loop stops if currentDirToClean is the staging root,
-	// is outside the staging root, or is not empty.
+	// The loop stops if currentDirToClean is the export queue root,
+	// is outside the export queue root, or is not empty.
 	for {
-		// Stop if currentDirToClean is no longer a strict subdirectory of cleanedStagingRoot,
-		// or if it's the staging root itself, or a root-like path.
-		// We use strings.HasPrefix to ensure we are within the staging root's path.
-		// We also check currentDirToClean != cleanedStagingRoot to ensure we don't process the root itself.
-		if !strings.HasPrefix(currentDirToClean, cleanedStagingRoot) ||
-			currentDirToClean == cleanedStagingRoot ||
+		// Stop if currentDirToClean is no longer a strict subdirectory of cleanedTargetRootRoot,
+		// or if it's the export queue root itself, or a root-like path.
+		// We use strings.HasPrefix to ensure we are within the export queue root's path.
+		// We also check currentDirToClean != cleanedTargetRootRoot to ensure we don't process the root itself.
+		if !strings.HasPrefix(currentDirToClean, cleanedTargetRootRoot) ||
+			currentDirToClean == cleanedTargetRootRoot ||
 			currentDirToClean == "." ||
 			currentDirToClean == string(os.PathSeparator) {
 			return nil
 		}
 
-		// Ensure currentDirToClean is actually a child of cleanedStagingRoot, not just sharing a prefix.
-		// e.g. /tmp/staging-other should not be processed if root is /tmp/staging
-		if !strings.HasPrefix(currentDirToClean, cleanedStagingRoot+string(os.PathSeparator)) {
+		// Ensure currentDirToClean is actually a child of cleanedTargetRootRoot, not just sharing a prefix.
+		// e.g. /tmp/export-queue-other should not be processed if root is /tmp/export-queue.
+		if !strings.HasPrefix(currentDirToClean, cleanedTargetRootRoot+string(os.PathSeparator)) {
 			return nil
 		}
 
@@ -365,13 +364,13 @@ func cleanupEmptyStagingDirectories(videoPath string, stagingRootPath string) er
 		// Directory is empty, attempt to remove it.
 		if removeErr := os.Remove(currentDirToClean); removeErr != nil {
 			if !os.IsNotExist(removeErr) { // Don\'t warn if already gone
-				return fmt.Errorf("failed to remove empty staging subdirectory %s: %w", currentDirToClean, removeErr)
+				return fmt.Errorf("failed to remove empty export queue subdirectory %s: %w", currentDirToClean, removeErr)
 			}
 			// If os.IsNotExist, it means it was already removed or disappeared, which is fine.
-			logger.Debug("Staging subdirectory was already removed or disappeared",
+			logger.Debug("TargetRoot subdirectory was already removed or disappeared",
 				slog.String("directory", currentDirToClean))
 		} else {
-			logger.Debug("Successfully removed empty staging subdirectory",
+			logger.Debug("Successfully removed empty export queue subdirectory",
 				slog.String("directory", currentDirToClean))
 		}
 

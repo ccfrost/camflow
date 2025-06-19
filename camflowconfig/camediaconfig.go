@@ -28,12 +28,12 @@ type GooglePhotosConfig struct {
 
 // CamediaConfig defines the configuration for Camedia.
 type CamediaConfig struct {
-	PhotosOrigRoot         string `mapstructure:"photos_orig_root"`
-	PhotosExportStagingDir string `mapstructure:"photos_export_staging_dir"`
-	PhotosExportDir        string `mapstructure:"photos_export_dir"`
+	PhotosToProcessRoot  string `mapstructure:"photos_to_process_root"`
+	PhotosExportQueueDir string `mapstructure:"photos_export_queue_dir"`
+	PhotosExportedRoot   string `mapstructure:"photos_exported_root"`
 
-	VideosOrigStagingRoot string `mapstructure:"videos_orig_staging_root"`
-	VideosOrigRoot        string `mapstructure:"videos_orig_root"`
+	VideosExportQueueRoot string `mapstructure:"videos_export_queue_root"`
+	VideosExportedRoot    string `mapstructure:"videos_exported_root"`
 
 	GooglePhotos GooglePhotosConfig `mapstructure:"google_photos"`
 
@@ -55,10 +55,10 @@ func (c *GooglePhotosConfig) Validate() error {
 
 func (c *CamediaConfig) Validate() error {
 	// Check that at least a base set of fields have values.
-	if c.PhotosOrigRoot == "" || c.PhotosExportStagingDir == "" || c.PhotosExportDir == "" {
+	if c.PhotosToProcessRoot == "" || c.PhotosExportQueueDir == "" || c.PhotosExportedRoot == "" {
 		return fmt.Errorf("missing photos field")
 	}
-	if c.VideosOrigStagingRoot == "" || c.VideosOrigRoot == "" {
+	if c.VideosExportQueueRoot == "" || c.VideosExportedRoot == "" {
 		return fmt.Errorf("missing videos field")
 	}
 	return c.GooglePhotos.Validate()

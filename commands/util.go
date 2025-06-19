@@ -8,13 +8,13 @@ import (
 
 // TODO: delete
 /*
-// videoStagingDirFunc defines the type for the function that gets the staging directory.
+// videoTargetRootDirFunc defines the type for the function that gets the staging directory.
 // This allows it to be replaced during testing.
-var videoStagingDirFunc = defaultVideoStagingDir
+var videoTargetRootDirFunc = defaultVideoTargetRootDir
 
-// defaultVideoStagingDir returns the default path to the video staging directory.
+// defaultVideoTargetRootDir returns the default path to the video staging directory.
 // It uses XDG base directory specification.
-func defaultVideoStagingDir() (string, error) {
+func defaultVideoTargetRootDir() (string, error) {
 	// TODO: CacheHome can be "".
 	stagingDir := filepath.Join(xdg.CacheHome, "camflow", "staging", "videos")
 	err := os.MkdirAll(stagingDir, 0750) // Ensure the directory exists
@@ -24,18 +24,18 @@ func defaultVideoStagingDir() (string, error) {
 	return stagingDir, nil
 }
 
-// videoStagingDir returns the path to the video staging directory.
-// It uses the function stored in videoStagingDirFunc.
-func videoStagingDir() (string, error) {
-	return videoStagingDirFunc()
+// videoTargetRootDir returns the path to the video staging directory.
+// It uses the function stored in videoTargetRootDirFunc.
+func videoTargetRootDir() (string, error) {
+	return videoTargetRootDirFunc()
 }
 */
 
-// videoStagingDir returns the path to the video staging directory.
+// videoTargetRootDir returns the path to the video staging directory.
 // Note that the path may not exist.
 // TODO: remove?
 /*
-func videoStagingDir() (string, error) {
+func videoTargetRootDir() (string, error) {
 	const appName = "camflow"
 
 	var baseCacheDir string
@@ -64,9 +64,9 @@ func videoStagingDir() (string, error) {
 		return "", fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
 	}
 
-	appStagingDir := filepath.Join(baseCacheDir, appName, "video-staging")
+	appTargetRootDir := filepath.Join(baseCacheDir, appName, "video-staging")
 
-	return appStagingDir, nil
+	return appTargetRootDir, nil
 }
 */
 

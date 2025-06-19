@@ -31,10 +31,10 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 	dcimDir := filepath.Join(sdCardRoot, "DCIM")
 	require.NoError(t, os.MkdirAll(dcimDir, 0755))
 
-	// The newTestConfig helper already creates PhotosOrigRoot and VideosOrigStagingRoot
-	photosOrigRoot := config.PhotosOrigRoot
-	videosOrigStagingRoot := config.VideosOrigStagingRoot
-	// VideosOrigRoot is also created by newTestConfig, can be accessed via config.VideosOrigRoot if needed for verification
+	// The newTestConfig helper already creates PhotosToProcessRoot and VideosExportQueueRoot
+	photosToProcessRoot := config.PhotosToProcessRoot
+	videosExportQueueRoot := config.VideosExportQueueRoot
+	// VideosExportedRoot is also created by newTestConfig, can be accessed via config.VideosExportedRoot if needed for verification
 
 	// Define test files with specific modification times
 	testTime1 := time.Date(2024, 5, 15, 10, 30, 0, 0, time.UTC)
@@ -108,9 +108,9 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 			// Calculate expected destination path
 			var targetRoot string
 			if tf.fileType == "photo" {
-				targetRoot = photosOrigRoot
+				targetRoot = photosToProcessRoot
 			} else {
-				targetRoot = videosOrigStagingRoot
+				targetRoot = videosExportQueueRoot
 			}
 
 			year, month, day := tf.modTime.Date()
@@ -151,12 +151,12 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 		mockGPhotosClient.EXPECT().MediaItems().Return(mockMediaItemsSvc).AnyTimes()
 		mockGPhotosClient.EXPECT().Albums().Return(mockAlbumsSvc).AnyTimes()
 
-		// Find video files in staging
+		// Find video files in orig
 		videoFiles := []string{}
 		for _, tf := range testFiles {
 			if tf.fileType == "video" {
 				year, month, day := tf.modTime.Date()
-				dateSubDir := filepath.Join(videosOrigStagingRoot,
+				dateSubDir := filepath.Join(videosExportQueueRoot,
 					fmt.Sprintf("%d", year),
 					fmt.Sprintf("%02d", month),
 					fmt.Sprintf("%02d", day))
@@ -206,20 +206,20 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 		}
 
 		// Run upload-videos command
-		err := UploadVideos(ctx, config, configDir, false, mockGPhotosClient) // keepStaging = false
+		err := UploadVideos(ctx, config, configDir, false, mockGPhotosClient) // keepTargetRoot = false
 		require.NoError(t, err, "UploadVideos command should succeed")
 
-		// Verify videos were deleted from staging (keepStaging = false)
+		// Verify videos were deleted from orig (keepTargetRoot = false)
 		for _, videoPath := range videoFiles {
 			_, err := os.Stat(videoPath)
-			assert.True(t, os.IsNotExist(err), "Video file %s should be deleted from staging", videoPath)
+			assert.True(t, os.IsNotExist(err), "Video file %s should be deleted from orig", videoPath)
 		}
 
 		// Verify photos are still in their original location
 		for _, tf := range testFiles {
 			if tf.fileType == "photo" {
 				year, month, day := tf.modTime.Date()
-				dateSubDir := filepath.Join(photosOrigRoot,
+				dateSubDir := filepath.Join(photosToProcessRoot,
 					fmt.Sprintf("%d", year),
 					fmt.Sprintf("%02d", month),
 					fmt.Sprintf("%02d", day))
@@ -256,8 +256,8 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 		require.NoError(t, os.MkdirAll(dcimDir, 0755))
 
 		// Config fields are now set by newTestConfig
-		// photosOrigRoot := config.PhotosOrigRoot // Not directly used in this specific sub-test for video
-		videosOrigStagingRoot := config.VideosOrigStagingRoot
+		// photosToProcessRoot := config.PhotosToProcessRoot // Not directly used in this specific sub-test for video
+		videosExportQueueRoot := config.VideosExportQueueRoot
 
 		// Create a test video file
 		testTime := time.Date(2024, 5, 15, 10, 30, 0, 0, time.UTC)
@@ -302,16 +302,16 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 		err = UploadVideos(ctx, config, configDir, false, mockGPhotosClient)
 		assert.Error(t, err, "UploadVideos should fail when Google Photos API fails")
 
-		// Verify video file is still in staging (not deleted due to upload failure)
+		// Verify video file is still in orig dir (not deleted due to upload failure)
 		year, month, day := testTime.Date()
-		expectedVideoPath := filepath.Join(videosOrigStagingRoot,
+		expectedVideoPath := filepath.Join(videosExportQueueRoot,
 			fmt.Sprintf("%d", year),
 			fmt.Sprintf("%02d", month),
 			fmt.Sprintf("%02d", day),
 			fmt.Sprintf("%d-%02d-%02d-VID_0001.MP4", year, month, day))
 
 		_, err = os.Stat(expectedVideoPath)
-		assert.NoError(t, err, "Video file should still exist in staging after upload failure")
+		assert.NoError(t, err, "Video file should still exist in orig dir after upload failure")
 	})
 
 	t.Run("ConfigValidationError", func(t *testing.T) {
@@ -345,8 +345,8 @@ func TestImportAndUploadVideosIntegration_KeepFlags(t *testing.T) {
 	require.NoError(t, os.MkdirAll(dcimDir, 0755))
 
 	// Config fields are now set by newTestConfig
-	// photosOrigRoot := config.PhotosOrigRoot // Not directly used here
-	videosOrigStagingRoot := config.VideosOrigStagingRoot
+	// photosToProcessRoot := config.PhotosToProcessRoot // Not directly used here
+	videosExportQueueRoot := config.VideosExportQueueRoot
 
 	// Create a test video file
 	testTime := time.Date(2024, 5, 15, 10, 30, 0, 0, time.UTC)
@@ -382,7 +382,7 @@ func TestImportAndUploadVideosIntegration_KeepFlags(t *testing.T) {
 	mockAlbumsSvc.EXPECT().List(gomock.Any()).Return([]albums.Album{*album}, nil)
 
 	year, month, day := testTime.Date()
-	expectedVideoPath := filepath.Join(videosOrigStagingRoot,
+	expectedVideoPath := filepath.Join(videosExportQueueRoot,
 		fmt.Sprintf("%d", year),
 		fmt.Sprintf("%02d", month),
 		fmt.Sprintf("%02d", day),
@@ -395,11 +395,11 @@ func TestImportAndUploadVideosIntegration_KeepFlags(t *testing.T) {
 	mockAlbumsSvc.EXPECT().AddMediaItems(gomock.Any(), "album_id", []string{"media_id"}).
 		Return(nil)
 
-	// Upload with keepStaging = true
+	// Upload with keepTargetRoot = true
 	err = UploadVideos(ctx, config, configDir, true, mockGPhotosClient)
 	require.NoError(t, err)
 
-	// Verify video still exists in staging
+	// Verify video still exists in orig
 	_, err = os.Stat(expectedVideoPath)
-	assert.NoError(t, err, "Video should still exist in staging when keepStaging=true")
+	assert.NoError(t, err, "Video should still exist in orig when keepTargetRoot=true")
 }

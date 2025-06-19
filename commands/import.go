@@ -26,7 +26,7 @@ type ImportResult struct {
 	Videos []ImportDirEntry
 }
 
-// Import mvoes the DCIM/ files to the photo dir and the staging video dir.
+// Import mvoes the DCIM/ files to the photo to process dir and the export queue video dir.
 // It returns the relative target directory for the photos and any error.
 func Import(config camflowconfig.CamediaConfig, sdcardDir string, keepSrc bool, now time.Time) (ImportResult, error) {
 	if err := config.Validate(); err != nil {
@@ -44,11 +44,11 @@ func Import(config camflowconfig.CamediaConfig, sdcardDir string, keepSrc bool, 
 	}
 
 	// Check that there is sufficient space to move the files.
-	// TODO: check whether VideosStagingRoot is on the same filesystem as PhotosOrigRoot
+	// TODO: check whether VideosExportQueueRoot is on the same filesystem as PhotosToProcessRoot
 	// and check apppropriately.
-	// TODO: when we move from staging to final, we should check that there is enough space?
+	// TODO: when we move from export queue to exported, we should check that there is enough space?
 	// TODO: or just remove this, and let the OS handle it?
-	targetAvailable, err := getAvailableSpace(config.PhotosOrigRoot)
+	targetAvailable, err := getAvailableSpace(config.PhotosToProcessRoot)
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("failed to get available space: %w", err)
 	}
@@ -56,7 +56,7 @@ func Import(config camflowconfig.CamediaConfig, sdcardDir string, keepSrc bool, 
 	if uint64(totalSize) > targetAvailable {
 		return ImportResult{}, fmt.Errorf(
 			"not enough space in %s: need %d GiB more: %d GiB needed, %d GiB available",
-			config.PhotosOrigRoot, totalSize/GiB, targetAvailable/GiB, (uint64(totalSize)-targetAvailable)/GiB)
+			config.PhotosToProcessRoot, totalSize/GiB, targetAvailable/GiB, (uint64(totalSize)-targetAvailable)/GiB)
 	}
 
 	// Move the files into the target dirs.
@@ -155,7 +155,7 @@ func getAvailableSpace(dir string) (uint64, error) {
 	return availableBytes, nil
 }
 
-// moveFiles moves files from srcDir into the staging photo/video dirs for the date of each file.
+// moveFiles moves files from srcDir into the photo/video dirs for the date of each file.
 // It preserves the modification times.
 func moveFiles(config camflowconfig.CamediaConfig, srcDir string, keepSrc bool, bar *progressbar.ProgressBar) (ImportResult, error) {
 	photoDirs := make(map[string]int)
@@ -176,10 +176,10 @@ func moveFiles(config camflowconfig.CamediaConfig, srcDir string, keepSrc bool, 
 		var targetRoot string
 		switch filepath.Ext(dirEnt.Name()) {
 		case ".CR3", ".cr3", ".JPG", ".jpg":
-			targetRoot = config.PhotosOrigRoot
+			targetRoot = config.PhotosToProcessRoot
 			photoDirs[filepath.Dir(path)]++
 		case ".MP4", ".mp4":
-			targetRoot = config.VideosOrigStagingRoot
+			targetRoot = config.VideosExportQueueRoot
 			videoDirs[filepath.Dir(path)]++
 		default:
 			// Skip unsupported file types.

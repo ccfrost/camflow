@@ -116,27 +116,27 @@ func createDummyFile(t *testing.T, path string, content string, modTime time.Tim
 }
 
 // setupMoveFilesTest sets up directories and config for moveFiles tests.
-func setupMoveFilesTest(t *testing.T) (config camflowconfig.CamediaConfig, srcRoot, photosOrigRoot, videosOrigStagingRoot string, cleanup func()) {
+func setupMoveFilesTest(t *testing.T) (config camflowconfig.CamediaConfig, srcRoot, photosToProcessRoot, videosExportQueueRoot string, cleanup func()) {
 	t.Helper()
 	sdcardRoot := t.TempDir()
 	mediaRoot := t.TempDir()
 
 	srcRoot = filepath.Join(sdcardRoot, "DCIM")
-	photosOrigRoot = filepath.Join(mediaRoot, "photos-orig")
-	videosOrigStagingRoot = filepath.Join(mediaRoot, "videos-orig-staging")
+	photosToProcessRoot = filepath.Join(mediaRoot, "photos-to-process")
+	videosExportQueueRoot = filepath.Join(mediaRoot, "videos-export-queue")
 
 	// Create the base source DCIM directory
 	err := os.MkdirAll(srcRoot, 0755)
 	require.NoError(t, err)
 	// Create the base destination directories
-	err = os.MkdirAll(photosOrigRoot, 0755)
+	err = os.MkdirAll(photosToProcessRoot, 0755)
 	require.NoError(t, err)
-	err = os.MkdirAll(videosOrigStagingRoot, 0755)
+	err = os.MkdirAll(videosExportQueueRoot, 0755)
 	require.NoError(t, err)
 
 	config = camflowconfig.CamediaConfig{
-		PhotosOrigRoot:        photosOrigRoot,
-		VideosOrigStagingRoot: videosOrigStagingRoot,
+		PhotosToProcessRoot:   photosToProcessRoot,
+		VideosExportQueueRoot: videosExportQueueRoot,
 		// Other config fields can be default/zero if not used by moveFiles directly
 	}
 
@@ -145,7 +145,7 @@ func setupMoveFilesTest(t *testing.T) (config camflowconfig.CamediaConfig, srcRo
 		// os.RemoveAll(sdcardRoot) // Handled by t.TempDir()
 	}
 
-	return config, srcRoot, photosOrigRoot, videosOrigStagingRoot, cleanup
+	return config, srcRoot, photosToProcessRoot, videosExportQueueRoot, cleanup
 }
 
 // Helper struct for defining test file scenarios
@@ -157,7 +157,7 @@ type testFileCase struct {
 }
 
 // Helper function to calculate expected target path
-func calculateExpectedTargetPath(tc testFileCase, photoStaging, videoStaging string) string {
+func calculateExpectedTargetPath(tc testFileCase, photoDir, videoDir string) string {
 	if tc.fileType != "photo" && tc.fileType != "video" {
 		return "" // No target for unsupported/ignored
 	}
@@ -167,13 +167,13 @@ func calculateExpectedTargetPath(tc testFileCase, photoStaging, videoStaging str
 	baseName := filepath.Base(tc.srcRelPath)
 	targetBaseName := fmt.Sprintf("%d-%02d-%02d-%s", year, month, day, baseName)
 
-	var stagingDir string
+	var targetDir string
 	if tc.fileType == "photo" {
-		stagingDir = photoStaging
+		targetDir = photoDir
 	} else {
-		stagingDir = videoStaging
+		targetDir = videoDir
 	}
-	return filepath.Join(stagingDir, dateSubDir, targetBaseName)
+	return filepath.Join(targetDir, dateSubDir, targetBaseName)
 }
 
 func TestMoveFiles(t *testing.T) {
@@ -181,7 +181,7 @@ func TestMoveFiles(t *testing.T) {
 
 	// --- Test Case: Success, keepSrc=false ---
 	t.Run("SuccessKeepSrcFalse", func(t *testing.T) {
-		config, srcDir, photoStaging, videoStaging, cleanup := setupMoveFilesTest(t)
+		config, srcDir, photoTargetRoot, videoTargetRoot, cleanup := setupMoveFilesTest(t)
 		defer cleanup()
 
 		// Define test file scenarios declaratively
@@ -216,7 +216,7 @@ func TestMoveFiles(t *testing.T) {
 
 		for _, tc := range testCases {
 			fullSrcPath := srcPaths[tc.srcRelPath]
-			expectedTarget := calculateExpectedTargetPath(tc, photoStaging, videoStaging)
+			expectedTarget := calculateExpectedTargetPath(tc, photoTargetRoot, videoTargetRoot)
 
 			if tc.fileType == "photo" || tc.fileType == "video" {
 				// Verify target file
@@ -276,7 +276,7 @@ func TestMoveFiles(t *testing.T) {
 
 	// --- Test Case: Success, keepSrc=true ---
 	t.Run("SuccessKeepSrcTrue", func(t *testing.T) {
-		config, srcDir, photoStaging, videoStaging, cleanup := setupMoveFilesTest(t)
+		config, srcDir, photoTargetRoot, videoTargetRoot, cleanup := setupMoveFilesTest(t)
 		defer cleanup()
 
 		// Define test file scenarios
@@ -307,7 +307,7 @@ func TestMoveFiles(t *testing.T) {
 
 		for _, tc := range testCases {
 			fullSrcPath := srcPaths[tc.srcRelPath]
-			expectedTarget := calculateExpectedTargetPath(tc, photoStaging, videoStaging)
+			expectedTarget := calculateExpectedTargetPath(tc, photoTargetRoot, videoTargetRoot)
 
 			if tc.fileType == "photo" || tc.fileType == "video" {
 				// Verify target file
@@ -380,18 +380,18 @@ func TestMoveFiles(t *testing.T) {
 
 	// --- Test Case: Copy Error (Destination Not Writable) ---
 	t.Run("ErrorCopyCannotWriteDest", func(t *testing.T) {
-		config, srcDir, photoStaging, _, cleanup := setupMoveFilesTest(t)
+		config, srcDir, photoTargetRoot, _, cleanup := setupMoveFilesTest(t)
 		defer cleanup()
 
 		time1 := time.Date(2024, 5, 1, 10, 0, 0, 0, time.UTC)
 		srcPhoto1Path := filepath.Join(srcDir, "100CANON", "IMG_COPY_ERR.JPG")
 		createDummyFile(t, srcPhoto1Path, "copy_error_content", time1)
 
-		// Make the photo staging root read-only BEFORE calling moveFiles
-		err := os.Chmod(photoStaging, 0555)
+		// Make the photo target dir root read-only BEFORE calling moveFiles
+		err := os.Chmod(photoTargetRoot, 0555)
 		require.NoError(t, err)
 		// Attempt to restore permissions during cleanup, might fail if test fails early
-		defer os.Chmod(photoStaging, 0755)
+		defer os.Chmod(photoTargetRoot, 0755)
 
 		// Run moveFiles - expect failure during copyFile's MkdirAll or Create
 		result, err := moveFiles(config, srcDir, false, bar)
