@@ -2,7 +2,6 @@ package commands
 
 import (
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -235,69 +234,6 @@ func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, 
 		return result.Videos[i].RelativeDir < result.Videos[j].RelativeDir
 	})
 	return result, nil
-}
-
-// copyFile creats a copy of src file at dstFinal.
-// It creates the copy first a temporary file and then renames it to dstFinal.
-// It shares its progress via bar.
-func copyFile(src, dstFinal string, size int64, modTime time.Time, bar *progressbar.ProgressBar) error {
-	dstTmp := dstFinal + ".tmp"
-
-	srcFile, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer srcFile.Close()
-
-	// Ensure target directories exists.
-	baseName := filepath.Dir(dstFinal)
-	if err := os.MkdirAll(baseName, os.ModePerm); err != nil {
-		return fmt.Errorf("failed to create dir %s: %w", baseName, err)
-	}
-
-	dstTmpFile, err := os.Create(dstTmp)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if dstTmpFile != nil {
-			dstTmpFile.Close()
-		}
-	}()
-
-	buf := make([]byte, 1024*1024)
-
-	for {
-		n, err := srcFile.Read(buf)
-		if err != nil && err != io.EOF {
-			return fmt.Errorf("failed to read file %s: %w", src, err)
-		}
-		if n == 0 {
-			break
-		}
-
-		if _, err := dstTmpFile.Write(buf[:n]); err != nil {
-			return fmt.Errorf("failed to write file %s: %w", dstTmp, err)
-		}
-
-		bar.Add(n)
-	}
-
-	if err := dstTmpFile.Close(); err != nil {
-		return fmt.Errorf("failed to close dst tmp file %s: %w", dstTmp, err)
-	}
-	dstTmpFile = nil
-
-	// TODO: do chtimes before rename?
-	if err := os.Rename(dstTmp, dstFinal); err != nil {
-		return fmt.Errorf("failed to rename %s: %w", dstTmp, err)
-	}
-
-	if err := os.Chtimes(dstFinal, modTime, modTime); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 // isDcimMediaDir returns whether the DCIM standard says that name
