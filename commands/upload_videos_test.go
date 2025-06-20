@@ -489,9 +489,9 @@ func TestUploadVideos_FilesToUpload_WithAlbums_AlbumExists(t *testing.T) {
 	assert.NoError(t, statErr, "Expected video file %s to be moved to %s, but it does not exist. Error: %v", videoFileName, expectedDestPath, statErr)
 }
 
-// --- Test Functions for cleanupEmptyTargetRootDirectories ---
+// --- Test Functions for cleanupEmptyParentDirs ---
 
-func TestCleanupEmptyTargetRootDirectories_Success(t *testing.T) {
+func TestCleanupEmptyParentDirs_Success(t *testing.T) {
 	tempDir := t.TempDir()
 	exportQueueRoot := filepath.Join(tempDir, "exportQueue")
 	require.NoError(t, os.MkdirAll(exportQueueRoot, 0755))
@@ -501,7 +501,7 @@ func TestCleanupEmptyTargetRootDirectories_Success(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(videoPath), 0755))
 
 	// Test that cleanup removes empty parent directories
-	err := cleanupEmptyTargetRootDirectories(videoPath, exportQueueRoot)
+	err := cleanupEmptyParentDirs(videoPath, exportQueueRoot)
 	require.NoError(t, err)
 
 	// All parent directories should be removed except exportQueue root
@@ -511,7 +511,7 @@ func TestCleanupEmptyTargetRootDirectories_Success(t *testing.T) {
 	assertDirExists(t, exportQueueRoot, "Expected exportQueue root to remain")
 }
 
-func TestCleanupEmptyTargetRootDirectories_StopsAtNonEmptyDir(t *testing.T) {
+func TestCleanupEmptyParentDirs_StopsAtNonEmptyDir(t *testing.T) {
 	tempDir := t.TempDir()
 	exportQueueRoot := filepath.Join(tempDir, "exportQueue")
 	require.NoError(t, os.MkdirAll(exportQueueRoot, 0755))
@@ -524,7 +524,7 @@ func TestCleanupEmptyTargetRootDirectories_StopsAtNonEmptyDir(t *testing.T) {
 	otherFile := filepath.Join(exportQueueRoot, "2024", "01", "other.txt")
 	require.NoError(t, os.WriteFile(otherFile, []byte("content"), 0644))
 
-	err := cleanupEmptyTargetRootDirectories(videoPath, exportQueueRoot)
+	err := cleanupEmptyParentDirs(videoPath, exportQueueRoot)
 	require.NoError(t, err)
 
 	// Only the deepest empty directory should be removed
@@ -534,7 +534,7 @@ func TestCleanupEmptyTargetRootDirectories_StopsAtNonEmptyDir(t *testing.T) {
 	assertDirExists(t, exportQueueRoot, "Expected exportQueue root to remain")
 }
 
-func TestCleanupEmptyTargetRootDirectories_FileDirectlyInRoot(t *testing.T) {
+func TestCleanupEmptyParentDirs_FileDirectlyInRoot(t *testing.T) {
 	tempDir := t.TempDir()
 	exportQueueRoot := filepath.Join(tempDir, "exportQueue")
 	require.NoError(t, os.MkdirAll(exportQueueRoot, 0755))
@@ -542,14 +542,14 @@ func TestCleanupEmptyTargetRootDirectories_FileDirectlyInRoot(t *testing.T) {
 	// Video file directly in exportQueue root
 	videoPath := filepath.Join(exportQueueRoot, "video.mp4")
 
-	err := cleanupEmptyTargetRootDirectories(videoPath, exportQueueRoot)
+	err := cleanupEmptyParentDirs(videoPath, exportQueueRoot)
 	require.NoError(t, err)
 
 	// TargetRoot root should still exist (nothing to clean)
 	assertDirExists(t, exportQueueRoot, "Expected exportQueue root to remain")
 }
 
-func TestCleanupEmptyTargetRootDirectories_DoesNotCleanOutsideTargetRoot(t *testing.T) {
+func TestCleanupEmptyParentDirs_DoesNotCleanOutsideTargetRoot(t *testing.T) {
 	tempDir := t.TempDir()
 	exportQueueRoot := filepath.Join(tempDir, "exportQueue")
 	require.NoError(t, os.MkdirAll(exportQueueRoot, 0755))
@@ -558,14 +558,14 @@ func TestCleanupEmptyTargetRootDirectories_DoesNotCleanOutsideTargetRoot(t *test
 	outsidePath := filepath.Join(tempDir, "other", "subdir", "file.mp4")
 	require.NoError(t, os.MkdirAll(filepath.Dir(outsidePath), 0755))
 
-	err := cleanupEmptyTargetRootDirectories(outsidePath, exportQueueRoot)
+	err := cleanupEmptyParentDirs(outsidePath, exportQueueRoot)
 	require.NoError(t, err)
 
 	// Directory outside exportQueue should remain untouched
 	assertDirExists(t, filepath.Dir(outsidePath), "Expected directory outside exportQueue to remain")
 }
 
-func TestCleanupEmptyTargetRootDirectories_HandlesNonexistentDirectory(t *testing.T) {
+func TestCleanupEmptyParentDirs_HandlesNonexistentDirectory(t *testing.T) {
 	tempDir := t.TempDir()
 	exportQueueRoot := filepath.Join(tempDir, "exportQueue")
 	require.NoError(t, os.MkdirAll(exportQueueRoot, 0755))
@@ -573,14 +573,14 @@ func TestCleanupEmptyTargetRootDirectories_HandlesNonexistentDirectory(t *testin
 	// Path to nonexistent directory
 	videoPath := filepath.Join(exportQueueRoot, "nonexistent", "video.mp4")
 
-	err := cleanupEmptyTargetRootDirectories(videoPath, exportQueueRoot)
+	err := cleanupEmptyParentDirs(videoPath, exportQueueRoot)
 	require.NoError(t, err)
 
 	// Should handle gracefully without error
 	assertDirExists(t, exportQueueRoot, "Expected exportQueue root to remain")
 }
 
-func TestCleanupEmptyTargetRootDirectories_HandlesPermissionError(t *testing.T) {
+func TestCleanupEmptyParentDirs_HandlesPermissionError(t *testing.T) {
 	tempDir := t.TempDir()
 	exportQueueRoot := filepath.Join(tempDir, "exportQueue")
 	require.NoError(t, os.MkdirAll(exportQueueRoot, 0755))
@@ -595,25 +595,25 @@ func TestCleanupEmptyTargetRootDirectories_HandlesPermissionError(t *testing.T) 
 	require.NoError(t, os.Chmod(parentDir, 0555))
 	defer os.Chmod(parentDir, 0755) // Restore permissions for cleanup
 
-	err := cleanupEmptyTargetRootDirectories(videoPath, exportQueueRoot)
+	err := cleanupEmptyParentDirs(videoPath, exportQueueRoot)
 	assert.Error(t, err, "Expected error when unable to remove directory due to permissions")
 	assert.Contains(t, err.Error(), "failed to remove empty export queue subdirectory", "Expected specific error message")
 }
 
-func TestCleanupEmptyTargetRootDirectories_DoesNotDeleteTargetRootRoot(t *testing.T) {
+func TestCleanupEmptyParentDirs_DoesNotDeleteTargetRootRoot(t *testing.T) {
 	tempDir := t.TempDir()
 	exportQueueRoot := filepath.Join(tempDir, "exportQueue")
 	require.NoError(t, os.MkdirAll(exportQueueRoot, 0755))
 
 	// Video path that's the exportQueue root itself (edge case)
-	err := cleanupEmptyTargetRootDirectories(exportQueueRoot, exportQueueRoot)
+	err := cleanupEmptyParentDirs(exportQueueRoot, exportQueueRoot)
 	require.NoError(t, err)
 
 	// TargetRoot root should never be deleted
 	assertDirExists(t, exportQueueRoot, "Expected exportQueue root to never be deleted")
 }
 
-func TestCleanupEmptyTargetRootDirectories_HandlesSymlinks(t *testing.T) {
+func TestCleanupEmptyParentDirs_HandlesSymlinks(t *testing.T) {
 	tempDir := t.TempDir()
 	exportQueueRoot := filepath.Join(tempDir, "exportQueue")
 	require.NoError(t, os.MkdirAll(exportQueueRoot, 0755))
@@ -627,7 +627,7 @@ func TestCleanupEmptyTargetRootDirectories_HandlesSymlinks(t *testing.T) {
 
 	videoPath := filepath.Join(symlinkDir, "video.mp4")
 
-	err := cleanupEmptyTargetRootDirectories(videoPath, exportQueueRoot)
+	err := cleanupEmptyParentDirs(videoPath, exportQueueRoot)
 	require.NoError(t, err)
 
 	// Should handle symlinks properly without breaking
@@ -701,7 +701,7 @@ func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles_WithCleanup(t *testing.T)
 	assertDirExists(t, exportQueueDir, "Expected exportQueue root to remain")
 }
 
-func TestCleanupEmptyTargetRootDirectories_PartialCleanup(t *testing.T) {
+func TestCleanupEmptyParentDirs_PartialCleanup(t *testing.T) {
 	tempDir := t.TempDir()
 	exportQueueRoot := filepath.Join(tempDir, "exportQueue")
 	require.NoError(t, os.MkdirAll(exportQueueRoot, 0755))
@@ -715,7 +715,7 @@ func TestCleanupEmptyTargetRootDirectories_PartialCleanup(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(otherFile), 0755))
 	require.NoError(t, os.WriteFile(otherFile, []byte("content"), 0644))
 
-	err := cleanupEmptyTargetRootDirectories(videoPath, exportQueueRoot)
+	err := cleanupEmptyParentDirs(videoPath, exportQueueRoot)
 	require.NoError(t, err)
 
 	// Should clean up to the 2024 directory but not remove it (because 02 subdir has file)
@@ -726,7 +726,7 @@ func TestCleanupEmptyTargetRootDirectories_PartialCleanup(t *testing.T) {
 	assertDirExists(t, exportQueueRoot, "Expected exportQueue root to remain")
 }
 
-func TestCleanupEmptyTargetRootDirectories_ConcurrentDeletion(t *testing.T) {
+func TestCleanupEmptyParentDirs_ConcurrentDeletion(t *testing.T) {
 	tempDir := t.TempDir()
 	exportQueueRoot := filepath.Join(tempDir, "exportQueue")
 	require.NoError(t, os.MkdirAll(exportQueueRoot, 0755))
@@ -740,7 +740,7 @@ func TestCleanupEmptyTargetRootDirectories_ConcurrentDeletion(t *testing.T) {
 	require.NoError(t, os.RemoveAll(middleDir))
 
 	// Should handle gracefully without error
-	err := cleanupEmptyTargetRootDirectories(videoPath, exportQueueRoot)
+	err := cleanupEmptyParentDirs(videoPath, exportQueueRoot)
 	require.NoError(t, err)
 
 	assertDirExists(t, exportQueueRoot, "Expected exportQueue root to remain")

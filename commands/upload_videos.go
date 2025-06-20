@@ -292,7 +292,7 @@ func uploadVideo(ctx context.Context, config camflowconfig.CamediaConfig, keepQu
 		slog.String("from", videoPath),
 		slog.String("to", destPath))
 
-	if err := cleanupEmptyTargetRootDirectories(videoPath, config.VideosExportQueueRoot); err != nil {
+	if err := cleanupEmptyParentDirs(videoPath, config.VideosExportQueueRoot); err != nil {
 		// Log the error but don't cause uploadVideo to fail, as cleanup is secondary.
 		logger.Error("Warning: cleanup of export queue directories failed",
 			slog.String("video_path", videoPath),
@@ -302,34 +302,34 @@ func uploadVideo(ctx context.Context, config camflowconfig.CamediaConfig, keepQu
 	return nil
 }
 
-// cleanupEmptyTargetRootDirectories removes empty parent directories of the moved video file
+// cleanupEmptyParentDirs removes empty parent directories of the moved video file
 // within the export queue area. It cleans directories from the video's original parent
 // up to, but not including, the exportQueueDir.
 // It returns an error if any unexpected issue occurs during the cleanup process.
-func cleanupEmptyTargetRootDirectories(videoPath string, exportQueueRootPath string) error {
+func cleanupEmptyParentDirs(videoPath string, rawExportQueueRoot string) error {
 	// This logic cleans up empty parent directories of the moved video,
 	// up to, but not including, the export queue root directory.
-	cleanedTargetRootRoot := filepath.Clean(exportQueueRootPath)
+	exportQueueRoot := filepath.Clean(rawExportQueueRoot)
 	currentDirToClean := filepath.Clean(filepath.Dir(videoPath))
 
 	// Loop to remove empty parent directories.
 	// The loop stops if currentDirToClean is the export queue root,
 	// is outside the export queue root, or is not empty.
 	for {
-		// Stop if currentDirToClean is no longer a strict subdirectory of cleanedTargetRootRoot,
+		// Stop if currentDirToClean is no longer a strict subdirectory of exportQueueRoot,
 		// or if it's the export queue root itself, or a root-like path.
 		// We use strings.HasPrefix to ensure we are within the export queue root's path.
-		// We also check currentDirToClean != cleanedTargetRootRoot to ensure we don't process the root itself.
-		if !strings.HasPrefix(currentDirToClean, cleanedTargetRootRoot) ||
-			currentDirToClean == cleanedTargetRootRoot ||
+		// We also check currentDirToClean != exportQueueRoot to ensure we don't process the root itself.
+		if !strings.HasPrefix(currentDirToClean, exportQueueRoot) ||
+			currentDirToClean == exportQueueRoot ||
 			currentDirToClean == "." ||
 			currentDirToClean == string(os.PathSeparator) {
 			return nil
 		}
 
-		// Ensure currentDirToClean is actually a child of cleanedTargetRootRoot, not just sharing a prefix.
+		// Ensure currentDirToClean is actually a child of exportQueueRoot, not just sharing a prefix.
 		// e.g. /tmp/export-queue-other should not be processed if root is /tmp/export-queue.
-		if !strings.HasPrefix(currentDirToClean, cleanedTargetRootRoot+string(os.PathSeparator)) {
+		if !strings.HasPrefix(currentDirToClean, exportQueueRoot+string(os.PathSeparator)) {
 			return nil
 		}
 
@@ -359,7 +359,7 @@ func cleanupEmptyTargetRootDirectories(videoPath string, exportQueueRootPath str
 				return fmt.Errorf("failed to remove empty export queue subdirectory %s: %w", currentDirToClean, removeErr)
 			}
 			// If os.IsNotExist, it means it was already removed or disappeared, which is fine.
-			logger.Debug("TargetRoot subdirectory was already removed or disappeared",
+			logger.Debug("Export queue subdirectory was already removed or disappeared",
 				slog.String("directory", currentDirToClean))
 		} else {
 			logger.Debug("Successfully removed empty export queue subdirectory",
