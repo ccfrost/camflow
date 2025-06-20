@@ -315,6 +315,8 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 	return nil
 }
 
+// parseDatePrefix parses a basename "s" that is in the standard format of "YYYY-MM-DD-<rest-of-name>"
+// and returns the year, month, and day parts.
 func parseDatePrefix(s string) (year, month, day string, err error) {
 	parts := strings.Split(s, "-")
 	if len(parts) < 4 {
