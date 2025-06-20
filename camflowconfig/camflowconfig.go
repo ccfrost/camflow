@@ -47,8 +47,6 @@ type CamediaConfig struct {
 	VideosExportedRoot    string `mapstructure:"videos_exported_root"`
 
 	GooglePhotos GooglePhotosConfig `mapstructure:"google_photos"`
-
-	// TODO: connect to todoist
 }
 
 func (c *GooglePhotosConfig) Validate() error {
