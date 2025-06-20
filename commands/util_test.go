@@ -9,24 +9,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newTestConfig(t *testing.T, defaultAlbums []string) camflowconfig.CamediaConfig {
+func newTestConfig(t *testing.T, photosDefaultAlbum, videosDefaultAlbum string) camflowconfig.CamediaConfig {
 	t.Helper()
 
 	tempDir := t.TempDir()
 	c := camflowconfig.CamediaConfig{
-		PhotosToProcessRoot:         filepath.Join(tempDir, "PhotosToProcessRoot"),
+		PhotosToProcessRoot:  filepath.Join(tempDir, "PhotosToProcessRoot"),
 		PhotosExportQueueDir: filepath.Join(tempDir, "PhotosExportQueueDir"),
-		PhotosExportedRoot:        filepath.Join(tempDir, "PhotosExportedRoot"),
+		PhotosExportedRoot:   filepath.Join(tempDir, "PhotosExportedRoot"),
 
 		VideosExportQueueRoot: filepath.Join(tempDir, "VideosExportQueueRoot"),
-		VideosExportedRoot:        filepath.Join(tempDir, "VideosExportedRoot"),
+		VideosExportedRoot:    filepath.Join(tempDir, "VideosExportedRoot"),
 
 		GooglePhotos: camflowconfig.GooglePhotosConfig{
 			ClientId:     "test-client-id",
 			ClientSecret: "test-client-secret",
 			RedirectURI:  "test-redirect-uri",
 
-			DefaultAlbums: defaultAlbums,
+			Photos: camflowconfig.GPPhotosConfig{
+				DefaultAlbum: photosDefaultAlbum,
+			},
+			Videos: camflowconfig.GPVideosConfig{
+				DefaultAlbum: videosDefaultAlbum,
+			},
 
 			// Does not set ToFav or KeywordAlbums fields.
 		},

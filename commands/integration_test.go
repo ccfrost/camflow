@@ -22,10 +22,11 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup test directories and config using the helper
-	defaultAlbums := []string{"Test Album 1", "Test Album 2"}
-	config := newTestConfig(t, defaultAlbums) // Use helper from util_test.go
-	sdCardRoot := t.TempDir()                 // Still need a separate SD card root
-	configDir := t.TempDir()                  // For album cache, etc.
+	photosDefaultAlbum := "Test Album Photos"
+	videosDefaultAlbum := "Test Album Videos"
+	config := newTestConfig(t, photosDefaultAlbum, videosDefaultAlbum) // Use helper from util_test.go
+	sdCardRoot := t.TempDir()                                          // Still need a separate SD card root
+	configDir := t.TempDir()                                           // For album cache, etc.
 
 	// DCIM directory needs to be under sdCardRoot
 	dcimDir := filepath.Join(sdCardRoot, "DCIM")
@@ -247,7 +248,7 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 
 	t.Run("UploadError_GooglePhotosAPIFailure", func(t *testing.T) {
 		// Setup test directories with a video file
-		config := newTestConfig(t, []string{"Test Album"}) // Use helper
+		config := newTestConfig(t, "Test Album Photos", "Test Album Videos") // Use helper
 		sdCardRoot := t.TempDir()
 		configDir := t.TempDir() // For album cache
 

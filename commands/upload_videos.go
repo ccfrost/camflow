@@ -93,7 +93,7 @@ func UploadVideos(ctx context.Context, config camflowconfig.CamediaConfig, cache
 		slog.Float64("total_size_gb", math.Ceil(float64(totalSize)/1024/1024/1024)))
 
 	// --- Get Album IDs (and create if they don't exist) ---
-	if len(config.GooglePhotos.DefaultAlbums) == 0 {
+	if config.GooglePhotos.Videos.DefaultAlbum == "" {
 		logger.Warn("No default albums specified in config, videos will only be uploaded to the library")
 	}
 
@@ -109,38 +109,30 @@ func UploadVideos(ctx context.Context, config camflowconfig.CamediaConfig, cache
 	// Prepare map for albumID -> albumTitle for videos
 	resolvedTargetAlbums := make(map[string]string)
 
-	if len(config.GooglePhotos.DefaultAlbums) > 0 {
-		// Filter out any empty album titles to avoid processing them
-		var validAlbumTitles []string
-		for _, title := range config.GooglePhotos.DefaultAlbums {
-			if strings.TrimSpace(title) != "" {
-				validAlbumTitles = append(validAlbumTitles, title)
-			}
-		}
-
-		if len(validAlbumTitles) > 0 {
+	if config.GooglePhotos.Videos.DefaultAlbum != "" {
+		if strings.TrimSpace(config.GooglePhotos.Videos.DefaultAlbum) == "" {
+			logger.Warn("DefaultAlbums list in config contains only empty or whitespace titles")
+		} else {
 			var albumIDs []string
-			albumIDs, err = albumCache.getOrFetchAndCreateAlbumIDs(ctx, gphotosClient.Albums(), validAlbumTitles, limiter)
+			albumIDs, err = albumCache.getOrFetchAndCreateAlbumIDs(ctx, gphotosClient.Albums(), []string{config.GooglePhotos.Videos.DefaultAlbum}, limiter)
 			if err != nil {
-				return fmt.Errorf("failed to resolve or create album IDs for titles %v: %w", validAlbumTitles, err)
+				return fmt.Errorf("failed to resolve or create album IDs for title %s: %w", config.GooglePhotos.Videos.DefaultAlbum, err)
 			}
 
 			if len(albumIDs) > 0 { // Only print if IDs were actually found/created
 				logger.Debug("Target album IDs resolved/created",
 					slog.Any("album_ids", albumIDs),
-					slog.Any("titles", validAlbumTitles))
+					slog.Any("title", config.GooglePhotos.Videos.DefaultAlbum))
 			}
 
 			// Populate resolvedTargetAlbums, mapping ID to its corresponding Title
 			// This assumes getOrFetchAndCreateAlbumIDs returns IDs in the same order as titles
 			// and that all titles successfully resolve to an ID if no error is returned.
-			for i, id := range albumIDs {
+			for _, id := range albumIDs {
 				if id != "" {
-					resolvedTargetAlbums[id] = validAlbumTitles[i]
+					resolvedTargetAlbums[id] = config.GooglePhotos.Videos.DefaultAlbum
 				}
 			}
-		} else if len(config.GooglePhotos.DefaultAlbums) > 0 {
-			logger.Warn("DefaultAlbums list in config contains only empty or whitespace titles")
 		}
 	}
 	// If resolvedTargetAlbums is empty at this point, videos are uploaded to library only.
