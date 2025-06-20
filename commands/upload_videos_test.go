@@ -59,7 +59,7 @@ func assertDirNotExists(t *testing.T, path string, msg string) {
 // --- Test Functions ---
 
 func TestUploadVideos_TargetRootDirNotConfigured(t *testing.T) {
-	cfg := newTestConfig(t, nil)
+	cfg := newTestConfig(t, "", "") // No default albums
 	// Intentionally make VideosExportQueueRoot unconfigured for this test case
 	cfg.VideosExportQueueRoot = ""
 
@@ -72,7 +72,7 @@ func TestUploadVideos_TargetRootDirNotConfigured(t *testing.T) {
 }
 
 func TestUploadVideos_TargetRootDirDoesNotExist(t *testing.T) {
-	cfg := newTestConfig(t, nil)
+	cfg := newTestConfig(t, "", "") // No default albums
 	require.NoError(t, os.RemoveAll(cfg.VideosExportQueueRoot))
 	ctrl := gomock.NewController(t)
 	mockGPhotosClient := NewMockGPhotosClient(ctrl) // Changed from localMocks.NewMockGPhotosClient
@@ -82,7 +82,7 @@ func TestUploadVideos_TargetRootDirDoesNotExist(t *testing.T) {
 }
 
 func TestUploadVideos_EmptyTargetRootDir(t *testing.T) {
-	cfg := newTestConfig(t, nil)
+	cfg := newTestConfig(t, "", "") // No default albums
 	ctrl := gomock.NewController(t)
 	mockGPhotosClient := NewMockGPhotosClient(ctrl) // Changed from localMocks.NewMockGPhotosClient
 
@@ -93,7 +93,7 @@ func TestUploadVideos_EmptyTargetRootDir(t *testing.T) {
 func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles(t *testing.T) {
 	ctx := context.Background()
 
-	cfg := newTestConfig(t, nil) // No default albums
+	cfg := newTestConfig(t, "", "") // No default albums
 	filesToCreate := map[string]string{"video1.mp4": "content1", "video2.mov": "content2"}
 	exportQueueDir := createTestFiles(t, cfg.VideosExportQueueRoot, filesToCreate)
 
@@ -144,7 +144,7 @@ func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles(t *testing.T) {
 func TestUploadVideos_FilesToUpload_NoAlbums_KeepFiles(t *testing.T) {
 	ctx := context.Background()
 
-	cfg := newTestConfig(t, nil)
+	cfg := newTestConfig(t, "", "") // No default albums
 	videoFile := "video1.mp4"
 	createTestFiles(t, cfg.VideosExportQueueRoot, map[string]string{videoFile: "content1"})
 	tempConfigDir := t.TempDir()
@@ -177,8 +177,7 @@ func TestUploadVideos_FilesToUpload_WithAlbums_CreatesAndAddsToAlbum(t *testing.
 	ctx := context.Background()
 
 	albumTitle := "NewAlbumToCreate"
-	albumTitles := []string{albumTitle}
-	cfg := newTestConfig(t, albumTitles)
+	cfg := newTestConfig(t, "", albumTitle) // Video default album
 
 	videoFileName := "video1.mp4"
 	videoFilePath := filepath.Join(cfg.VideosExportQueueRoot, videoFileName)
@@ -234,7 +233,7 @@ func TestUploadVideos_FilesToUpload_WithAlbums_CreatesAndAddsToAlbum(t *testing.
 func TestUploadVideos_ErrorLoadAlbumCache(t *testing.T) {
 	ctx := context.Background()
 
-	cfg := newTestConfig(t, []string{"Album1"})
+	cfg := newTestConfig(t, "", "Album1") // Video default album
 	createTestFiles(t, cfg.VideosExportQueueRoot, map[string]string{"video1.mp4": "content"})
 
 	tempConfigDir := t.TempDir()
@@ -257,8 +256,8 @@ func TestUploadVideos_ErrorLoadAlbumCache(t *testing.T) {
 
 func TestUploadVideos_ErrorGetOrCreateAlbumIDs(t *testing.T) {
 	ctx := context.Background()
-	albumTitles := []string{"AlbumThatCausesError"}
-	cfg := newTestConfig(t, albumTitles)
+	albumTitle := "AlbumThatCausesError"
+	cfg := newTestConfig(t, "", albumTitle) // Video default album
 	createTestFiles(t, cfg.VideosExportQueueRoot, map[string]string{"video1.mp4": "content"})
 	tempConfigDir := t.TempDir()
 
@@ -279,7 +278,7 @@ func TestUploadVideos_ErrorGetOrCreateAlbumIDs(t *testing.T) {
 
 func TestUploadVideos_ErrorUploadFile(t *testing.T) {
 	ctx := context.Background()
-	cfg := newTestConfig(t, nil)
+	cfg := newTestConfig(t, "", "") // No default albums
 	videoFileName := "video1.mp4"
 	createTestFiles(t, cfg.VideosExportQueueRoot, map[string]string{videoFileName: "content"})
 	tempConfigDir := t.TempDir()
@@ -306,7 +305,7 @@ func TestUploadVideos_ErrorUploadFile(t *testing.T) {
 
 func TestUploadVideos_ErrorCreateMediaItem(t *testing.T) {
 	ctx := context.Background()
-	cfg := newTestConfig(t, nil)
+	cfg := newTestConfig(t, "", "") // No default albums
 	videoFileName := "video1.mp4"
 	createTestFiles(t, cfg.VideosExportQueueRoot, map[string]string{videoFileName: "content"})
 	tempConfigDir := t.TempDir()
@@ -340,7 +339,7 @@ func TestUploadVideos_ErrorAddMediaToAlbum_FileKept_WhenAlbumExists(t *testing.T
 	ctx := context.Background()
 
 	albumTitle := "ExistingAlbum"
-	cfg := newTestConfig(t, []string{albumTitle})
+	cfg := newTestConfig(t, "", albumTitle) // Video default album
 
 	videoFileName := "video1.mp4"
 	videoFilePath := filepath.Join(cfg.VideosExportQueueRoot, videoFileName)
@@ -388,7 +387,7 @@ func TestUploadVideos_ErrorAddMediaToAlbum_FileKept_WhenAlbumExists(t *testing.T
 func TestUploadVideos_ContextCancellationDuringLimiterWait(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	cfg := newTestConfig(t, nil)
+	cfg := newTestConfig(t, "", "") // No default albums
 
 	videoFileName := "video1.mp4"
 	createTestFiles(t, cfg.VideosExportQueueRoot, map[string]string{videoFileName: "content"})
@@ -440,8 +439,7 @@ func TestUploadVideos_FilesToUpload_WithAlbums_AlbumExists(t *testing.T) {
 	ctx := context.Background()
 
 	albumTitle := "MyExistingAlbum"
-	albumTitles := []string{albumTitle}
-	cfg := newTestConfig(t, albumTitles)
+	cfg := newTestConfig(t, "", albumTitle) // Video default album
 
 	videoFileName := "existing_album_video.mp4"
 	videoFilePath := filepath.Join(cfg.VideosExportQueueRoot, videoFileName)
@@ -641,7 +639,7 @@ func TestCleanupEmptyTargetRootDirectories_HandlesSymlinks(t *testing.T) {
 func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles_WithCleanup(t *testing.T) {
 	ctx := context.Background()
 
-	cfg := newTestConfig(t, nil)
+	cfg := newTestConfig(t, "", "") // No default albums
 
 	// Create files in nested directory structure to test cleanup
 	filesToCreate := map[string]string{
@@ -752,8 +750,7 @@ func TestUploadVideos_FilesToUpload_WithAlbums_CleanupOnSuccess(t *testing.T) {
 	ctx := context.Background()
 
 	albumTitle := "TestAlbum"
-	albumTitles := []string{albumTitle}
-	cfg := newTestConfig(t, albumTitles)
+	cfg := newTestConfig(t, "", albumTitle) // Video default album
 
 	// Create video in nested directory structure
 	videoFileName := "video1.mp4"
@@ -809,7 +806,7 @@ func TestUploadVideos_FilesToUpload_WithAlbums_CleanupOnSuccess(t *testing.T) {
 
 func TestUploadVideos_ErrorUploadFile_NoCleanup(t *testing.T) {
 	ctx := context.Background()
-	cfg := newTestConfig(t, nil)
+	cfg := newTestConfig(t, "", "") // No default albums
 
 	// Create video in nested directory structure
 	videoFileName := "video1.mp4"
@@ -847,7 +844,7 @@ func TestUploadVideos_ErrorAddMediaToAlbum_NoCleanup(t *testing.T) {
 	ctx := context.Background()
 
 	albumTitle := "FailingAlbum"
-	cfg := newTestConfig(t, []string{albumTitle})
+	cfg := newTestConfig(t, "", albumTitle) // Video default album
 
 	// Create video in nested directory structure
 	videoFileName := "video1.mp4"
@@ -899,7 +896,7 @@ func TestUploadVideos_ErrorAddMediaToAlbum_NoCleanup(t *testing.T) {
 
 func TestUploadVideos_KeepTargetRoot_NoCleanup(t *testing.T) {
 	ctx := context.Background()
-	cfg := newTestConfig(t, nil)
+	cfg := newTestConfig(t, "", "") // No default albums
 
 	// Create video in nested directory structure
 	videoFileName := "video1.mp4"
@@ -939,7 +936,7 @@ func TestUploadVideos_KeepTargetRoot_NoCleanup(t *testing.T) {
 
 func TestUploadVideos_FilesToUpload_CleanupFailsButUploadSucceeds(t *testing.T) {
 	ctx := context.Background()
-	cfg := newTestConfig(t, nil)
+	cfg := newTestConfig(t, "", "") // No default albums
 
 	// Create video in nested directory structure
 	videoFileName := "video1.mp4"
@@ -1006,7 +1003,7 @@ func TestUploadVideos_FilesToUpload_CleanupFailsButUploadSucceeds(t *testing.T) 
 
 func TestUploadVideos_MixedSuccessAndFailure_PartialCleanup(t *testing.T) {
 	ctx := context.Background()
-	cfg := newTestConfig(t, nil)
+	cfg := newTestConfig(t, "", "") // No default albums
 
 	// Create multiple videos where processing stops at first failure
 	// Note: UploadVideos processes files in the order returned by filepath.WalkDir

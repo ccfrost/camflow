@@ -172,13 +172,9 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 		// Mock album lookup and creation
 		existingAlbum := &albums.Album{
 			ID:    "album_id_1",
-			Title: defaultAlbums[0],
+			Title: videosDefaultAlbum,
 		}
 		mockAlbumsSvc.EXPECT().List(gomock.Any()).Return([]albums.Album{*existingAlbum}, nil)
-		mockAlbumsSvc.EXPECT().Create(gomock.Any(), defaultAlbums[1]).Return(&albums.Album{
-			ID:    "album_id_2",
-			Title: defaultAlbums[1],
-		}, nil)
 
 		// Mock video uploads
 		for i, videoPath := range videoFiles {
@@ -200,10 +196,8 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 			}, nil)
 
 			// Mock adding to albums
-			for _, albumID := range []string{"album_id_1", "album_id_2"} {
-				mockAlbumsSvc.EXPECT().AddMediaItems(gomock.Any(), albumID, []string{mediaItemID}).
-					Return(nil)
-			}
+			mockAlbumsSvc.EXPECT().AddMediaItems(gomock.Any(), "album_id_1", []string{mediaItemID}).
+				Return(nil)
 		}
 
 		// Run upload-videos command
@@ -248,7 +242,9 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 
 	t.Run("UploadError_GooglePhotosAPIFailure", func(t *testing.T) {
 		// Setup test directories with a video file
-		config := newTestConfig(t, "Test Album Photos", "Test Album Videos") // Use helper
+		photosDefaultAlbum := "Test Album Photos"
+		videosDefaultAlbum := "Test Album Videos"
+		config := newTestConfig(t, photosDefaultAlbum, videosDefaultAlbum) // Use helper
 		sdCardRoot := t.TempDir()
 		configDir := t.TempDir() // For album cache
 
@@ -290,9 +286,9 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 		mockAlbumsSvc.EXPECT().List(gomock.Any()).Return([]albums.Album{}, nil).AnyTimes()
 
 		// Mock album creation for default album
-		mockAlbumsSvc.EXPECT().Create(gomock.Any(), "Test Album").Return(&albums.Album{
+		mockAlbumsSvc.EXPECT().Create(gomock.Any(), videosDefaultAlbum).Return(&albums.Album{
 			ID:    "test_album_id",
-			Title: "Test Album",
+			Title: videosDefaultAlbum,
 		}, nil).AnyTimes()
 
 		// Mock upload failure
@@ -337,7 +333,9 @@ func TestImportAndUploadVideosIntegration_KeepFlags(t *testing.T) {
 	ctx := context.Background()
 
 	// Setup test directories and config using the helper
-	config := newTestConfig(t, []string{"Test Album"}) // Use helper
+	photosDefaultAlbum := "Test Album Photos"
+	videosDefaultAlbum := "Test Album Videos"
+	config := newTestConfig(t, photosDefaultAlbum, videosDefaultAlbum) // Use helper
 	sdCardRoot := t.TempDir()
 	configDir := t.TempDir() // For album cache
 
@@ -379,7 +377,7 @@ func TestImportAndUploadVideosIntegration_KeepFlags(t *testing.T) {
 	mockGPhotosClient.EXPECT().Albums().Return(mockAlbumsSvc).AnyTimes()
 
 	// Mock successful upload
-	album := &albums.Album{ID: "album_id", Title: "Test Album"}
+	album := &albums.Album{ID: "album_id", Title: videosDefaultAlbum}
 	mockAlbumsSvc.EXPECT().List(gomock.Any()).Return([]albums.Album{*album}, nil)
 
 	year, month, day := testTime.Date()
