@@ -498,3 +498,25 @@ func findDifferentFilesystemPaths(candidates [][]string) (string, string) {
 
 	return "", "" // No different filesystems found
 }
+
+func TestIsSameFilesystem_ForceFalse(t *testing.T) {
+	// Test that the force false variable works
+	tempDir := t.TempDir()
+	path1 := filepath.Join(tempDir, "file1.txt")
+	path2 := filepath.Join(tempDir, "file2.txt")
+
+	// First verify they would normally be on the same filesystem
+	same, err := isSameFilesystem(path1, path2)
+	require.NoError(t, err)
+	assert.True(t, same, "Files in same temp dir should be on same filesystem")
+
+	// Now test with force false enabled
+	originalValue := IsSameFileSystemForTests_ForceFalse
+	defer func() { IsSameFileSystemForTests_ForceFalse = originalValue }() // Restore after test
+
+	IsSameFileSystemForTests_ForceFalse = true
+
+	same, err = isSameFilesystem(path1, path2)
+	require.NoError(t, err)
+	assert.False(t, same, "Should return false when IsSameFileSystemForTests_ForceFalse is true")
+}

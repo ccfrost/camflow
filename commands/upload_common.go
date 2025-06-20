@@ -377,9 +377,17 @@ func findExistingParent(rawPath string) (string, error) {
 	}
 }
 
+// IsSameFileSystem_ForceFalse is a test-only variable that forces isSameFilesystem to return false.
+// This allows testing cross-filesystem behavior even when source and destination are on the same filesystem.
+var IsSameFileSystemForTests_ForceFalse bool
+
 // isSameFilesystem checks if two paths are on the same filesystem.
 // Handles cases where the paths don't exist yet by checking their existing parent directories.
 func isSameFilesystem(path1, path2 string) (bool, error) {
+	if IsSameFileSystemForTests_ForceFalse {
+		return false, nil
+	}
+
 	existingPath1, err := findExistingParent(path1)
 	if err != nil {
 		return false, fmt.Errorf("failed to find existing parent for %s: %w", path1, err)
