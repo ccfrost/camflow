@@ -29,8 +29,9 @@ type GPConfig interface {
 
 // itemFileInfo stores path and size for progress tracking.
 type itemFileInfo struct {
-	path string
-	size int64
+	path    string
+	size    int64
+	modTime time.Time
 }
 
 // uploadMediaItems uploads media items from the export queue dir to Google Photos.
@@ -77,7 +78,7 @@ func uploadMediaItems(ctx context.Context, cacheDirFlag string, keepQueued bool,
 		if statErr != nil {
 			return fmt.Errorf("failed to get file info for %s: %w", path, statErr)
 		}
-		itemsToUpload = append(itemsToUpload, itemFileInfo{path: path, size: info.Size()})
+		itemsToUpload = append(itemsToUpload, itemFileInfo{path: path, size: info.Size(), modTime: info.ModTime()})
 		totalSize += info.Size()
 		return nil
 	})
@@ -110,6 +111,8 @@ func uploadMediaItems(ctx context.Context, cacheDirFlag string, keepQueued bool,
 	if err != nil {
 		return fmt.Errorf("failed to load album cache: %w", err)
 	}
+
+	// TODO: simplify the album lookup code now that there is only one default album.
 
 	// Prepare map for albumID -> albumTitle.
 	resolvedTargetAlbums := make(map[string]string)
@@ -291,22 +294,23 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 	logger.Debug("Moving file",
 		slog.String("from", fileInfo.path),
 		slog.String("to", destPath))
-	sameFilesystem, err := isSameFilesystem(filepath.Dir(fileInfo.path), destDir)
-	if err != nil {
-		return fmt.Errorf("failed to check if source and destination are on the same filesystem: %w", err)
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return fmt.Errorf("failed to create destination directory %s for moving %s: %w", destDir, fileInfo.path, err)
 	}
-	if sameFilesystem {
-		if err := os.MkdirAll(destDir, 0755); err != nil {
-			return fmt.Errorf("failed to create destination directory %s for moving %s: %w", destDir, fileInfo.path, err)
-		}
-
-		// XXX: os.Rename requires source and destination to be on the same filesystem for atomic move.
-		// If they are on different filesystems, it may fail or behave differently.
+	if sameFilesystem, err := isSameFilesystem(fileInfo.path, destDir); err != nil {
+		return fmt.Errorf("failed to check if source and destination are on the same filesystem: %w", err)
+	} else if sameFilesystem {
 		if err := os.Rename(fileInfo.path, destPath); err != nil {
 			return fmt.Errorf("failed to move %s from export queue to %s: %w", fileInfo.path, destPath, err)
 		}
 	} else {
-		// TODO:
+		// TODO: clean up the possible .tmp file that could be left behind if this doesn't complete.
+		if err := copyFile(fileInfo.path, destPath, fileInfo.size, fileInfo.modTime, nil /*bar*/); err != nil {
+			return fmt.Errorf("failed to copy %s to %s: %w", fileInfo.path, destPath, err)
+		}
+		if err := os.Remove(fileInfo.path); err != nil {
+			return fmt.Errorf("failed to remove original file %s after copying to %s: %w", fileInfo.path, destPath, err)
+		}
 	}
 	logger.Debug("Successfully moved file",
 		slog.String("from", fileInfo.path),
