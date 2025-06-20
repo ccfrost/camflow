@@ -1,6 +1,10 @@
 package commands
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -192,4 +196,305 @@ func TestParseDatePrefix_InvalidRealWorldExamples(t *testing.T) {
 			assert.Contains(t, err.Error(), tc.errorMsg)
 		})
 	}
+}
+
+func TestFindExistingParent(t *testing.T) {
+	// --- Test Case: Path exists directly ---
+	t.Run("PathExistsDirectly", func(t *testing.T) {
+		tempDir := t.TempDir()
+
+		result, err := findExistingParent(tempDir)
+		require.NoError(t, err)
+		assert.Equal(t, tempDir, result)
+	})
+
+	// --- Test Case: Parent directory exists ---
+	t.Run("ParentExists", func(t *testing.T) {
+		tempDir := t.TempDir()
+		nonExistentPath := filepath.Join(tempDir, "nonexistent", "subdir", "file.txt")
+
+		result, err := findExistingParent(nonExistentPath)
+		require.NoError(t, err)
+		assert.Equal(t, tempDir, result)
+	})
+
+	// --- Test Case: Grandparent exists ---
+	t.Run("GrandparentExists", func(t *testing.T) {
+		tempDir := t.TempDir()
+		subDir := filepath.Join(tempDir, "existing")
+		require.NoError(t, os.Mkdir(subDir, 0755))
+
+		nonExistentPath := filepath.Join(subDir, "nonexistent", "deeper", "file.txt")
+
+		result, err := findExistingParent(nonExistentPath)
+		require.NoError(t, err)
+		assert.Equal(t, subDir, result)
+	})
+	// --- Test Case: Relative path ---
+	t.Run("RelativePath", func(t *testing.T) {
+		tempDir := t.TempDir()
+		// Change to temp dir to test relative paths
+		originalWd, err := os.Getwd()
+		require.NoError(t, err)
+		defer os.Chdir(originalWd)
+
+		require.NoError(t, os.Chdir(tempDir))
+
+		result, err := findExistingParent("nonexistent/file.txt")
+		require.NoError(t, err)
+
+		// Resolve symlinks for both to handle /var -> /private/var on macOS
+		expectedReal, err := filepath.EvalSymlinks(tempDir)
+		require.NoError(t, err)
+		resultReal, err := filepath.EvalSymlinks(result)
+		require.NoError(t, err)
+
+		assert.Equal(t, expectedReal, resultReal)
+	})
+
+	// --- Test Case: Root filesystem (edge case) ---
+	t.Run("ReachesRoot", func(t *testing.T) {
+		// Use a path that definitely doesn't exist and should reach root
+		nonExistentPath := "/definitely/does/not/exist/very/deep/path"
+
+		result, err := findExistingParent(nonExistentPath)
+		require.NoError(t, err)
+		// Should return "/" (root) on Unix systems
+		assert.Equal(t, "/", result)
+	})
+}
+
+func TestIsSameFilesystem(t *testing.T) {
+	// --- Test Case: Same directory ---
+	t.Run("SameDirectory", func(t *testing.T) {
+		tempDir := t.TempDir()
+		path1 := filepath.Join(tempDir, "file1.txt")
+		path2 := filepath.Join(tempDir, "file2.txt")
+
+		same, err := isSameFilesystem(path1, path2)
+		require.NoError(t, err)
+		assert.True(t, same, "Files in same directory should be on same filesystem")
+	})
+
+	// --- Test Case: Same filesystem, different subdirectories ---
+	t.Run("SameFilesystemDifferentDirs", func(t *testing.T) {
+		tempDir := t.TempDir()
+
+		// Create two subdirectories
+		subDir1 := filepath.Join(tempDir, "subdir1")
+		subDir2 := filepath.Join(tempDir, "subdir2")
+		require.NoError(t, os.Mkdir(subDir1, 0755))
+		require.NoError(t, os.Mkdir(subDir2, 0755))
+
+		path1 := filepath.Join(subDir1, "file1.txt")
+		path2 := filepath.Join(subDir2, "file2.txt")
+
+		same, err := isSameFilesystem(path1, path2)
+		require.NoError(t, err)
+		assert.True(t, same, "Files in subdirectories of same parent should be on same filesystem")
+	})
+
+	// --- Test Case: Nonexistent paths on same filesystem ---
+	t.Run("NonexistentPathsSameFS", func(t *testing.T) {
+		tempDir := t.TempDir()
+
+		path1 := filepath.Join(tempDir, "deep", "nonexistent", "path1", "file.txt")
+		path2 := filepath.Join(tempDir, "another", "deep", "path2", "file.txt")
+
+		same, err := isSameFilesystem(path1, path2)
+		require.NoError(t, err)
+		assert.True(t, same, "Nonexistent paths under same parent should be on same filesystem")
+	})
+
+	// --- Test Case: Mixed existing and nonexistent paths ---
+	t.Run("MixedExistingNonexistent", func(t *testing.T) {
+		tempDir := t.TempDir()
+
+		// Create one subdirectory
+		subDir := filepath.Join(tempDir, "existing")
+		require.NoError(t, os.Mkdir(subDir, 0755))
+
+		existingPath := filepath.Join(subDir, "file1.txt")
+		nonexistentPath := filepath.Join(tempDir, "nonexistent", "deep", "file2.txt")
+
+		same, err := isSameFilesystem(existingPath, nonexistentPath)
+		require.NoError(t, err)
+		assert.True(t, same, "Existing and nonexistent paths under same parent should be on same filesystem")
+	})
+
+	// --- Test Case: Root filesystem comparison ---
+	t.Run("RootFilesystem", func(t *testing.T) {
+		// Compare two paths that should both resolve to root
+		path1 := "/definitely/does/not/exist/path1"
+		path2 := "/definitely/does/not/exist/path2"
+
+		same, err := isSameFilesystem(path1, path2)
+		require.NoError(t, err)
+		assert.True(t, same, "Paths that resolve to root should be on same filesystem")
+	})
+
+	// --- Test Case: Symlinks (if they exist) ---
+	t.Run("SymlinksToSameTarget", func(t *testing.T) {
+		tempDir := t.TempDir()
+
+		// Create a target directory
+		targetDir := filepath.Join(tempDir, "target")
+		require.NoError(t, os.Mkdir(targetDir, 0755))
+
+		// Create symlinks to the same target
+		symlink1 := filepath.Join(tempDir, "symlink1")
+		symlink2 := filepath.Join(tempDir, "symlink2")
+
+		// Only create symlinks if the system supports them
+		if err := os.Symlink(targetDir, symlink1); err != nil {
+			t.Skip("System doesn't support symlinks, skipping test")
+		}
+		require.NoError(t, os.Symlink(targetDir, symlink2))
+
+		path1 := filepath.Join(symlink1, "file1.txt")
+		path2 := filepath.Join(symlink2, "file2.txt")
+
+		same, err := isSameFilesystem(path1, path2)
+		require.NoError(t, err)
+		assert.True(t, same, "Paths through symlinks to same target should be on same filesystem")
+	})
+
+	// --- Test Case: Error handling for invalid paths ---
+	t.Run("InvalidPath", func(t *testing.T) {
+		// Test with a path that contains null bytes (invalid on most filesystems)
+		invalidPath := "/invalid\x00path"
+		validPath := "/tmp"
+
+		_, err := isSameFilesystem(invalidPath, validPath)
+		assert.Error(t, err, "Should error on invalid path characters")
+	})
+}
+
+func TestIsSameFilesystemIntegration(t *testing.T) {
+	// --- Integration test mimicking the upload scenario ---
+	t.Run("UploadScenario", func(t *testing.T) {
+		tempDir := t.TempDir()
+
+		// Create directory structure similar to the upload scenario
+		exportQueueRoot := filepath.Join(tempDir, "export-queue")
+		exportedRoot := filepath.Join(tempDir, "exported")
+		require.NoError(t, os.Mkdir(exportQueueRoot, 0755))
+		require.NoError(t, os.Mkdir(exportedRoot, 0755))
+
+		// Test paths that would be used in uploadMediaItem
+		srcFile := filepath.Join(exportQueueRoot, "2024", "06", "20", "video.mp4")
+		destFile := filepath.Join(exportedRoot, "2024", "06", "20", "video.mp4")
+
+		same, err := isSameFilesystem(srcFile, destFile)
+		require.NoError(t, err)
+		assert.True(t, same, "Export queue and exported directories should be on same filesystem in test")
+
+		// Verify the function found the correct existing parents
+		srcParent, err := findExistingParent(srcFile)
+		require.NoError(t, err)
+		assert.Equal(t, exportQueueRoot, srcParent)
+
+		destParent, err := findExistingParent(destFile)
+		require.NoError(t, err)
+		assert.Equal(t, exportedRoot, destParent)
+	})
+}
+
+// TestIsSameFilesystem_DifferentFilesystems tests the function with paths on different filesystems
+// by detecting commonly different mount points on the current system.
+func TestIsSameFilesystem_DifferentFilesystems(t *testing.T) {
+	var path1, path2 string
+
+	switch runtime.GOOS {
+	case "darwin":
+		// macOS: Try common different filesystem combinations
+		candidates := [][]string{
+			{"/tmp", "/System"},           // /tmp vs /System (usually different)
+			{"/tmp", "/private/var"},      // /tmp vs /private/var
+			{"/", "/private/tmp"},         // root vs /private/tmp
+		}
+
+		// Check for mounted volumes
+		if volumes, err := os.ReadDir("/Volumes"); err == nil && len(volumes) > 0 {
+			for _, vol := range volumes {
+				volPath := filepath.Join("/Volumes", vol.Name())
+				// Skip .localized and other system files
+				if !vol.IsDir() || vol.Name()[0] == '.' {
+					continue
+				}
+				candidates = append(candidates, []string{"/tmp", volPath})
+			}
+		}
+
+		path1, path2 = findDifferentFilesystemPaths(candidates)
+
+	case "linux":
+		// Linux: Try common mount points
+		candidates := [][]string{
+			{"/", "/tmp"},
+			{"/", "/var"},
+			{"/", "/boot"},
+			{"/", "/proc"},
+			{"/", "/sys"},
+			{"/tmp", "/var"},
+			{"/tmp", "/boot"},
+		}
+
+		path1, path2 = findDifferentFilesystemPaths(candidates)
+
+	default:
+		// For other OS, try some common paths
+		candidates := [][]string{
+			{"/", "/tmp"},
+			{"/tmp", "/var"},
+		}
+
+		path1, path2 = findDifferentFilesystemPaths(candidates)
+	}
+
+	if path1 == "" || path2 == "" {
+		t.Skip("Could not find different filesystems on this system")
+	}
+
+	t.Logf("Testing different filesystems: %s vs %s", path1, path2)
+
+	testPath1 := filepath.Join(path1, "test_file1.txt")
+	testPath2 := filepath.Join(path2, "test_file2.txt")
+
+	same, err := isSameFilesystem(testPath1, testPath2)
+	require.NoError(t, err)
+	assert.False(t, same, "Paths on different filesystems should return false")
+}
+
+// findDifferentFilesystemPaths takes a list of directory path pairs and returns
+// the first pair that are on different filesystems, or empty strings if none found.
+func findDifferentFilesystemPaths(candidates [][]string) (string, string) {
+	for _, pair := range candidates {
+		dir1, dir2 := pair[0], pair[1]
+
+		// Check if both directories exist
+		stat1, err1 := os.Stat(dir1)
+		if err1 != nil {
+			continue
+		}
+		stat2, err2 := os.Stat(dir2)
+		if err2 != nil {
+			continue
+		}
+
+		// Check if they're on different filesystems
+		sys1, ok1 := stat1.Sys().(*syscall.Stat_t)
+		sys2, ok2 := stat2.Sys().(*syscall.Stat_t)
+
+		if !ok1 || !ok2 {
+			continue // Can't get device info, skip this pair
+		}
+
+		if sys1.Dev != sys2.Dev {
+			// Found different filesystems!
+			return dir1, dir2
+		}
+	}
+
+	return "", "" // No different filesystems found
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gphotosuploader/google-photos-api-client-go/v3/media_items"
@@ -290,14 +291,22 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 	logger.Debug("Moving file",
 		slog.String("from", fileInfo.path),
 		slog.String("to", destPath))
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return fmt.Errorf("failed to create destination directory %s for moving %s: %w", destDir, fileInfo.path, err)
+	sameFilesystem, err := isSameFilesystem(filepath.Dir(fileInfo.path), destDir)
+	if err != nil {
+		return fmt.Errorf("failed to check if source and destination are on the same filesystem: %w", err)
 	}
+	if sameFilesystem {
+		if err := os.MkdirAll(destDir, 0755); err != nil {
+			return fmt.Errorf("failed to create destination directory %s for moving %s: %w", destDir, fileInfo.path, err)
+		}
 
-	// XXX: os.Rename requires source and destination to be on the same filesystem for atomic move.
-	// If they are on different filesystems, it may fail or behave differently.
-	if err := os.Rename(fileInfo.path, destPath); err != nil {
-		return fmt.Errorf("failed to move %s from export queue to %s: %w", fileInfo.path, destPath, err)
+		// XXX: os.Rename requires source and destination to be on the same filesystem for atomic move.
+		// If they are on different filesystems, it may fail or behave differently.
+		if err := os.Rename(fileInfo.path, destPath); err != nil {
+			return fmt.Errorf("failed to move %s from export queue to %s: %w", fileInfo.path, destPath, err)
+		}
+	} else {
+		// TODO:
 	}
 	logger.Debug("Successfully moved file",
 		slog.String("from", fileInfo.path),
@@ -333,6 +342,67 @@ func parseDatePrefix(s string) (year, month, day string, err error) {
 	}
 
 	return parts[0], parts[1], parts[2], nil
+}
+
+// findExistingParent recursively walks up the directory tree to find a parent that exists.
+func findExistingParent(rawPath string) (string, error) {
+	absPath, err := filepath.Abs(rawPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to get absolute path for %s: %w", rawPath, err)
+	}
+
+	current := absPath
+	for {
+		_, err := os.Stat(current)
+		if err == nil {
+			// Found a path that exists.
+			return current, nil
+		}
+		if !os.IsNotExist(err) {
+			// Some other error (eg, permission).
+			return "", fmt.Errorf("error checking path %s: %w", current, err)
+		}
+
+		// Move to parent directory.
+		parent := filepath.Dir(current)
+		if parent == current {
+			// Reached filesystem root - use it since any file created must be on this filesystem.
+			return current, nil
+		}
+		current = parent
+	}
+}
+
+// isSameFilesystem checks if two paths are on the same filesystem.
+// Handles cases where the paths don't exist yet by checking their existing parent directories.
+func isSameFilesystem(path1, path2 string) (bool, error) {
+	existingPath1, err := findExistingParent(path1)
+	if err != nil {
+		return false, fmt.Errorf("failed to find existing parent for %s: %w", path1, err)
+	}
+	existingPath2, err := findExistingParent(path2)
+	if err != nil {
+		return false, fmt.Errorf("failed to find existing parent for %s: %w", path2, err)
+	}
+
+	// Note: if Stat fails because the path is a dangling symlink this returns an error.
+	// That's okay because a later mkdir of that path would fail (I think), so there'd be
+	// some work to do to support that case.
+	stat1, err := os.Stat(existingPath1)
+	if err != nil {
+		return false, fmt.Errorf("failed to stat %s: %w", existingPath1, err)
+	}
+	stat2, err := os.Stat(existingPath2)
+	if err != nil {
+		return false, fmt.Errorf("failed to stat %s: %w", existingPath2, err)
+	}
+
+	stat1Sys, ok1 := stat1.Sys().(*syscall.Stat_t)
+	stat2Sys, ok2 := stat2.Sys().(*syscall.Stat_t)
+	if !ok1 || !ok2 {
+		return false, fmt.Errorf("unable to get filesystem device information for one/both of %s (%t) and %s (%t)", existingPath1, ok1, existingPath2, ok2)
+	}
+	return stat1Sys.Dev == stat2Sys.Dev, nil
 }
 
 // cleanupEmptyParentDirs removes empty parent directories of the moved video file
