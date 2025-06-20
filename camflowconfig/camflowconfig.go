@@ -47,6 +47,8 @@ type CamediaConfig struct {
 	VideosExportedRoot    string `mapstructure:"videos_exported_root"`
 
 	GooglePhotos GooglePhotosConfig `mapstructure:"google_photos"`
+
+	path string `mapstructure:"-"`
 }
 
 func (c *GooglePhotosConfig) Validate() error {
@@ -65,12 +67,15 @@ func (c *GooglePhotosConfig) Validate() error {
 func (c *CamediaConfig) Validate() error {
 	// Check that at least a base set of fields have values.
 	if c.PhotosToProcessRoot == "" || c.PhotosExportQueueDir == "" || c.PhotosExportedRoot == "" {
-		return fmt.Errorf("missing photos field")
+		return fmt.Errorf("missing photos field (%s)", c.path)
 	}
 	if c.VideosExportQueueRoot == "" || c.VideosExportedRoot == "" {
-		return fmt.Errorf("missing videos field")
+		return fmt.Errorf("missing videos field (%s)", c.path)
 	}
-	return c.GooglePhotos.Validate()
+	if err := c.GooglePhotos.Validate(); err != nil {
+		return fmt.Errorf("invalid google_photos config (%s): %w", c.path, err)
+	}
+	return nil
 }
 
 // getConfigPath determines where to store the config file.
@@ -97,11 +102,11 @@ func LoadConfig(configPathFlag string) (CamediaConfig, error) {
 	viper.SetConfigType("toml")
 
 	if err := viper.ReadInConfig(); err != nil {
-		return CamediaConfig{}, err
+		return CamediaConfig{}, fmt.Errorf("error reading (%s): %w", path, err)
 	}
-	var config CamediaConfig
+	config := CamediaConfig{path: path}
 	if err := viper.Unmarshal(&config); err != nil {
-		return CamediaConfig{}, err
+		return CamediaConfig{}, fmt.Errorf("error unmarshaling (%s): %w", path, err)
 	}
 
 	return config, nil
