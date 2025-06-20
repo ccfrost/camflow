@@ -19,6 +19,7 @@ import (
 type LocalConfig interface {
 	GetExportQueueRoot() string
 	GetExportedRoot() string
+	ExportQueueIsFlat() bool
 }
 
 type GPConfig interface {
@@ -156,8 +157,7 @@ func uploadMediaItems(ctx context.Context, cacheDirFlag string, keepQueued bool,
 
 	_ = bar.Finish() // Ignore error on finish
 
-	// TODO: do what with name to be clear?
-	logger.Debug("Photo/Video upload process finished")
+	logger.Debug(fmt.Sprint("Finished uploading ", itemTypePluralName))
 	return nil
 }
 
@@ -203,7 +203,7 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 			slog.String("file", fileBasename),
 			slog.String("token", uploadToken),
 			slog.String("error", err.Error()))
-		return nil // Skip to the next video, progress bar will be updated by defer
+		return nil // Skip to the next item, progress bar will be updated by defer
 	}
 	logger.Debug("Successfully created media item",
 		slog.String("file", fileBasename),
@@ -251,21 +251,31 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 
 	if !successfullyAddedToAll {
 		if !keepQueued {
-			logger.Error("Video was not successfully added to all target albums, it will not be moved from export queue",
+			logger.Error("File was not successfully added to all target albums, it will not be moved from export queue",
 				slog.String("file", fileBasename))
 		}
 		return nil
 	}
 
 	if keepQueued {
-		logger.Debug("Keeping video in export queue directory as per keepQueued flag",
+		logger.Debug("Keeping file in export queue directory as per keepQueued flag",
 			slog.String("file", fileInfo.path))
 		return nil
 	}
 
-	relPath, err := filepath.Rel(localConfig.GetExportQueueRoot(), fileInfo.path)
-	if err != nil {
-		return fmt.Errorf("failed to get relative path for %s from export queue root %s: %w", fileInfo.path, localConfig.GetExportQueueRoot(), err)
+	var relPath string
+	if localConfig.ExportQueueIsFlat() {
+		year, month, day, err := parseDatePrefix(fileBasename)
+		if err != nil {
+			return fmt.Errorf("failed to parse date prefix from file name %s: %w", fileBasename, err)
+		}
+		relPath = filepath.Join(year, month, day, fileBasename)
+	} else {
+		var err error
+		relPath, err = filepath.Rel(localConfig.GetExportQueueRoot(), fileInfo.path)
+		if err != nil {
+			return fmt.Errorf("failed to get relative path for %s from export queue root %s: %w", fileInfo.path, localConfig.GetExportQueueRoot(), err)
+		}
 	}
 	destPath := filepath.Join(localConfig.GetExportedRoot(), relPath)
 	destDir := filepath.Dir(destPath)
@@ -277,7 +287,7 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 		return fmt.Errorf("failed to move %s: error checking destination %s: %w", fileInfo.path, destPath, err)
 	}
 
-	logger.Debug("Moving video file",
+	logger.Debug("Moving file",
 		slog.String("from", fileInfo.path),
 		slog.String("to", destPath))
 	if err := os.MkdirAll(destDir, 0755); err != nil {
@@ -303,4 +313,22 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 	}
 
 	return nil
+}
+
+func parseDatePrefix(s string) (year, month, day string, err error) {
+	parts := strings.Split(s, "-")
+	if len(parts) < 4 {
+		return "", "", "", fmt.Errorf("invalid format: expected at least 4 parts separated by '-'")
+	}
+	if len(parts[0]) != 4 {
+		return "", "", "", fmt.Errorf("invalid format: year '%s' must be 4 characters long", parts[0])
+	}
+	if len(parts[1]) != 2 {
+		return "", "", "", fmt.Errorf("invalid format: month '%s' must be 2 characters long", parts[1])
+	}
+	if len(parts[2]) != 2 {
+		return "", "", "", fmt.Errorf("invalid format: day '%s' must be 2 characters long", parts[2])
+	}
+
+	return parts[0], parts[1], parts[2], nil
 }
