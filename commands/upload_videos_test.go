@@ -68,7 +68,7 @@ func TestUploadVideos_TargetRootDirNotConfigured(t *testing.T) {
 
 	err := UploadVideos(context.Background(), cfg, t.TempDir(), false, mockGPhotosClient)
 	require.Error(t, err, "Expected an error when exportQueue dir is not configured, got nil")
-	assert.Contains(t, err.Error(), "video export queue directory (VideosExportQueueRoot) not configured", "Expected error message about exportQueue dir not configured, got: %v", err)
+	assert.Contains(t, err.Error(), "missing videos field", "Expected error message about exportQueue dir not configured, got: %v", err)
 }
 
 func TestUploadVideos_TargetRootDirDoesNotExist(t *testing.T) {

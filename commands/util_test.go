@@ -36,6 +36,15 @@ func newTestConfig(t *testing.T, photosDefaultAlbum, videosDefaultAlbum string) 
 			// Does not set ToFav or KeywordAlbums fields.
 		},
 	}
+	c.LocalPhotos = camflowconfig.LocalPhotosConfig{
+		ToProcessRoot:  c.PhotosToProcessRoot,
+		ExportQueueDir: c.PhotosExportQueueDir,
+		ExportedRoot:   c.PhotosExportedRoot,
+	}
+	c.LocalVideos = camflowconfig.LocalVideosConfig{
+		ExportQueueRoot: c.VideosExportQueueRoot,
+		ExportedRoot:    c.VideosExportedRoot,
+	}
 	for _, dir := range []string{
 		c.PhotosToProcessRoot,
 		c.PhotosExportQueueDir,

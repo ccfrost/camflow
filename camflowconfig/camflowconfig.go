@@ -32,23 +32,62 @@ type GPPhotosConfig struct {
 	KeywordAlbums         []KeywordAlbum `mapstructure:"keyword_albums"`
 }
 
+func (c *GPPhotosConfig) GetDefaultAlbum() string {
+	return c.DefaultAlbum
+}
+
 // GPVideosConfig defines the configuration for Videos in Google Photos.
 type GPVideosConfig struct {
 	DefaultAlbum string `mapstructure:"default_album"`
 }
 
-// CamediaConfig defines the configuration for Camedia.
-type CamediaConfig struct {
-	PhotosToProcessRoot  string `mapstructure:"photos_to_process_root"`
-	PhotosExportQueueDir string `mapstructure:"photos_export_queue_dir"`
-	PhotosExportedRoot   string `mapstructure:"photos_exported_root"`
+func (c *GPVideosConfig) GetDefaultAlbum() string {
+	return c.DefaultAlbum
+}
 
-	VideosExportQueueRoot string `mapstructure:"videos_export_queue_root"`
-	VideosExportedRoot    string `mapstructure:"videos_exported_root"`
+// TODO: rename to camflow.
+// CamediaConfig defines the configuration for Camedia.
+// TODO: move flat fields into the new structs.
+type CamediaConfig struct {
+	PhotosToProcessRoot  string            `mapstructure:"photos_to_process_root"`
+	PhotosExportQueueDir string            `mapstructure:"photos_export_queue_dir"`
+	PhotosExportedRoot   string            `mapstructure:"photos_exported_root"`
+	LocalPhotos          LocalPhotosConfig `mapstructure:"-"`
+
+	VideosExportQueueRoot string            `mapstructure:"videos_export_queue_root"`
+	VideosExportedRoot    string            `mapstructure:"videos_exported_root"`
+	LocalVideos           LocalVideosConfig `mapstructure:"-"`
 
 	GooglePhotos GooglePhotosConfig `mapstructure:"google_photos"`
 
 	path string `mapstructure:"-"`
+}
+
+type LocalPhotosConfig struct {
+	ToProcessRoot  string `mapstructure:"photos_to_process_root"`
+	ExportQueueDir string `mapstructure:"photos_export_queue_dir"`
+	ExportedRoot   string `mapstructure:"photos_exported_root"`
+}
+
+func (c *LocalPhotosConfig) GetExportQueueRoot() string {
+	return c.ExportQueueDir
+}
+
+func (c *LocalPhotosConfig) GetExportedRoot() string {
+	return c.ExportedRoot
+}
+
+type LocalVideosConfig struct {
+	ExportQueueRoot string `mapstructure:"videos_export_queue_root"`
+	ExportedRoot    string `mapstructure:"videos_exported_root"`
+}
+
+func (c *LocalVideosConfig) GetExportQueueRoot() string {
+	return c.ExportQueueRoot
+}
+
+func (c *LocalVideosConfig) GetExportedRoot() string {
+	return c.ExportedRoot
 }
 
 func (c *GooglePhotosConfig) Validate() error {
@@ -71,6 +110,15 @@ func (c *CamediaConfig) Validate() error {
 	}
 	if c.VideosExportQueueRoot == "" || c.VideosExportedRoot == "" {
 		return fmt.Errorf("missing videos field (%s)", c.path)
+	}
+	if c.PhotosToProcessRoot != c.LocalPhotos.ToProcessRoot ||
+		c.PhotosExportQueueDir != c.LocalPhotos.ExportQueueDir ||
+		c.PhotosExportedRoot != c.LocalPhotos.ExportedRoot {
+		return fmt.Errorf("local_photos config does not match flat fields (%s)", c.path)
+	}
+	if c.VideosExportQueueRoot != c.LocalVideos.ExportQueueRoot ||
+		c.VideosExportedRoot != c.LocalVideos.ExportedRoot {
+		return fmt.Errorf("local_videos config does not match flat fields (%s)", c.path)
 	}
 	if err := c.GooglePhotos.Validate(); err != nil {
 		return fmt.Errorf("invalid google_photos config (%s): %w", c.path, err)
@@ -107,6 +155,15 @@ func LoadConfig(configPathFlag string) (CamediaConfig, error) {
 	config := CamediaConfig{path: path}
 	if err := viper.Unmarshal(&config); err != nil {
 		return CamediaConfig{}, fmt.Errorf("error unmarshaling (%s): %w", path, err)
+	}
+	config.LocalPhotos = LocalPhotosConfig{
+		ToProcessRoot:  config.PhotosToProcessRoot,
+		ExportQueueDir: config.PhotosExportQueueDir,
+		ExportedRoot:   config.PhotosExportedRoot,
+	}
+	config.LocalVideos = LocalVideosConfig{
+		ExportQueueRoot: config.VideosExportQueueRoot,
+		ExportedRoot:    config.VideosExportedRoot,
 	}
 
 	return config, nil
