@@ -19,11 +19,22 @@ type GooglePhotosConfig struct {
 	ClientSecret string `mapstructure:"client_secret"`
 	RedirectURI  string `mapstructure:"redirect_uri"`
 
-	DefaultAlbums []string `mapstructure:"default_albums"`
+	Photos GPPhotosConfig `mapstructure:"photos"`
+	Videos GPVideosConfig `mapstructure:"videos"`
+}
+
+// GPPhotosConfig defines the configuration for Photos in Google Photos.
+type GPPhotosConfig struct {
+	DefaultAlbum string `mapstructure:"default_album"`
 
 	ToFavAlbumMinNumStars int            `mapstructure:"to_fav_album_min_num_stars"`
 	ToFavAlbumName        string         `mapstructure:"to_fav_album_name"`
 	KeywordAlbums         []KeywordAlbum `mapstructure:"keyword_albums"`
+}
+
+// GPVideosConfig defines the configuration for Videos in Google Photos.
+type GPVideosConfig struct {
+	DefaultAlbum string `mapstructure:"default_album"`
 }
 
 // CamediaConfig defines the configuration for Camedia.
