@@ -1061,3 +1061,173 @@ func TestUploadVideos_MixedSuccessAndFailure_PartialCleanup(t *testing.T) {
 	assertDirExists(t, filepath.Join(exportQueueDir, "2024/06"), "Expected parent directory to remain")
 	assertDirExists(t, filepath.Join(exportQueueDir, "2024"), "Expected year directory to remain")
 }
+
+// --- Cross-Filesystem Tests (using IsSameFileSystemForTests_ForceFalse) ---
+
+func TestUploadVideos_CrossFilesystem_NoAlbums_CopyAndDelete(t *testing.T) {
+	ctx := context.Background()
+
+	cfg := newTestConfig(t, "", "") // No default albums
+	videoFileName := "video1.mp4"
+	filesToCreate := map[string]string{videoFileName: "video_content_cross_fs"}
+
+	exportQueueDir := cfg.VideosExportQueueRoot
+	createTestFiles(t, exportQueueDir, filesToCreate)
+	tempConfigDir := t.TempDir()
+
+	// Force cross-filesystem behavior
+	originalValue := IsSameFileSystemForTests_ForceFalse
+	defer func() { IsSameFileSystemForTests_ForceFalse = originalValue }()
+	IsSameFileSystemForTests_ForceFalse = true
+
+	ctrl := gomock.NewController(t)
+	mockGPhotosClient := NewMockGPhotosClient(ctrl)
+	mockUploaderSvc := NewMockMediaUploader(ctrl)
+	mockMediaItemsSvc := NewMockAppMediaItemsService(ctrl)
+
+	mockGPhotosClient.EXPECT().Uploader().Return(mockUploaderSvc).AnyTimes()
+	mockGPhotosClient.EXPECT().MediaItems().Return(mockMediaItemsSvc).AnyTimes()
+
+	uploadToken := "token_for_" + videoFileName
+	mediaItemID := "media_id_for_" + videoFileName
+	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), filepath.Join(exportQueueDir, videoFileName)).Return(uploadToken, nil)
+	mockMediaItemsSvc.EXPECT().Create(gomock.Any(), media_items.SimpleMediaItem{UploadToken: uploadToken, Filename: videoFileName}).
+		Return(&media_items.MediaItem{ID: mediaItemID, Filename: videoFileName}, nil)
+
+	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient)
+	require.NoError(t, err, "UploadVideos should work with cross-filesystem copy+delete")
+
+	// Verify file is moved from exportQueue using copy+delete
+	exportQueuePath := filepath.Join(exportQueueDir, videoFileName)
+	destPath := filepath.Join(cfg.VideosExportedRoot, videoFileName)
+
+	_, statErr := os.Stat(exportQueuePath)
+	assert.True(t, os.IsNotExist(statErr), "Expected file %s to be deleted from exportQueue after copy+delete", videoFileName)
+
+	_, statErr = os.Stat(destPath)
+	assert.NoError(t, statErr, "Expected file %s to be copied to %s", videoFileName, destPath)
+
+	// Verify file content is preserved
+	originalContent := filesToCreate[videoFileName]
+	copiedContent, err := os.ReadFile(destPath)
+	require.NoError(t, err, "Failed to read copied file")
+	assert.Equal(t, originalContent, string(copiedContent), "File content should be preserved during copy+delete")
+}
+
+func TestUploadVideos_CrossFilesystem_WithAlbums_CopyAndDelete(t *testing.T) {
+	ctx := context.Background()
+
+	albumTitle := "Test Album Cross FS"
+	cfg := newTestConfig(t, "", albumTitle)
+	videoFileName := "2024-06-20-cross-fs-video.mp4"
+	videoRelPath := "2024/06/20/" + videoFileName
+	filesToCreate := map[string]string{videoRelPath: "video_content_with_albums_cross_fs"}
+
+	exportQueueDir := cfg.VideosExportQueueRoot
+	createDirStructure(t, exportQueueDir, filesToCreate)
+	tempConfigDir := t.TempDir()
+
+	// Force cross-filesystem behavior
+	originalValue := IsSameFileSystemForTests_ForceFalse
+	defer func() { IsSameFileSystemForTests_ForceFalse = originalValue }()
+	IsSameFileSystemForTests_ForceFalse = true
+
+	ctrl := gomock.NewController(t)
+	mockGPhotosClient := NewMockGPhotosClient(ctrl)
+	mockUploaderSvc := NewMockMediaUploader(ctrl)
+	mockMediaItemsSvc := NewMockAppMediaItemsService(ctrl)
+	mockAlbumsSvc := NewMockAppAlbumsService(ctrl)
+
+	mockGPhotosClient.EXPECT().Uploader().Return(mockUploaderSvc).AnyTimes()
+	mockGPhotosClient.EXPECT().MediaItems().Return(mockMediaItemsSvc).AnyTimes()
+	mockGPhotosClient.EXPECT().Albums().Return(mockAlbumsSvc).AnyTimes()
+
+	// Mock album creation/retrieval
+	existingAlbumID := "existing_album_id_cross_fs"
+	mockAlbumsSvc.EXPECT().List(gomock.Any()).Return([]albums.Album{
+		{ID: existingAlbumID, Title: albumTitle},
+	}, nil)
+
+	// Mock file upload
+	videoFilePath := filepath.Join(exportQueueDir, videoRelPath)
+	uploadToken := "token_for_cross_fs_video"
+	mediaItemID := "media_id_for_cross_fs_video"
+	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), videoFilePath).Return(uploadToken, nil)
+	mockMediaItemsSvc.EXPECT().Create(gomock.Any(), media_items.SimpleMediaItem{UploadToken: uploadToken, Filename: videoFileName}).
+		Return(&media_items.MediaItem{ID: mediaItemID, Filename: videoFileName}, nil)
+	mockAlbumsSvc.EXPECT().AddMediaItems(gomock.Any(), existingAlbumID, []string{mediaItemID}).Return(nil)
+
+	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient)
+	require.NoError(t, err, "UploadVideos with albums should work with cross-filesystem copy+delete")
+
+	// Verify file is moved using copy+delete
+	_, statErr := os.Stat(videoFilePath)
+	assert.True(t, os.IsNotExist(statErr), "Expected video file to be deleted from exportQueue after copy+delete")
+
+	// Verify file exists in destination with correct structure
+	expectedDestPath := filepath.Join(cfg.VideosExportedRoot, videoRelPath)
+	_, statErr = os.Stat(expectedDestPath)
+	assert.NoError(t, statErr, "Expected video file to be copied to destination")
+
+	// Verify file content is preserved
+	originalContent := filesToCreate[videoRelPath]
+	copiedContent, err := os.ReadFile(expectedDestPath)
+	require.NoError(t, err, "Failed to read copied file")
+	assert.Equal(t, originalContent, string(copiedContent), "File content should be preserved during copy+delete")
+
+	// Verify directory cleanup still works with copy+delete
+	assertDirNotExists(t, filepath.Join(exportQueueDir, "2024", "06", "20"), "Expected empty subdirectory to be cleaned up after copy+delete")
+	assertDirNotExists(t, filepath.Join(exportQueueDir, "2024", "06"), "Expected empty parent directory to be cleaned up after copy+delete")
+	assertDirNotExists(t, filepath.Join(exportQueueDir, "2024"), "Expected empty year directory to be cleaned up after copy+delete")
+	assertDirExists(t, exportQueueDir, "Expected exportQueue root to remain after copy+delete")
+}
+
+func TestUploadVideos_CrossFilesystem_KeepFiles_CopyOnly(t *testing.T) {
+	ctx := context.Background()
+
+	cfg := newTestConfig(t, "", "") // No default albums
+	videoFileName := "keep-video.mp4"
+	filesToCreate := map[string]string{videoFileName: "video_content_keep_cross_fs"}
+
+	exportQueueDir := cfg.VideosExportQueueRoot
+	createTestFiles(t, exportQueueDir, filesToCreate)
+	tempConfigDir := t.TempDir()
+
+	// Force cross-filesystem behavior
+	originalValue := IsSameFileSystemForTests_ForceFalse
+	defer func() { IsSameFileSystemForTests_ForceFalse = originalValue }()
+	IsSameFileSystemForTests_ForceFalse = true
+
+	ctrl := gomock.NewController(t)
+	mockGPhotosClient := NewMockGPhotosClient(ctrl)
+	mockUploaderSvc := NewMockMediaUploader(ctrl)
+	mockMediaItemsSvc := NewMockAppMediaItemsService(ctrl)
+
+	mockGPhotosClient.EXPECT().Uploader().Return(mockUploaderSvc).AnyTimes()
+	mockGPhotosClient.EXPECT().MediaItems().Return(mockMediaItemsSvc).AnyTimes()
+
+	uploadToken := "token_for_keep_" + videoFileName
+	mediaItemID := "media_id_for_keep_" + videoFileName
+	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), filepath.Join(exportQueueDir, videoFileName)).Return(uploadToken, nil)
+	mockMediaItemsSvc.EXPECT().Create(gomock.Any(), media_items.SimpleMediaItem{UploadToken: uploadToken, Filename: videoFileName}).
+		Return(&media_items.MediaItem{ID: mediaItemID, Filename: videoFileName}, nil)
+
+	err := UploadVideos(ctx, cfg, tempConfigDir, true /* keepQueued */, mockGPhotosClient)
+	require.NoError(t, err, "UploadVideos with keepQueued should work with cross-filesystem behavior")
+
+	// With keepQueued=true, file should remain in exportQueue and NOT be moved/copied
+	exportQueuePath := filepath.Join(exportQueueDir, videoFileName)
+	_, statErr := os.Stat(exportQueuePath)
+	assert.NoError(t, statErr, "Expected file %s to remain in exportQueue when keepQueued=true", videoFileName)
+
+	// Verify file content is unchanged
+	originalContent := filesToCreate[videoFileName]
+	sourceContent, err := os.ReadFile(exportQueuePath)
+	require.NoError(t, err, "Failed to read source file")
+	assert.Equal(t, originalContent, string(sourceContent), "Source file should be unchanged when keepQueued=true")
+
+	// Verify file is NOT copied to destination (keepQueued=true means no move/copy)
+	destPath := filepath.Join(cfg.VideosExportedRoot, videoFileName)
+	_, statErr = os.Stat(destPath)
+	assert.True(t, os.IsNotExist(statErr), "File should NOT be copied to destination when keepQueued=true")
+}
