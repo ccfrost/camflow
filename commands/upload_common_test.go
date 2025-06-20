@@ -409,9 +409,9 @@ func TestIsSameFilesystem_DifferentFilesystems(t *testing.T) {
 	case "darwin":
 		// macOS: Try common different filesystem combinations
 		candidates := [][]string{
-			{"/tmp", "/System"},           // /tmp vs /System (usually different)
-			{"/tmp", "/private/var"},      // /tmp vs /private/var
-			{"/", "/private/tmp"},         // root vs /private/tmp
+			{"/tmp", "/System"},      // /tmp vs /System (usually different)
+			{"/tmp", "/private/var"}, // /tmp vs /private/var
+			{"/", "/private/tmp"},    // root vs /private/tmp
 		}
 
 		// Check for mounted volumes
