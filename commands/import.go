@@ -288,6 +288,7 @@ func copyFile(src, dstFinal string, size int64, modTime time.Time, bar *progress
 	}
 	dstTmpFile = nil
 
+	// TODO: do chtimes before rename?
 	if err := os.Rename(dstTmp, dstFinal); err != nil {
 		return fmt.Errorf("failed to rename %s: %w", dstTmp, err)
 	}
