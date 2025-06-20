@@ -90,13 +90,45 @@ func main() {
 	importCmd.Flags().BoolP("keep", "k", false, "Keep the source files")
 	rootCmd.AddCommand(&importCmd)
 
-	// TODO: add upload-photos command.
+	uploadPhotosCmd := cobra.Command{
+		Use:   "upload-photos",
+		Short: "Upload photos from export queue to Google Photos",
+		Long: `Upload photos from the export queue to Google Photos.
+Successfully uploaded photos are deleted from staging unless --keep is specified.`,
+		Args: cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			keep, err := cmd.Flags().GetBool("keep")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error: invalid keep flag:", err)
+				os.Exit(1)
+			}
+
+			ctx := context.Background()
+			gphotosHttpClient, err := commands.GetAuthenticatedGooglePhotosClient(ctx, config, cacheDirFlag)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+			gphotosClient, err := gphotos.NewClient(gphotosHttpClient)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+			wrappedGphotosClient := commands.NewGPhotosClientWrapper(gphotosClient)
+
+			if err := commands.UploadVideos(ctx, config, cacheDirFlag, keep, wrappedGphotosClient); err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+				os.Exit(1)
+			}
+		},
+	}
+	uploadPhotosCmd.Flags().BoolP("keep", "k", false, "Keep photos in staging after upload")
+	rootCmd.AddCommand(&uploadPhotosCmd)
 
 	uploadVideosCmd := cobra.Command{
 		Use:   "upload-videos",
-		Short: "Upload videos from staging to Google Photos",
-		Long: `Upload videos from the staging directory to Google Photos.
-Videos will be added to all albums configured in default_albums.
+		Short: "Upload videos from export queue to Google Photos",
+		Long: `Upload videos from the export queue to Google Photos.
 Successfully uploaded videos are deleted from staging unless --keep is specified.`,
 		Args: cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
