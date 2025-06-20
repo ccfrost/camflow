@@ -25,10 +25,10 @@ type videoFileInfo struct {
 
 // UploadVideos uploads videos from the video export queue dir to Google Photos.
 // Videos are added to all albums in config.DefaultAlbums.
-// Uploaded videos are moved from export queue to VideosExportedRoot unless keepTargetRoot is true.
+// Uploaded videos are moved from export queue to VideosExportedRoot unless keepQueued is true.
 // The function is idempotent - if interrupted, it can be recalled to resume.
 // Takes configDir to locate token and cache files, and a gphotosClient for API interaction.
-func UploadVideos(ctx context.Context, config camflowconfig.CamediaConfig, cacheDirFlag string, keepTargetRoot bool, gphotosClient GPhotosClient) error {
+func UploadVideos(ctx context.Context, config camflowconfig.CamediaConfig, cacheDirFlag string, keepQueued bool, gphotosClient GPhotosClient) error {
 	exportQueueDir := config.VideosExportQueueRoot
 	if exportQueueDir == "" {
 		return fmt.Errorf("video export queue directory (VideosExportQueueRoot) not configured")
@@ -145,7 +145,7 @@ func UploadVideos(ctx context.Context, config camflowconfig.CamediaConfig, cache
 	)
 
 	for _, videoInfo := range videosToUpload {
-		if err := uploadVideo(ctx, config, keepTargetRoot, gphotosClient, videoInfo.path, videoInfo.size, resolvedTargetAlbums, bar, limiter); err != nil {
+		if err := uploadVideo(ctx, config, keepQueued, gphotosClient, videoInfo.path, videoInfo.size, resolvedTargetAlbums, bar, limiter); err != nil {
 			return err
 		}
 	}
@@ -158,9 +158,9 @@ func UploadVideos(ctx context.Context, config camflowconfig.CamediaConfig, cache
 
 // uploadVideo uploads a single video "videoPath" of size "fileSize" to google photos.
 // It updates "bar" with the bytes it has uploaded.
-// It deletes the file after uploading if "keepTargetRoot" is false.
+// It deletes the file after uploading if "keepQueued" is false.
 // "targetAlbumIDs" are the ids for DefaultAlbums in the config.
-func uploadVideo(ctx context.Context, config camflowconfig.CamediaConfig, keepTargetRoot bool, gphotosClient GPhotosClient, videoPath string, fileSize int64, targetAlbums map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter) error {
+func uploadVideo(ctx context.Context, config camflowconfig.CamediaConfig, keepQueued bool, gphotosClient GPhotosClient, videoPath string, fileSize int64, targetAlbums map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter) error {
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
@@ -249,15 +249,15 @@ func uploadVideo(ctx context.Context, config camflowconfig.CamediaConfig, keepTa
 	}
 
 	if !successfullyAddedToAll {
-		if !keepTargetRoot {
+		if !keepQueued {
 			logger.Error("Video was not successfully added to all target albums, it will not be moved from export queue",
 				slog.String("file", videoBasename))
 		}
 		return nil
 	}
 
-	if keepTargetRoot {
-		logger.Debug("Keeping video in export queue directory as per keepTargetRoot flag",
+	if keepQueued {
+		logger.Debug("Keeping video in export queue directory as per keepQueued flag",
 			slog.String("file", videoPath))
 		return nil
 	}
