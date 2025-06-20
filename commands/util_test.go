@@ -9,11 +9,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newTestConfig(t *testing.T, photosDefaultAlbum, videosDefaultAlbum string) camflowconfig.CamediaConfig {
+func newTestConfig(t *testing.T, photosDefaultAlbum, videosDefaultAlbum string) camflowconfig.CamflowConfig {
 	t.Helper()
 
 	tempDir := t.TempDir()
-	c := camflowconfig.CamediaConfig{
+	c := camflowconfig.CamflowConfig{
 		PhotosToProcessRoot:  filepath.Join(tempDir, "PhotosToProcessRoot"),
 		PhotosExportQueueDir: filepath.Join(tempDir, "PhotosExportQueueDir"),
 		PhotosExportedRoot:   filepath.Join(tempDir, "PhotosExportedRoot"),

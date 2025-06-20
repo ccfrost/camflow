@@ -17,7 +17,7 @@ import (
 // GetAuthenticatedGooglePhotosClient creates an authenticated HTTP client using OAuth2 credentials.
 // It handles token loading, refreshing, and saving.
 // Takes configDir to locate the token file.
-func GetAuthenticatedGooglePhotosClient(ctx context.Context, config camflowconfig.CamediaConfig, cacheDir string) (*http.Client, error) {
+func GetAuthenticatedGooglePhotosClient(ctx context.Context, config camflowconfig.CamflowConfig, cacheDir string) (*http.Client, error) {
 	if config.GooglePhotos.ClientId == "" || config.GooglePhotos.ClientSecret == "" {
 		return nil, fmt.Errorf("google Photos ClientId or ClientSecret not configured")
 	}

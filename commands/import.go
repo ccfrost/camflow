@@ -28,7 +28,7 @@ type ImportResult struct {
 
 // Import mvoes the DCIM/ files to the photo to process dir and the export queue video dir.
 // It returns the relative target directory for the photos and any error.
-func Import(config camflowconfig.CamediaConfig, sdcardDir string, keepSrc bool, now time.Time) (ImportResult, error) {
+func Import(config camflowconfig.CamflowConfig, sdcardDir string, keepSrc bool, now time.Time) (ImportResult, error) {
 	if err := config.Validate(); err != nil {
 		return ImportResult{}, fmt.Errorf("invalid config: %w", err)
 	}
@@ -157,7 +157,7 @@ func getAvailableSpace(dir string) (uint64, error) {
 
 // moveFiles moves files from srcDir into the photo/video dirs for the date of each file.
 // It preserves the modification times.
-func moveFiles(config camflowconfig.CamediaConfig, srcDir string, keepSrc bool, bar *progressbar.ProgressBar) (ImportResult, error) {
+func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, bar *progressbar.ProgressBar) (ImportResult, error) {
 	photoDirs := make(map[string]int)
 	videoDirs := make(map[string]int)
 

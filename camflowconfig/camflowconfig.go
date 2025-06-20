@@ -46,9 +46,9 @@ func (c *GPVideosConfig) GetDefaultAlbum() string {
 }
 
 // TODO: rename to camflow.
-// CamediaConfig defines the configuration for Camedia.
+// CamflowConfig defines the configuration for Camflow.
 // TODO: move flat fields into the new structs.
-type CamediaConfig struct {
+type CamflowConfig struct {
 	PhotosToProcessRoot  string            `mapstructure:"photos_to_process_root"`
 	PhotosExportQueueDir string            `mapstructure:"photos_export_queue_dir"`
 	PhotosExportedRoot   string            `mapstructure:"photos_exported_root"`
@@ -111,7 +111,7 @@ func (c *GooglePhotosConfig) Validate() error {
 	return nil
 }
 
-func (c *CamediaConfig) Validate() error {
+func (c *CamflowConfig) Validate() error {
 	// Check that at least a base set of fields have values.
 	if c.PhotosToProcessRoot == "" || c.PhotosExportQueueDir == "" || c.PhotosExportedRoot == "" {
 		return fmt.Errorf("missing photos field (%s)", c.path)
@@ -149,20 +149,20 @@ func getConfigPath(configPathFlag string) (string, error) {
 }
 
 // loadConfig reads the config file.
-func LoadConfig(configPathFlag string) (CamediaConfig, error) {
+func LoadConfig(configPathFlag string) (CamflowConfig, error) {
 	path, err := getConfigPath(configPathFlag)
 	if err != nil {
-		return CamediaConfig{}, err
+		return CamflowConfig{}, err
 	}
 	viper.SetConfigFile(path)
 	viper.SetConfigType("toml")
 
 	if err := viper.ReadInConfig(); err != nil {
-		return CamediaConfig{}, fmt.Errorf("error reading (%s): %w", path, err)
+		return CamflowConfig{}, fmt.Errorf("error reading (%s): %w", path, err)
 	}
-	config := CamediaConfig{path: path}
+	config := CamflowConfig{path: path}
 	if err := viper.Unmarshal(&config); err != nil {
-		return CamediaConfig{}, fmt.Errorf("error unmarshaling (%s): %w", path, err)
+		return CamflowConfig{}, fmt.Errorf("error unmarshaling (%s): %w", path, err)
 	}
 	config.LocalPhotos = LocalPhotosConfig{
 		ToProcessRoot:  config.PhotosToProcessRoot,

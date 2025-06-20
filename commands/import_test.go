@@ -116,7 +116,7 @@ func createDummyFile(t *testing.T, path string, content string, modTime time.Tim
 }
 
 // setupMoveFilesTest sets up directories and config for moveFiles tests.
-func setupMoveFilesTest(t *testing.T) (config camflowconfig.CamediaConfig, srcRoot, photosToProcessRoot, videosExportQueueRoot string, cleanup func()) {
+func setupMoveFilesTest(t *testing.T) (config camflowconfig.CamflowConfig, srcRoot, photosToProcessRoot, videosExportQueueRoot string, cleanup func()) {
 	t.Helper()
 	sdcardRoot := t.TempDir()
 	mediaRoot := t.TempDir()
@@ -134,7 +134,7 @@ func setupMoveFilesTest(t *testing.T) (config camflowconfig.CamediaConfig, srcRo
 	err = os.MkdirAll(videosExportQueueRoot, 0755)
 	require.NoError(t, err)
 
-	config = camflowconfig.CamediaConfig{
+	config = camflowconfig.CamflowConfig{
 		PhotosToProcessRoot:   photosToProcessRoot,
 		VideosExportQueueRoot: videosExportQueueRoot,
 		// Other config fields can be default/zero if not used by moveFiles directly

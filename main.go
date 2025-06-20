@@ -16,7 +16,7 @@ const camflow = "camflow"
 
 func main() {
 	var configPathFlag, cacheDirFlag string
-	var config camflowconfig.CamediaConfig
+	var config camflowconfig.CamflowConfig
 
 	rootCmd := cobra.Command{
 		Use:   camflow,

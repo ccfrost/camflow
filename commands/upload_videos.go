@@ -12,7 +12,7 @@ import (
 // Uploaded videos are moved from export queue to VideosExportedRoot unless keepQueued is true.
 // The function is idempotent - if interrupted, it can be recalled to resume.
 // Takes configDir to locate token and cache files, and a gphotosClient for API interaction.
-func UploadVideos(ctx context.Context, config camflowconfig.CamediaConfig, cacheDirFlag string, keepQueued bool, gphotosClient GPhotosClient) error {
+func UploadVideos(ctx context.Context, config camflowconfig.CamflowConfig, cacheDirFlag string, keepQueued bool, gphotosClient GPhotosClient) error {
 	if err := config.Validate(); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}

@@ -313,7 +313,7 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 
 	t.Run("ConfigValidationError", func(t *testing.T) {
 		// Test with invalid configuration
-		invalidConfig := camflowconfig.CamediaConfig{
+		invalidConfig := camflowconfig.CamflowConfig{
 			// Missing required paths. newTestConfig cannot be used here as it creates a valid config.
 			// To test Validate() properly for missing paths, we manually create an incomplete config.
 			GooglePhotos: camflowconfig.GooglePhotosConfig{ // Need this to avoid nil pointer if Validate() on it is called
