@@ -292,6 +292,7 @@ func uploadVideo(ctx context.Context, config camflowconfig.CamediaConfig, keepQu
 		slog.String("from", videoPath),
 		slog.String("to", destPath))
 
+	// TODO: this isn't quite idempotent, because if the rename happens and this doesn't, then rerunning UploadVideos won't see any files and so won't clean up the empty directories.
 	if err := cleanupEmptyParentDirs(videoPath, config.VideosExportQueueRoot); err != nil {
 		// Log the error but don't cause uploadVideo to fail, as cleanup is secondary.
 		logger.Error("Warning: cleanup of export queue directories failed",
