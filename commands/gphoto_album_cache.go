@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"golang.org/x/time/rate"
@@ -18,8 +19,8 @@ type albumCache struct {
 }
 
 // getAlbumCachePath constructs the path to the album cache file.
-func getAlbumCachePath(cacheDirFlag string) (string, error) {
-	return getCacheDirPath(cacheDirFlag, "google_photos_album_cache.json")
+func getAlbumCachePath(cacheDir string) string {
+	return filepath.Join(cacheDir, "google_photos_album_cache.json")
 }
 
 // loadAlbumCache loads the album cache from disk.

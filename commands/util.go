@@ -74,20 +74,6 @@ func videoTargetRootDir() (string, error) {
 }
 */
 
-// getCacheDirPath determines where to store the a cache file with the given file base name.
-func getCacheDirPath(cacheDirFlag, fileBaseName string) (string, error) {
-	// Prefer user-specific cache dir if specified.
-	if cacheDirFlag != "" {
-		return filepath.Join(cacheDirFlag, fileBaseName), nil
-	}
-
-	// Fall back to user cache dir.
-	if dir, err := os.UserCacheDir(); err == nil {
-		return filepath.Join(dir, "camflow", fileBaseName), nil
-	}
-	return "", fmt.Errorf("unable to determine cache dir")
-}
-
 // copyFile creats a copy of src file at dstFinal.
 // It creates the copy first a temporary file and then renames it to dstFinal.
 // It shares its progress via bar.

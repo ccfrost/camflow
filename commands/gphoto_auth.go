@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/ccfrost/camflow/camflowconfig"
 	"golang.org/x/oauth2"
@@ -43,10 +44,7 @@ func GetAuthenticatedGooglePhotosClient(ctx context.Context, config camflowconfi
 		Endpoint: google.Endpoint,
 	}
 
-	tokenFilePath, err := getTokenFilePath(cacheDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get token file path: %w", err)
-	}
+	tokenFilePath := getTokenFilePath(cacheDir)
 
 	token := &oauth2.Token{}
 	tokenFile, err := os.Open(tokenFilePath)
@@ -87,8 +85,8 @@ func GetAuthenticatedGooglePhotosClient(ctx context.Context, config camflowconfi
 }
 
 // getTokenFilePath determines where to store the token file.
-func getTokenFilePath(cacheDirFlag string) (string, error) {
-	return getCacheDirPath(cacheDirFlag, "google_photos_token.json")
+func getTokenFilePath(cacheDir string) string {
+	return filepath.Join(cacheDir, "google_photos_token.json")
 }
 
 // saveToken saves the OAuth2 token to the specified file path.

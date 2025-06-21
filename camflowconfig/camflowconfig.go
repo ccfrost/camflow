@@ -134,6 +134,15 @@ func (c *CamflowConfig) Validate() error {
 	return nil
 }
 
+// DefaultConfigPath returns the default path for the Camflow config file.
+func DefaultConfigPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("unable to determine user config dir: %w", err)
+	}
+	return filepath.Join(dir, "camflow", "config.toml"), nil
+}
+
 // getConfigPath determines where to store the config file.
 func getConfigPath(configPathFlag string) (string, error) {
 	// Prefer user-specific config file path if specified.

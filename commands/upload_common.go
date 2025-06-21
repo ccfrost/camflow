@@ -38,7 +38,7 @@ type itemFileInfo struct {
 // Media items are added to Google Photos album named DefaultAlbum.
 // Uploaded media items are moved from export queue to exported dir; unless keepQueued is true, in which case they are copied (but not moved).
 // The function is idempotent - if interrupted, it can be recalled to resume.
-func uploadMediaItems(ctx context.Context, cacheDirFlag string, keepQueued bool, localConfig LocalConfig, gpConfig GPConfig, itemTypePluralName string, gphotosClient GPhotosClient) error {
+func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, localConfig LocalConfig, gpConfig GPConfig, itemTypePluralName string, gphotosClient GPhotosClient) error {
 	exportQueueDir := localConfig.GetExportQueueRoot()
 	if _, err := os.Stat(exportQueueDir); os.IsNotExist(err) {
 		logger.Info("Export queue directory does not exist, nothing to upload",
@@ -104,10 +104,7 @@ func uploadMediaItems(ctx context.Context, cacheDirFlag string, keepQueued bool,
 		logger.Warn("No default albums specified in config, files will only be uploaded to the library")
 	}
 
-	albumCachePath, err := getAlbumCachePath(cacheDirFlag)
-	if err != nil {
-		return fmt.Errorf("failed to get album cache path: %w", err)
-	}
+	albumCachePath := getAlbumCachePath(cacheDir)
 	albumCache, err := loadAlbumCache(albumCachePath)
 	if err != nil {
 		return fmt.Errorf("failed to load album cache: %w", err)

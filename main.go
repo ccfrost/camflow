@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os" // Added for filepath.Dir
+	"path/filepath"
 	"time"
 
 	"github.com/ccfrost/camflow/camflowconfig"
@@ -15,7 +16,7 @@ import (
 const camflow = "camflow"
 
 func main() {
-	var configPathFlag, cacheDirFlag string
+	var configPath, cacheDir string
 	var config camflowconfig.CamflowConfig
 
 	rootCmd := cobra.Command{
@@ -23,7 +24,7 @@ func main() {
 		Short: "Manage camera media files",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			var err error
-			config, err = camflowconfig.LoadConfig(configPathFlag)
+			config, err = camflowconfig.LoadConfig(configPath)
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
@@ -33,9 +34,21 @@ func main() {
 			return nil
 		},
 	}
-	// TODO: set defaults here, to make them more discoverable for users.
-	rootCmd.PersistentFlags().StringVarP(&configPathFlag, "config", "c", "", "Path to the configuration file")
-	rootCmd.PersistentFlags().StringVar(&cacheDirFlag, "cache-dir", "", "Dir to store cache files")
+	{
+		defaultConfigPath, err := camflowconfig.DefaultConfigPath()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error: unable to determine default config path:", err)
+			os.Exit(1)
+		}
+		rootCmd.PersistentFlags().StringVarP(&configPath, "config", "c", defaultConfigPath, "Path to the configuration file")
+
+		defaultCacheDir, err := DefaultCacheDir()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error: unable to determine default cache dir:", err)
+			os.Exit(1)
+		}
+		rootCmd.PersistentFlags().StringVar(&cacheDir, "cache-dir", defaultCacheDir, "Dir to store cache files")
+	}
 
 	// TODO: add version command.
 
@@ -102,7 +115,7 @@ Successfully uploaded photos are deleted from staging unless --keep is specified
 			}
 
 			ctx := context.Background()
-			gphotosHttpClient, err := commands.GetAuthenticatedGooglePhotosClient(ctx, config, cacheDirFlag)
+			gphotosHttpClient, err := commands.GetAuthenticatedGooglePhotosClient(ctx, config, cacheDir)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
@@ -114,7 +127,7 @@ Successfully uploaded photos are deleted from staging unless --keep is specified
 			}
 			wrappedGphotosClient := commands.NewGPhotosClientWrapper(gphotosClient)
 
-			if err := commands.UploadPhotos(ctx, config, cacheDirFlag, keep, wrappedGphotosClient); err != nil {
+			if err := commands.UploadPhotos(ctx, config, cacheDir, keep, wrappedGphotosClient); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}
@@ -137,7 +150,7 @@ Successfully uploaded videos are deleted from staging unless --keep is specified
 			}
 
 			ctx := context.Background()
-			gphotosHttpClient, err := commands.GetAuthenticatedGooglePhotosClient(ctx, config, cacheDirFlag)
+			gphotosHttpClient, err := commands.GetAuthenticatedGooglePhotosClient(ctx, config, cacheDir)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
@@ -149,7 +162,7 @@ Successfully uploaded videos are deleted from staging unless --keep is specified
 			}
 			wrappedGphotosClient := commands.NewGPhotosClientWrapper(gphotosClient)
 
-			if err := commands.UploadVideos(ctx, config, cacheDirFlag, keep, wrappedGphotosClient); err != nil {
+			if err := commands.UploadVideos(ctx, config, cacheDir, keep, wrappedGphotosClient); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}
@@ -162,6 +175,16 @@ Successfully uploaded videos are deleted from staging unless --keep is specified
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+}
+
+// DefaultCacheDir returns the default cache directory.
+func DefaultCacheDir() (string, error) {
+	// Use the default user cache directory.
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("unable to determine user cache dir: %w", err)
+	}
+	return filepath.Join(dir, "camflow"), nil
 }
 
 func pluralSuffix(count int) string {
