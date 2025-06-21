@@ -158,7 +158,7 @@ func TestParseDatePrefix_RealWorldExamples(t *testing.T) {
 		expectMonth string
 		expectDay   string
 	}{
-		{"2024-01-28-camedia-test-IMG_4286-1.MP4", "2024", "01", "28"},
+		{"2024-01-28-camflow-test-IMG_4286-1.MP4", "2024", "01", "28"},
 		{"2025-06-20-vacation-video.mov", "2025", "06", "20"},
 		{"2023-12-31-new-years-eve-party.mp4", "2023", "12", "31"},
 		{"2024-02-29-leap-year-video.avi", "2024", "02", "29"},
