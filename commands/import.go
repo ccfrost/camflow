@@ -18,11 +18,11 @@ import (
 
 type ImportDirEntry struct {
 	RelativeDir string
-	Count       int
+	PhotoCount  int
+	VideoCount  int
 }
 type ImportResult struct {
-	Photos []ImportDirEntry
-	Videos []ImportDirEntry
+	DirEntries []ImportDirEntry
 }
 
 // Import mvoes the DCIM/ files to the photo to process dir and the export queue video dir.
@@ -157,8 +157,11 @@ func getAvailableSpace(dir string) (uint64, error) {
 // moveFiles moves files from srcDir into the photo/video dirs for the date of each file.
 // It preserves the modification times.
 func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, bar *progressbar.ProgressBar) (ImportResult, error) {
-	photoDirs := make(map[string]int)
-	videoDirs := make(map[string]int)
+	type PhotoVideoCount struct {
+		Photos int
+		Videos int
+	}
+	dirCounts := make(map[string]PhotoVideoCount)
 
 	err := filepath.WalkDir(srcDir, func(path string, dirEnt fs.DirEntry, err error) error {
 		if err != nil {
@@ -176,10 +179,14 @@ func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, 
 		switch filepath.Ext(dirEnt.Name()) {
 		case ".CR3", ".cr3", ".JPG", ".jpg":
 			targetRoot = config.PhotosToProcessRoot
-			photoDirs[filepath.Dir(path)]++
+			entry := dirCounts[filepath.Dir(path)]
+			entry.Photos++
+			dirCounts[filepath.Dir(path)] = entry
 		case ".MP4", ".mp4":
 			targetRoot = config.VideosExportQueueRoot
-			videoDirs[filepath.Dir(path)]++
+			entry := dirCounts[filepath.Dir(path)]
+			entry.Videos++
+			dirCounts[filepath.Dir(path)] = entry
 		default:
 			// Skip unsupported file types.
 			fmt.Printf("Skipping unsupported file: %s\n", path)
@@ -215,23 +222,15 @@ func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, 
 	}
 
 	var result ImportResult
-	for dir, count := range photoDirs {
-		result.Photos = append(result.Photos, ImportDirEntry{
+	for dir, entry := range dirCounts {
+		result.DirEntries = append(result.DirEntries, ImportDirEntry{
 			RelativeDir: dir,
-			Count:       count,
+			PhotoCount:  entry.Photos,
+			VideoCount:  entry.Videos,
 		})
 	}
-	for dir, count := range videoDirs {
-		result.Videos = append(result.Videos, ImportDirEntry{
-			RelativeDir: dir,
-			Count:       count,
-		})
-	}
-	sort.Slice(result.Photos, func(i, j int) bool {
-		return result.Photos[i].RelativeDir < result.Photos[j].RelativeDir
-	})
-	sort.Slice(result.Videos, func(i, j int) bool {
-		return result.Videos[i].RelativeDir < result.Videos[j].RelativeDir
+	sort.Slice(result.DirEntries, func(i, j int) bool {
+		return result.DirEntries[i].RelativeDir < result.DirEntries[j].RelativeDir
 	})
 	return result, nil
 }

@@ -211,8 +211,7 @@ func TestMoveFiles(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verification: Check targets and source deletion
-		expectedPhotoResultMap := make(map[string]int)
-		expectedVideoResultMap := make(map[string]int)
+		expectedResultMap := make(map[string]ImportDirEntry)
 
 		for _, tc := range testCases {
 			fullSrcPath := srcPaths[tc.srcRelPath]
@@ -236,11 +235,14 @@ func TestMoveFiles(t *testing.T) {
 
 				// Add to expected result map
 				srcRelDir := filepath.Dir(fullSrcPath)
+				entry := expectedResultMap[srcRelDir]
+				entry.RelativeDir = srcRelDir
 				if tc.fileType == "photo" {
-					expectedPhotoResultMap[srcRelDir]++
+					entry.PhotoCount++
 				} else {
-					expectedVideoResultMap[srcRelDir]++
+					entry.VideoCount++
 				}
+				expectedResultMap[srcRelDir] = entry
 
 			} else { // unsupported or ignored
 				// Verify target file does NOT exist
@@ -254,24 +256,17 @@ func TestMoveFiles(t *testing.T) {
 			}
 		}
 
-		// Convert expected result maps to slices for comparison
-		expectedPhotoResult := []ImportDirEntry{}
-		for dir, count := range expectedPhotoResultMap {
-			expectedPhotoResult = append(expectedPhotoResult, ImportDirEntry{RelativeDir: dir, Count: count})
-		}
-		expectedVideoResult := []ImportDirEntry{}
-		for dir, count := range expectedVideoResultMap {
-			expectedVideoResult = append(expectedVideoResult, ImportDirEntry{RelativeDir: dir, Count: count})
+		// Convert expected result map to slice for comparison
+		expectedResult := []ImportDirEntry{}
+		for _, entry := range expectedResultMap {
+			expectedResult = append(expectedResult, entry)
 		}
 
-		// Sort slices for consistent comparison with ElementsMatch (optional but good practice)
-		sort.Slice(expectedPhotoResult, func(i, j int) bool { return expectedPhotoResult[i].RelativeDir < expectedPhotoResult[j].RelativeDir })
-		sort.Slice(expectedVideoResult, func(i, j int) bool { return expectedVideoResult[i].RelativeDir < expectedVideoResult[j].RelativeDir })
-		sort.Slice(result.Photos, func(i, j int) bool { return result.Photos[i].RelativeDir < result.Photos[j].RelativeDir })
-		sort.Slice(result.Videos, func(i, j int) bool { return result.Videos[i].RelativeDir < result.Videos[j].RelativeDir })
+		// Sort slices for consistent comparison with ElementsMatch
+		sort.Slice(expectedResult, func(i, j int) bool { return expectedResult[i].RelativeDir < expectedResult[j].RelativeDir })
+		sort.Slice(result.DirEntries, func(i, j int) bool { return result.DirEntries[i].RelativeDir < result.DirEntries[j].RelativeDir })
 
-		assert.ElementsMatch(t, expectedPhotoResult, result.Photos, "Photo import results mismatch")
-		assert.ElementsMatch(t, expectedVideoResult, result.Videos, "Video import results mismatch")
+		assert.ElementsMatch(t, expectedResult, result.DirEntries, "Import results mismatch")
 	})
 
 	// --- Test Case: Success, keepSrc=true ---
@@ -302,8 +297,7 @@ func TestMoveFiles(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verification: Check targets and source *retention*
-		expectedPhotoResultMap := make(map[string]int)
-		expectedVideoResultMap := make(map[string]int)
+		expectedResultMap := make(map[string]ImportDirEntry)
 
 		for _, tc := range testCases {
 			fullSrcPath := srcPaths[tc.srcRelPath]
@@ -326,11 +320,14 @@ func TestMoveFiles(t *testing.T) {
 
 				// Add to expected result map
 				srcRelDir := filepath.Dir(fullSrcPath)
+				entry := expectedResultMap[srcRelDir]
+				entry.RelativeDir = srcRelDir
 				if tc.fileType == "photo" {
-					expectedPhotoResultMap[srcRelDir]++
+					entry.PhotoCount++
 				} else {
-					expectedVideoResultMap[srcRelDir]++
+					entry.VideoCount++
 				}
+				expectedResultMap[srcRelDir] = entry
 
 			} else { // unsupported or ignored
 				// Verify target file does NOT exist
@@ -344,24 +341,17 @@ func TestMoveFiles(t *testing.T) {
 			}
 		}
 
-		// Convert expected result maps to slices
-		expectedPhotoResult := []ImportDirEntry{}
-		for dir, count := range expectedPhotoResultMap {
-			expectedPhotoResult = append(expectedPhotoResult, ImportDirEntry{RelativeDir: dir, Count: count})
-		}
-		expectedVideoResult := []ImportDirEntry{}
-		for dir, count := range expectedVideoResultMap {
-			expectedVideoResult = append(expectedVideoResult, ImportDirEntry{RelativeDir: dir, Count: count})
+		// Convert expected result map to slice
+		expectedResult := []ImportDirEntry{}
+		for _, entry := range expectedResultMap {
+			expectedResult = append(expectedResult, entry)
 		}
 
 		// Sort slices for consistent comparison
-		sort.Slice(expectedPhotoResult, func(i, j int) bool { return expectedPhotoResult[i].RelativeDir < expectedPhotoResult[j].RelativeDir })
-		sort.Slice(expectedVideoResult, func(i, j int) bool { return expectedVideoResult[i].RelativeDir < expectedVideoResult[j].RelativeDir })
-		sort.Slice(result.Photos, func(i, j int) bool { return result.Photos[i].RelativeDir < result.Photos[j].RelativeDir })
-		sort.Slice(result.Videos, func(i, j int) bool { return result.Videos[i].RelativeDir < result.Videos[j].RelativeDir })
+		sort.Slice(expectedResult, func(i, j int) bool { return expectedResult[i].RelativeDir < expectedResult[j].RelativeDir })
+		sort.Slice(result.DirEntries, func(i, j int) bool { return result.DirEntries[i].RelativeDir < result.DirEntries[j].RelativeDir })
 
-		assert.ElementsMatch(t, expectedPhotoResult, result.Photos, "Photo import results mismatch (keepSrc=true)")
-		assert.ElementsMatch(t, expectedVideoResult, result.Videos, "Video import results mismatch (keepSrc=true)")
+		assert.ElementsMatch(t, expectedResult, result.DirEntries, "Import results mismatch (keepSrc=true)")
 	})
 
 	// --- Test Case: Empty Source Directory ---
@@ -374,8 +364,7 @@ func TestMoveFiles(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify ImportResult is empty
-		assert.Empty(t, result.Photos)
-		assert.Empty(t, result.Videos)
+		assert.Empty(t, result.DirEntries)
 	})
 
 	// --- Test Case: Copy Error (Destination Not Writable) ---
@@ -401,8 +390,7 @@ func TestMoveFiles(t *testing.T) {
 		assert.ErrorContains(t, err, "failed to create dir") // copyFile should fail here
 
 		// Verify ImportResult is empty because the operation failed
-		assert.Empty(t, result.Photos, "Photos result should be empty on error")
-		assert.Empty(t, result.Videos, "Videos result should be empty on error")
+		assert.Empty(t, result.DirEntries, "DirEntries result should be empty on error")
 
 		// Verify source file was NOT deleted because the copy failed
 		_, err = os.Stat(srcPhoto1Path)

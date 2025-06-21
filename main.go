@@ -33,6 +33,7 @@ func main() {
 			return nil
 		},
 	}
+	// TODO: set defaults here, to make them more discoverable for users.
 	rootCmd.PersistentFlags().StringVarP(&configPathFlag, "config", "c", "", "Path to the configuration file")
 	rootCmd.PersistentFlags().StringVar(&cacheDirFlag, "cache-dir", "", "Dir to store cache files")
 
@@ -68,21 +69,15 @@ func main() {
 
 			// TODO: change relative dirs to print target rather than sdcard dir names (and counts?).
 			optColon := ""
-			if len(res.Photos) > 0 {
+			if len(res.DirEntries) > 0 {
 				optColon = ":"
 			}
-			fmt.Printf("Imported %d photo dirs:\n", len(res.Photos))
-			for _, photodir := range res.Photos {
-				fmt.Printf("\t%s: %d photos\n", photodir.RelativeDir, photodir.Count)
-			}
-
-			optColon = ""
-			if len(res.Videos) > 0 {
-				optColon = ":"
-			}
-			fmt.Printf("Imported %d video dirs%s\n", len(res.Videos), optColon)
-			for _, videodir := range res.Videos {
-				fmt.Printf("\t%s: %d videos\n", videodir.RelativeDir, videodir.Count)
+			fmt.Printf("Imported from %d dir%s%s\n", len(res.DirEntries), pluralSuffix(len(res.DirEntries)), optColon)
+			if len(res.DirEntries) != 0 {
+				for _, entry := range res.DirEntries {
+					fmt.Printf("\t%s: %d photo%s, %d video%s\n", entry.RelativeDir, entry.PhotoCount, pluralSuffix(entry.PhotoCount), entry.VideoCount, pluralSuffix(entry.VideoCount))
+				}
+				fmt.Printf("Imported into %d dir%s\n", 0, pluralSuffix(0))
 			}
 		},
 	}
@@ -164,4 +159,11 @@ Successfully uploaded videos are deleted from staging unless --keep is specified
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+}
+
+func pluralSuffix(count int) string {
+	if count == 1 {
+		return ""
+	}
+	return "s"
 }
