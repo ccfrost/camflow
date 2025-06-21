@@ -91,7 +91,8 @@ func uploadMediaItems(ctx context.Context, cacheDirFlag string, keepQueued bool,
 	}
 
 	if len(itemsToUpload) == 0 {
-		logger.Info("No media items found in export queue directory")
+		logger.Info("No media items found in export queue directory",
+			slog.String("export_queue_dir", exportQueueDir))
 		return nil
 	}
 	logger.Info("Found files to upload",

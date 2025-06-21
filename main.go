@@ -116,7 +116,7 @@ Successfully uploaded photos are deleted from staging unless --keep is specified
 			}
 			wrappedGphotosClient := commands.NewGPhotosClientWrapper(gphotosClient)
 
-			if err := commands.UploadVideos(ctx, config, cacheDirFlag, keep, wrappedGphotosClient); err != nil {
+			if err := commands.UploadPhotos(ctx, config, cacheDirFlag, keep, wrappedGphotosClient); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}
