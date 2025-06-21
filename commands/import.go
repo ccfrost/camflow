@@ -22,7 +22,7 @@ type ImportDirEntry struct {
 	VideoCount  int
 }
 type ImportResult struct {
-	DirEntries []ImportDirEntry
+	SrcEntries []ImportDirEntry
 }
 
 // Import mvoes the DCIM/ files to the photo to process dir and the export queue video dir.
@@ -223,14 +223,14 @@ func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, 
 
 	var result ImportResult
 	for dir, entry := range dirCounts {
-		result.DirEntries = append(result.DirEntries, ImportDirEntry{
+		result.SrcEntries = append(result.SrcEntries, ImportDirEntry{
 			RelativeDir: dir,
 			PhotoCount:  entry.Photos,
 			VideoCount:  entry.Videos,
 		})
 	}
-	sort.Slice(result.DirEntries, func(i, j int) bool {
-		return result.DirEntries[i].RelativeDir < result.DirEntries[j].RelativeDir
+	sort.Slice(result.SrcEntries, func(i, j int) bool {
+		return result.SrcEntries[i].RelativeDir < result.SrcEntries[j].RelativeDir
 	})
 	return result, nil
 }

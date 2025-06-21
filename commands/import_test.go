@@ -264,9 +264,9 @@ func TestMoveFiles(t *testing.T) {
 
 		// Sort slices for consistent comparison with ElementsMatch
 		sort.Slice(expectedResult, func(i, j int) bool { return expectedResult[i].RelativeDir < expectedResult[j].RelativeDir })
-		sort.Slice(result.DirEntries, func(i, j int) bool { return result.DirEntries[i].RelativeDir < result.DirEntries[j].RelativeDir })
+		sort.Slice(result.SrcEntries, func(i, j int) bool { return result.SrcEntries[i].RelativeDir < result.SrcEntries[j].RelativeDir })
 
-		assert.ElementsMatch(t, expectedResult, result.DirEntries, "Import results mismatch")
+		assert.ElementsMatch(t, expectedResult, result.SrcEntries, "Import results mismatch")
 	})
 
 	// --- Test Case: Success, keepSrc=true ---
@@ -349,9 +349,9 @@ func TestMoveFiles(t *testing.T) {
 
 		// Sort slices for consistent comparison
 		sort.Slice(expectedResult, func(i, j int) bool { return expectedResult[i].RelativeDir < expectedResult[j].RelativeDir })
-		sort.Slice(result.DirEntries, func(i, j int) bool { return result.DirEntries[i].RelativeDir < result.DirEntries[j].RelativeDir })
+		sort.Slice(result.SrcEntries, func(i, j int) bool { return result.SrcEntries[i].RelativeDir < result.SrcEntries[j].RelativeDir })
 
-		assert.ElementsMatch(t, expectedResult, result.DirEntries, "Import results mismatch (keepSrc=true)")
+		assert.ElementsMatch(t, expectedResult, result.SrcEntries, "Import results mismatch (keepSrc=true)")
 	})
 
 	// --- Test Case: Empty Source Directory ---
@@ -364,7 +364,7 @@ func TestMoveFiles(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify ImportResult is empty
-		assert.Empty(t, result.DirEntries)
+		assert.Empty(t, result.SrcEntries)
 	})
 
 	// --- Test Case: Copy Error (Destination Not Writable) ---
@@ -390,7 +390,7 @@ func TestMoveFiles(t *testing.T) {
 		assert.ErrorContains(t, err, "failed to create dir") // copyFile should fail here
 
 		// Verify ImportResult is empty because the operation failed
-		assert.Empty(t, result.DirEntries, "DirEntries result should be empty on error")
+		assert.Empty(t, result.SrcEntries, "DirEntries result should be empty on error")
 
 		// Verify source file was NOT deleted because the copy failed
 		_, err = os.Stat(srcPhoto1Path)

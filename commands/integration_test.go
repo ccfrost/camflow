@@ -95,12 +95,12 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 		require.NoError(t, err, "Import command should succeed")
 
 		// Verify import results
-		assert.NotEmpty(t, importResult.DirEntries, "Should have imported files from directories")
-		
+		assert.NotEmpty(t, importResult.SrcEntries, "Should have imported files from directories")
+
 		// Count directories with photos and videos
 		dirsWithPhotos := 0
 		dirsWithVideos := 0
-		for _, entry := range importResult.DirEntries {
+		for _, entry := range importResult.SrcEntries {
 			if entry.PhotoCount > 0 {
 				dirsWithPhotos++
 			}
