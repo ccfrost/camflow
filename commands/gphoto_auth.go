@@ -65,7 +65,11 @@ func GetAuthenticatedGooglePhotosClient(ctx context.Context, config camflowconfi
 	}
 
 	if token == nil || !token.Valid() {
-		fmt.Println("OAuth token is invalid or missing, starting auth flow...")
+		if token == nil {
+			fmt.Println("No existing OAuth token found, starting auth flow...")
+		} else {
+			fmt.Println("OAuth token is invalid (eg, expired), starting auth flow...")
+		}
 		newToken, err := getTokenFromWeb(ctx, conf)
 		if err != nil {
 			return nil, err
