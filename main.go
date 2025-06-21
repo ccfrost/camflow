@@ -77,7 +77,7 @@ func main() {
 				for _, entry := range res.SrcEntries {
 					fmt.Printf("\t%s: %d photo%s, %d video%s\n", entry.RelativeDir, entry.PhotoCount, pluralSuffix(entry.PhotoCount), entry.VideoCount, pluralSuffix(entry.VideoCount))
 				}
-				fmt.Printf("Imported into %d dir%s\n", len(res.DstEntries), pluralSuffix(len(res.DstEntries)))
+				fmt.Printf("Imported into %d dir%s:\n", len(res.DstEntries), pluralSuffix(len(res.DstEntries)))
 				for _, entry := range res.DstEntries {
 					fmt.Printf("\t%s: %d photo%s, %d video%s\n", entry.RelativeDir, entry.PhotoCount, pluralSuffix(entry.PhotoCount), entry.VideoCount, pluralSuffix(entry.VideoCount))
 				}

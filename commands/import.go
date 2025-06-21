@@ -77,6 +77,7 @@ func Import(config camflowconfig.CamflowConfig, sdcardDir string, keepSrc bool, 
 	if err := bar.Close(); err != nil {
 		fmt.Printf("warning: failed to close progress bar\n")
 	}
+	fmt.Println() // End the progress bar line.
 
 	if !keepSrc {
 		// Delete any leaf dirs that we moved files out of and are now empty, so that the
