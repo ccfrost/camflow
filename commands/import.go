@@ -23,6 +23,7 @@ type ImportDirEntry struct {
 }
 type ImportResult struct {
 	SrcEntries []ImportDirEntry
+	DstEntries []ImportDirEntry
 }
 
 // Import mvoes the DCIM/ files to the photo to process dir and the export queue video dir.
@@ -157,11 +158,31 @@ func getAvailableSpace(dir string) (uint64, error) {
 // moveFiles moves files from srcDir into the photo/video dirs for the date of each file.
 // It preserves the modification times.
 func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, bar *progressbar.ProgressBar) (ImportResult, error) {
+	// ItemType represents the type of media item being processed.
+	type ItemType int
+	const (
+		ItemTypeUnknown ItemType = iota
+		ItemTypePhoto
+		ItemTypeVideo
+	)
+	// itemTypeString returns the string representation of ItemType for better debugging.
+	itemTypeString := func(it ItemType) string {
+		switch it {
+		case ItemTypePhoto:
+			return "photo"
+		case ItemTypeVideo:
+			return "video"
+		default:
+			return "unknown"
+		}
+	}
+
 	type PhotoVideoCount struct {
 		Photos int
 		Videos int
 	}
-	dirCounts := make(map[string]PhotoVideoCount)
+	srcDirCounts := make(map[string]PhotoVideoCount)
+	dstDirCounts := make(map[string]PhotoVideoCount)
 
 	err := filepath.WalkDir(srcDir, func(path string, dirEnt fs.DirEntry, err error) error {
 		if err != nil {
@@ -176,17 +197,14 @@ func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, 
 
 		// Determine photo vs video based on file extension.
 		var targetRoot string
+		var itemType ItemType
 		switch filepath.Ext(dirEnt.Name()) {
 		case ".CR3", ".cr3", ".JPG", ".jpg":
 			targetRoot = config.PhotosToProcessRoot
-			entry := dirCounts[filepath.Dir(path)]
-			entry.Photos++
-			dirCounts[filepath.Dir(path)] = entry
+			itemType = ItemTypePhoto
 		case ".MP4", ".mp4":
 			targetRoot = config.VideosExportQueueRoot
-			entry := dirCounts[filepath.Dir(path)]
-			entry.Videos++
-			dirCounts[filepath.Dir(path)] = entry
+			itemType = ItemTypeVideo
 		default:
 			// Skip unsupported file types.
 			fmt.Printf("Skipping unsupported file: %s\n", path)
@@ -201,6 +219,21 @@ func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, 
 		relativeDir := info.ModTime().Format("2006/01/02")
 		dirEntPrefix := info.ModTime().Format("2006-01-02-")
 		targetPath := filepath.Join(targetRoot, relativeDir, dirEntPrefix+dirEnt.Name())
+
+		srcEntry := srcDirCounts[filepath.Dir(path)]
+		dstEntry := dstDirCounts[relativeDir]
+		switch itemType {
+		case ItemTypePhoto:
+			srcEntry.Photos++
+			dstEntry.Photos++
+		case ItemTypeVideo:
+			srcEntry.Videos++
+			dstEntry.Videos++
+		default:
+			panic(fmt.Sprintf("unexpected item type %s for file %s", itemTypeString(itemType), path))
+		}
+		srcDirCounts[filepath.Dir(path)] = srcEntry
+		dstDirCounts[relativeDir] = dstEntry
 
 		// Note: this assumes that there are no duplicate camera file names created on the same day.
 		// That could happen, eg if the camera's counter is reset or if enough photos are taken in that day,
@@ -222,7 +255,8 @@ func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, 
 	}
 
 	var result ImportResult
-	for dir, entry := range dirCounts {
+
+	for dir, entry := range srcDirCounts {
 		result.SrcEntries = append(result.SrcEntries, ImportDirEntry{
 			RelativeDir: dir,
 			PhotoCount:  entry.Photos,
@@ -232,6 +266,18 @@ func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, 
 	sort.Slice(result.SrcEntries, func(i, j int) bool {
 		return result.SrcEntries[i].RelativeDir < result.SrcEntries[j].RelativeDir
 	})
+
+	for dir, entry := range dstDirCounts {
+		result.DstEntries = append(result.DstEntries, ImportDirEntry{
+			RelativeDir: dir,
+			PhotoCount:  entry.Photos,
+			VideoCount:  entry.Videos,
+		})
+	}
+	sort.Slice(result.DstEntries, func(i, j int) bool {
+		return result.DstEntries[i].RelativeDir < result.DstEntries[j].RelativeDir
+	})
+
 	return result, nil
 }
 
