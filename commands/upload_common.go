@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io/fs"
@@ -12,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/evanoberholster/imagemeta"
+	"github.com/evanoberholster/imagemeta/xmp"
 	"github.com/gphotosuploader/google-photos-api-client-go/v3/media_items"
 	"github.com/schollz/progressbar/v3"
 	"golang.org/x/time/rate"
@@ -80,6 +83,9 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 		}
 		itemsToUpload = append(itemsToUpload, itemFileInfo{path: path, size: info.Size(), modTime: info.ModTime()})
 		totalSize += info.Size()
+		if err := printNameIfMatch(ctx, path, "Red", "share-family"); err != nil {
+			fmt.Errorf("warning: failed to do metadata work for %s: %w", path, err)
+		}
 		return nil
 	})
 	if err != nil { // This error is from WalkDir itself, e.g. root dir not found.
@@ -486,4 +492,57 @@ func cleanupEmptyParentDirs(videoPath string, rawExportQueueRoot string) error {
 		}
 		currentDirToClean = parent
 	}
+}
+
+func printNameIfMatch(ctx context.Context, path, label, subject string) error {
+	// TODO:
+	// - check that this works on a couple example files
+	// - turn it into code that is used to decide whether to add the file to a specific album
+	// - write tests
+
+	ext := strings.ToLower(filepath.Ext(path))
+	if ext != ".jpg" && ext != ".jpeg" {
+		return nil
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("failed to open file %s: %w", path, err)
+	}
+	defer f.Close()
+
+	// 2) decode EXIF (and capture the raw XMP into ex.ApplicationNotes) :contentReference[oaicite:0]{index=0}
+	ex, err := imagemeta.Decode(f)
+	if err != nil {
+		return fmt.Errorf("decode metadata: %w", err)
+	}
+
+	// 3) grab the raw XMP packet (0x02BC → ApplicationNotes)
+	raw := ex.ApplicationNotes
+	if len(raw) == 0 {
+		// no XMP present
+		return nil
+	}
+
+	// 4) clean up any whitespace after </x:xmpmeta> :contentReference[oaicite:1]{index=1}
+	clean := xmp.CleanXMPSuffixWhiteSpace(raw)
+
+	// 5) parse into the high-level XMP struct :contentReference[oaicite:2]{index=2}
+	xm, err := xmp.ParseXmp(bytes.NewReader(clean))
+	if err != nil {
+		return fmt.Errorf("parse XMP: %w", err)
+	}
+
+	// 6) check the Basic.Label (xmp-dc:Label) and DC.Subject slice
+	if xm.Basic.Label == label {
+		fmt.Println("label:", path)
+	}
+	for _, s := range xm.DC.Subject {
+		if s == subject {
+			fmt.Println("subject:", path)
+			break
+		}
+	}
+
+	return nil
 }
