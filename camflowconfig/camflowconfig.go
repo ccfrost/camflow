@@ -8,9 +8,9 @@ import (
 	"github.com/spf13/viper"
 )
 
-type KeywordAlbum struct {
-	Keyword string `mapstructure:"keyword"`
-	Album   string `mapstructure:"album"`
+type KeyAlbum struct {
+	Key   string `mapstructure:"key"`
+	Album string `mapstructure:"album"`
 }
 
 // GooglePhotosConfig defines the configuration specific to Google Photos.
@@ -27,9 +27,8 @@ type GooglePhotosConfig struct {
 type GPPhotosConfig struct {
 	DefaultAlbum string `mapstructure:"default_album"`
 
-	ToFavAlbumMinNumStars int            `mapstructure:"to_fav_album_min_num_stars"`
-	ToFavAlbumName        string         `mapstructure:"to_fav_album_name"`
-	KeywordAlbums         []KeywordAlbum `mapstructure:"keyword_albums"`
+	LabelAlbums   []KeyAlbum `mapstructure:"label_albums"`
+	SubjectAlbums []KeyAlbum `mapstructure:"subject_albums"`
 }
 
 func (c *GPPhotosConfig) GetDefaultAlbum() string {
