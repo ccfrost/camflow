@@ -104,6 +104,26 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 		slog.Float64("total_size_gb", math.Ceil(float64(totalSize)/1024/1024/1024)))
 
 	// TODO: get exif metadata and determine which optional albums to add each file to.
+	paths := make([]string, len(itemsToUpload))
+	for i, item := range itemsToUpload {
+		paths[i] = item.path
+	}
+	exif, err := getExifMetadata(ctx, paths)
+	if err != nil {
+		return err
+	}
+	// TODO: consult config's labels and subjects.
+	additionalAlbums := make(map[string][]string)
+	for _, item := range exif {
+		if item.Label != "" {
+			// TODO:
+		}
+		if item.Subjects != nil {
+			additionalAlbums[item.Path] = item.Subjects
+		}
+	}
+	// TODO: integrate these albums with the album cache.
+	// TODO: consider batching adding media items to albums. How would I make it idempotent in face of failure part way through?
 
 	// --- Get Album IDs (and create if they don't exist) ---
 	if gpConfig.GetDefaultAlbum() == "" {
