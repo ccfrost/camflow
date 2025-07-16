@@ -1,20 +1,20 @@
 package commands
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log/slog"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/evanoberholster/imagemeta"
-	"github.com/evanoberholster/imagemeta/xmp"
+	//"github.com/evanoberholster/imagemeta/xmp"
 	"github.com/gphotosuploader/google-photos-api-client-go/v3/media_items"
 	"github.com/schollz/progressbar/v3"
 	"golang.org/x/time/rate"
@@ -495,54 +495,170 @@ func cleanupEmptyParentDirs(videoPath string, rawExportQueueRoot string) error {
 }
 
 func printNameIfMatch(ctx context.Context, path, label, subject string) error {
-	// TODO:
-	// - check that this works on a couple example files
-	// - turn it into code that is used to decide whether to add the file to a specific album
-	// - write tests
-
-	ext := strings.ToLower(filepath.Ext(path))
-	if ext != ".jpg" && ext != ".jpeg" {
+	exiftoolPath, err := exec.LookPath("exiftool")
+	if err != nil {
+		logger.Warn("exiftool not found in PATH, skipping metadata check.", "error", err)
 		return nil
 	}
 
-	f, err := os.Open(path)
+	cmd := exec.CommandContext(ctx, exiftoolPath, "-j", "-Label", "-Subject", path)
+	output, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("failed to open file %s: %w", path, err)
-	}
-	defer f.Close()
-
-	// 2) decode EXIF (and capture the raw XMP into ex.ApplicationNotes) :contentReference[oaicite:0]{index=0}
-	ex, err := imagemeta.Decode(f)
-	if err != nil {
-		return fmt.Errorf("decode metadata: %w", err)
-	}
-
-	// 3) grab the raw XMP packet (0x02BC → ApplicationNotes)
-	raw := ex.ApplicationNotes
-	if len(raw) == 0 {
-		// no XMP present
+		// exiftool can exit with an error for various reasons, e.g., file not found or not a supported format.
+		// We log this as a warning and continue, as it's not a fatal error for the upload process.
+		logger.Warn("exiftool command failed for file", "path", path, "error", err)
 		return nil
 	}
 
-	// 4) clean up any whitespace after </x:xmpmeta> :contentReference[oaicite:1]{index=1}
-	clean := xmp.CleanXMPSuffixWhiteSpace(raw)
-
-	// 5) parse into the high-level XMP struct :contentReference[oaicite:2]{index=2}
-	xm, err := xmp.ParseXmp(bytes.NewReader(clean))
-	if err != nil {
-		return fmt.Errorf("parse XMP: %w", err)
+	var results []struct {
+		Label   string `json:"Label,omitempty"`
+		Subject any    `json:"Subject,omitempty"` // Subject can be a string or []string
+	}
+	if err := json.Unmarshal(output, &results); err != nil {
+		return fmt.Errorf("failed to unmarshal exiftool output for %s: %w", path, err)
 	}
 
-	// 6) check the Basic.Label (xmp-dc:Label) and DC.Subject slice
-	if xm.Basic.Label == label {
+	if len(results) == 0 {
+		return nil
+	}
+	data := results[0]
+
+	if label != "" && data.Label == label {
 		fmt.Println("label:", path)
 	}
-	for _, s := range xm.DC.Subject {
-		if s == subject {
-			fmt.Println("subject:", path)
-			break
+
+	if subject != "" {
+		switch s := data.Subject.(type) {
+		case string:
+			if s == subject {
+				fmt.Println("subject:", path)
+			}
+		case []any: // JSON unmarshals to []any for arrays
+			for _, item := range s {
+				if strItem, ok := item.(string); ok && strItem == subject {
+					fmt.Println("subject:", path)
+					break
+				}
+			}
 		}
 	}
 
 	return nil
+
+	/*
+		// 1. Use the JPEG structure parser to find the raw XMP data.
+		jpegParser := jpegstructure.NewJpegMediaParser()
+		mc, err := jpegParser.ParseFile(path)
+		if err != nil {
+			// Return a wrapped error if the file can't be opened or parsed.
+			return fmt.Errorf("could not parse jpeg for %s: %w", path, err)
+		}
+
+		// The FindXmp() method specifically looks for the XMP segment.
+		rawXmp, err := mc.FindXmp()
+		if err != nil {
+			// If the error is specifically ErrNoXmp, it means the file is valid
+			// but just doesn't have XMP data. This is not a processing failure.
+			if err == jpegstructure.ErrNoXmp {
+				return nil
+			}
+			// For other errors, return them.
+			return fmt.Errorf("could not find xmp segment in %s: %w", path, err)
+		}
+
+		// 2. Use the XMP library to parse the raw data into a usable model.
+		pi, err := xmp.NewParser(rawXmp).Parse()
+		if err != nil {
+			return fmt.Errorf("could not parse xmp for %s: %w", path, err)
+		}
+
+		// The root of the XMP data is the RDF document.
+		rdf, err := pi.FindRdf()
+		if err != nil {
+			// This would be unusual if rawXmp was valid, but we handle it.
+			return fmt.Errorf("could not find rdf in xmp for %s: %w", path, err)
+		}
+
+		// 3. Iterate through all namespaces and tags to find a match.
+		for _, namespace := range rdf.Children {
+			for _, tag := range namespace.Children {
+				// Check if the tag's local name (the label) matches.
+				// We ensure the user actually provided a label to search for.
+				if label != "" && tag.Name.Local == label {
+					fmt.Println(path)
+					return nil // Match found, print path and exit successfully.
+				}
+
+				// Check if the tag's string value (the subject) matches.
+				// We ensure the user actually provided a subject to search for.
+				if subject != "" && tag.Value == subject {
+					fmt.Println(path)
+					return nil // Match found, print path and exit successfully.
+				}
+			}
+		}
+
+		// If we finish all loops without finding a match, it's not an error.
+		// We just return nil.
+		return nil
+	*/
+
+	/*
+		// TODO:
+		// - check that this works on a couple example files
+		// - turn it into code that is used to decide whether to add the file to a specific album
+		// - write tests
+
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext != ".jpg" && ext != ".jpeg" {
+			return nil
+		}
+
+		f, err := os.Open(path)
+		if err != nil {
+			return fmt.Errorf("failed to open file %s: %w", path, err)
+		}
+		defer f.Close()
+
+		// 2) decode EXIF (and capture the raw XMP into ex.ApplicationNotes) :contentReference[oaicite:0]{index=0}
+		ex, err := imagemeta.Decode(f)
+		if err != nil {
+			return fmt.Errorf("decode metadata: %w", err)
+		}
+
+		// 3) grab the raw XMP packet (0x02BC → ApplicationNotes)
+		raw := ex.ApplicationNotes
+		if len(raw) == 0 {
+			// no XMP present
+			// Update: this is what happens.
+			return errors.New("no XMP metadata found")
+		}
+
+		// 4) clean up any whitespace after </x:xmpmeta> :contentReference[oaicite:1]{index=1}
+		clean := xmp.CleanXMPSuffixWhiteSpace(raw)
+
+		// 5) parse into the high-level XMP struct :contentReference[oaicite:2]{index=2}
+		xm, err := xmp.ParseXmp(bytes.NewReader(clean))
+		if err != nil {
+			return fmt.Errorf("parse XMP: %w", err)
+		}
+
+		// 6) check the Basic.Label (xmp-dc:Label) and DC.Subject slice
+		if xm.Basic.Label == label {
+			fmt.Println("label:", path)
+		}
+		for _, s := range xm.DC.Subject {
+			if s == subject {
+				fmt.Println("subject:", path)
+				break
+			}
+		}
+
+		return nil
+	*/
+}
+
+func PrintNameIfMatch(ctx context.Context, path, label, subject string) error {
+	// This is a public function to allow testing.
+	return printNameIfMatch(ctx, path, label, subject)
 }
