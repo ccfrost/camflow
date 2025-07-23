@@ -13,6 +13,7 @@ import (
 	"time"
 
 	//"github.com/evanoberholster/imagemeta/xmp"
+	"github.com/ccfrost/camflow/camflowconfig"
 	"github.com/gphotosuploader/google-photos-api-client-go/v3/media_items"
 	"github.com/schollz/progressbar/v3"
 	"golang.org/x/time/rate"
@@ -26,6 +27,8 @@ type LocalConfig interface {
 
 type GPConfig interface {
 	GetDefaultAlbum() string
+	GetLabelAlbums() []camflowconfig.KeyAlbum
+	GetSubjectAlbums() []camflowconfig.KeyAlbum
 }
 
 // itemFileInfo stores path and size for progress tracking.
@@ -103,32 +106,41 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 		slog.Int("count", len(itemsToUpload)),
 		slog.Float64("total_size_gb", math.Ceil(float64(totalSize)/1024/1024/1024)))
 
-	// TODO: get exif metadata and determine which optional albums to add each file to.
-	paths := make([]string, len(itemsToUpload))
-	for i, item := range itemsToUpload {
-		paths[i] = item.path
+	if gpConfig.GetDefaultAlbum() == "" {
+		logger.Warn("No default albums specified in config, files may only be uploaded to the library")
 	}
-	exif, err := getExifMetadata(ctx, paths)
+
+	// Determine any additional albums to add each media item to based on the EXIF metadata.
+	itemPaths := make([]string, len(itemsToUpload))
+	for i, item := range itemsToUpload {
+		itemPaths[i] = item.path
+	}
+	itemExifs, err := getExifMetadata(ctx, itemPaths)
 	if err != nil {
 		return err
 	}
-	// TODO: consult config's labels and subjects.
-	additionalAlbums := make(map[string][]string)
-	for _, item := range exif {
-		if item.Label != "" {
-			// TODO:
-		}
-		if item.Subjects != nil {
-			additionalAlbums[item.Path] = item.Subjects
-		}
-	}
-	// TODO: integrate these albums with the album cache.
-	// TODO: consider batching adding media items to albums. How would I make it idempotent in face of failure part way through?
+	additionalAlbums := make(map[string][]string, len(itemExifs))
+	labelAlbums := gpConfig.GetLabelAlbums()
+	subjectAlbums := gpConfig.GetSubjectAlbums()
+	if len(labelAlbums) != 0 || len(subjectAlbums) != 0 {
+		for _, exif := range itemExifs {
+			if exif.Label != "" {
+				if album, hasKey := albumForKey(labelAlbums, exif.Label); hasKey {
+					additionalAlbums[exif.Path] = append(additionalAlbums[exif.Path], album)
+				}
+			}
 
-	// --- Get Album IDs (and create if they don't exist) ---
-	if gpConfig.GetDefaultAlbum() == "" {
-		logger.Warn("No default albums specified in config, files will only be uploaded to the library")
+			for _, subject := range exif.Subjects {
+				if subject != "" {
+					if album, hasKey := albumForKey(subjectAlbums, subject); hasKey {
+						additionalAlbums[exif.Path] = append(additionalAlbums[exif.Path], album)
+					}
+				}
+			}
+		}
 	}
+
+	// Look up (and create any missing) album ids.
 
 	albumCachePath := getAlbumCachePath(cacheDir)
 	albumCache, err := loadAlbumCache(albumCachePath)
@@ -136,54 +148,52 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 		return fmt.Errorf("failed to load album cache: %w", err)
 	}
 
-	// TODO: simplify the album lookup code now that there is only one default album.
-
-	// Prepare map for albumID -> albumTitle.
-	resolvedTargetAlbums := make(map[string]string)
-
+	albumNamesMap := make(map[string]struct{})
 	defaultAlbum := gpConfig.GetDefaultAlbum()
 	if defaultAlbum != "" {
-		if strings.TrimSpace(defaultAlbum) == "" {
-			logger.Warn("DefaultAlbums list in config contains only empty or whitespace titles")
-		} else {
-			var albumIDs []string
-			albumIDs, err = albumCache.getOrFetchAndCreateAlbumIDs(ctx, gphotosClient.Albums(), []string{defaultAlbum}, limiter)
-			if err != nil {
-				return fmt.Errorf("failed to resolve or create album IDs for title %s: %w", defaultAlbum, err)
-			}
-
-			if len(albumIDs) > 0 { // Only print if IDs were actually found/created
-				logger.Debug("Target album IDs resolved/created",
-					slog.Any("album_ids", albumIDs),
-					slog.Any("title", defaultAlbum))
-			}
-
-			// Populate resolvedTargetAlbums, mapping ID to its corresponding Title
-			// This assumes getOrFetchAndCreateAlbumIDs returns IDs in the same order as titles
-			// and that all titles successfully resolve to an ID if no error is returned.
-			for _, id := range albumIDs {
-				if id != "" {
-					resolvedTargetAlbums[id] = defaultAlbum
-				}
-			}
+		albumNamesMap[defaultAlbum] = struct{}{}
+	}
+	for _, album := range additionalAlbums {
+		for _, name := range album {
+			albumNamesMap[name] = struct{}{}
 		}
 	}
-	// If resolvedTargetAlbums is empty at this point, files are uploaded to library only.
+	albumNamesSlice := make([]string, 0, len(albumNamesMap))
+	for name := range albumNamesMap {
+		albumNamesSlice = append(albumNamesSlice, name)
+	}
 
-	// --- Upload Loop ---
+	var albumIDs []string
+	albumIDs, err = albumCache.getOrFetchAndCreateAlbumIDs(ctx, gphotosClient.Albums(), albumNamesSlice, limiter)
+	if err != nil {
+		return fmt.Errorf("failed to resolve or create album IDs for titles %v: %w", albumNamesSlice, err)
+	}
+	logger.Debug("Target album IDs resolved/created",
+		slog.Any("album_titles", albumNamesSlice),
+		slog.Any("album_ids", albumIDs))
+
+	albumIdNameMap := make(map[string]string, len(albumIDs))
+	for i, id := range albumIDs {
+		albumIdNameMap[id] = albumNamesSlice[i]
+	}
+
+	// Upload media items and add them to the target albums.
 
 	bar := progressbar.DefaultBytes(
 		totalSize,
 		fmt.Sprint("Uploading ", itemTypePluralName),
 	)
 
+	// TODO: consider batching adding media items to albums. How to make it idempotent in face of failure part way through?
+
 	for _, fileInfo := range itemsToUpload {
-		if err := uploadMediaItem(ctx, keepQueued, localConfig, gphotosClient, fileInfo, resolvedTargetAlbums, bar, limiter); err != nil {
+		// TODO: create a slice of target album names and pass in the map of names to ids.
+		if err := uploadMediaItem(ctx, keepQueued, localConfig, gphotosClient, fileInfo, defaultAlbum, albumIdNameMap, bar, limiter); err != nil {
 			return err
 		}
 	}
 
-	_ = bar.Finish() // Ignore error on finish
+	_ = bar.Finish()
 
 	logger.Debug(fmt.Sprint("Finished uploading ", itemTypePluralName))
 	return nil
@@ -193,7 +203,8 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 // It updates "bar" with the bytes it has uploaded.
 // It deletes the file after uploading if "keepQueued" is false.
 // "targetAlbumIDs" are the ids for DefaultAlbums in the config.
-func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConfig, gphotosClient GPhotosClient, fileInfo itemFileInfo, targetAlbums map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter) error {
+// TODO: need albumNames and albumNameToIdMap.
+func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConfig, gphotosClient GPhotosClient, fileInfo itemFileInfo, albums map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter) error {
 	fileBasename := filepath.Base(fileInfo.path)
 	bar.Describe(fmt.Sprintf("Uploading %s", fileBasename))
 
@@ -239,6 +250,7 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 
 	// TODO: consider batch adding items to albums.
 	successfullyAddedToAll := true
+	// TODO: change to iterate over targetAlbumNames and look up each album's id from the map.
 	if len(targetAlbums) > 0 {
 		addedCount := 0
 		var failedAlbums []string
@@ -512,4 +524,14 @@ func cleanupEmptyParentDirs(videoPath string, rawExportQueueRoot string) error {
 		}
 		currentDirToClean = parent
 	}
+}
+
+// albumForKey returns the album name for the given key from the provided keyAlbums slice.
+func albumForKey(keyAlbums []camflowconfig.KeyAlbum, key string) (string, bool) {
+	for _, ka := range keyAlbums {
+		if ka.Key == key {
+			return ka.Album, true
+		}
+	}
+	return "", false
 }

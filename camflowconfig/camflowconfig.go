@@ -35,6 +35,14 @@ func (c *GPPhotosConfig) GetDefaultAlbum() string {
 	return c.DefaultAlbum
 }
 
+func (c *GPPhotosConfig) GetLabelAlbums() []KeyAlbum {
+	return c.LabelAlbums
+}
+
+func (c *GPPhotosConfig) GetSubjectAlbums() []KeyAlbum {
+	return c.SubjectAlbums
+}
+
 // GPVideosConfig defines the configuration for Videos in Google Photos.
 type GPVideosConfig struct {
 	DefaultAlbum string `mapstructure:"default_album"`
@@ -42,6 +50,14 @@ type GPVideosConfig struct {
 
 func (c *GPVideosConfig) GetDefaultAlbum() string {
 	return c.DefaultAlbum
+}
+
+func (c *GPVideosConfig) GetLabelAlbums() []KeyAlbum {
+	return nil
+}
+
+func (c *GPVideosConfig) GetSubjectAlbums() []KeyAlbum {
+	return nil
 }
 
 // TODO: rename to camflow.
