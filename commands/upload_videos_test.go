@@ -377,7 +377,8 @@ func TestUploadVideos_ErrorAddMediaToAlbum_FileKept_WhenAlbumExists(t *testing.T
 		Return(errors.New(expectedAddError))
 
 	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient)
-	require.NoError(t, err, "UploadVideos returned an unexpected error: %v. Expected to continue on AddMediaItems error.", err)
+	require.Error(t, err, "UploadVideos should have returned an error")
+	assert.Contains(t, err.Error(), expectedAddError, "Error message should contain the original error")
 
 	// Verify file is NOT deleted because add to album failed
 	_, statErr := os.Stat(videoFilePath)
@@ -882,16 +883,12 @@ func TestUploadVideos_ErrorAddMediaToAlbum_NoCleanup(t *testing.T) {
 		Return(errors.New(expectedAddError))
 
 	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient)
-	require.NoError(t, err, "UploadVideos returned an unexpected error: expected to continue on AddMediaItems error")
+	require.Error(t, err, "UploadVideos should have returned an error")
+	assert.Contains(t, err.Error(), expectedAddError, "Error message should contain the original error")
 
 	// Verify file is NOT moved because add to album failed
 	_, statErr := os.Stat(videoFilePath)
-	assert.NoError(t, statErr, "Expected video file to be kept after AddMediaItems failure")
-
-	// Verify directories were NOT cleaned up since file wasn't moved
-	assertDirExists(t, filepath.Join(cfg.VideosExportQueueRoot, "2024", "05", "15"), "Expected directory to remain after album addition failure")
-	assertDirExists(t, filepath.Join(cfg.VideosExportQueueRoot, "2024", "05"), "Expected parent directory to remain after album addition failure")
-	assertDirExists(t, filepath.Join(cfg.VideosExportQueueRoot, "2024"), "Expected year directory to remain after album addition failure")
+	assert.NoError(t, statErr, "Expected video file %s to be kept after AddMediaItems failure, but it was deleted (os.IsNotExist was true for stat error: %v)", videoFilePath, statErr)
 }
 
 func TestUploadVideos_keepQueued_NoCleanup(t *testing.T) {

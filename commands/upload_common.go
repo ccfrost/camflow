@@ -163,17 +163,20 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 	}
 
 	var albumIDs []string
-	albumIDs, err = albumCache.getOrFetchAndCreateAlbumIDs(ctx, gphotosClient.Albums(), albumTitlesSlice, limiter)
-	if err != nil {
-		return fmt.Errorf("failed to resolve or create album IDs for titles %v: %w", albumTitlesSlice, err)
-	}
-	logger.Debug("Target album IDs resolved/created",
-		slog.Any("album_titles", albumTitlesSlice),
-		slog.Any("album_ids", albumIDs))
+	albumTitleToIdMap := make(map[string]string)
+	if len(albumTitlesSlice) > 0 {
+		var err error
+		albumIDs, err = albumCache.getOrFetchAndCreateAlbumIDs(ctx, gphotosClient.Albums(), albumTitlesSlice, limiter)
+		if err != nil {
+			return fmt.Errorf("failed to resolve or create album IDs for titles %v: %w", albumTitlesSlice, err)
+		}
+		logger.Debug("Target album IDs resolved/created",
+			slog.Any("album_titles", albumTitlesSlice),
+			slog.Any("album_ids", albumIDs))
 
-	albumTitleToIdMap := make(map[string]string, len(albumIDs))
-	for i, albumID := range albumIDs {
-		albumTitleToIdMap[albumTitlesSlice[i]] = albumID
+		for i, albumID := range albumIDs {
+			albumTitleToIdMap[albumTitlesSlice[i]] = albumID
+		}
 	}
 
 	// Upload media items and add them to the target albums.
