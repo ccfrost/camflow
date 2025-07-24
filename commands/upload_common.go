@@ -119,21 +119,21 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 	if err != nil {
 		return err
 	}
-	additionalAlbums := make(map[string][]string, len(itemExifs))
+	additionalAlbumsPathToTitlesMap := make(map[string][]string)
 	labelAlbums := gpConfig.GetLabelAlbums()
 	subjectAlbums := gpConfig.GetSubjectAlbums()
 	if len(labelAlbums) != 0 || len(subjectAlbums) != 0 {
 		for _, exif := range itemExifs {
 			if exif.Label != "" {
-				if album, hasKey := albumForKey(labelAlbums, exif.Label); hasKey {
-					additionalAlbums[exif.Path] = append(additionalAlbums[exif.Path], album)
+				if albumTitle, hasKey := albumForKey(labelAlbums, exif.Label); hasKey {
+					additionalAlbumsPathToTitlesMap[exif.Path] = append(additionalAlbumsPathToTitlesMap[exif.Path], albumTitle)
 				}
 			}
 
 			for _, subject := range exif.Subjects {
 				if subject != "" {
-					if album, hasKey := albumForKey(subjectAlbums, subject); hasKey {
-						additionalAlbums[exif.Path] = append(additionalAlbums[exif.Path], album)
+					if albumTitle, hasKey := albumForKey(subjectAlbums, subject); hasKey {
+						additionalAlbumsPathToTitlesMap[exif.Path] = append(additionalAlbumsPathToTitlesMap[exif.Path], albumTitle)
 					}
 				}
 			}
@@ -142,39 +142,38 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 
 	// Look up (and create any missing) album ids.
 
-	albumCachePath := getAlbumCachePath(cacheDir)
-	albumCache, err := loadAlbumCache(albumCachePath)
+	albumCache, err := loadAlbumCache(getAlbumCachePath(cacheDir))
 	if err != nil {
 		return fmt.Errorf("failed to load album cache: %w", err)
 	}
 
-	albumNamesMap := make(map[string]struct{})
+	albumTitlesMap := make(map[string]struct{})
 	defaultAlbum := gpConfig.GetDefaultAlbum()
 	if defaultAlbum != "" {
-		albumNamesMap[defaultAlbum] = struct{}{}
+		albumTitlesMap[defaultAlbum] = struct{}{}
 	}
-	for _, album := range additionalAlbums {
-		for _, name := range album {
-			albumNamesMap[name] = struct{}{}
+	for _, albumTitles := range additionalAlbumsPathToTitlesMap {
+		for _, albumTitle := range albumTitles {
+			albumTitlesMap[albumTitle] = struct{}{}
 		}
 	}
-	albumNamesSlice := make([]string, 0, len(albumNamesMap))
-	for name := range albumNamesMap {
-		albumNamesSlice = append(albumNamesSlice, name)
+	albumTitlesSlice := make([]string, 0, len(albumTitlesMap))
+	for albumTitle := range albumTitlesMap {
+		albumTitlesSlice = append(albumTitlesSlice, albumTitle)
 	}
 
 	var albumIDs []string
-	albumIDs, err = albumCache.getOrFetchAndCreateAlbumIDs(ctx, gphotosClient.Albums(), albumNamesSlice, limiter)
+	albumIDs, err = albumCache.getOrFetchAndCreateAlbumIDs(ctx, gphotosClient.Albums(), albumTitlesSlice, limiter)
 	if err != nil {
-		return fmt.Errorf("failed to resolve or create album IDs for titles %v: %w", albumNamesSlice, err)
+		return fmt.Errorf("failed to resolve or create album IDs for titles %v: %w", albumTitlesSlice, err)
 	}
 	logger.Debug("Target album IDs resolved/created",
-		slog.Any("album_titles", albumNamesSlice),
+		slog.Any("album_titles", albumTitlesSlice),
 		slog.Any("album_ids", albumIDs))
 
-	albumIdNameMap := make(map[string]string, len(albumIDs))
-	for i, id := range albumIDs {
-		albumIdNameMap[id] = albumNamesSlice[i]
+	albumTitleToIdMap := make(map[string]string, len(albumIDs))
+	for i, albumID := range albumIDs {
+		albumTitleToIdMap[albumTitlesSlice[i]] = albumID
 	}
 
 	// Upload media items and add them to the target albums.
@@ -185,11 +184,14 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 	)
 
 	// TODO: consider batching adding media items to albums. How to make it idempotent in face of failure part way through?
-
 	for _, fileInfo := range itemsToUpload {
-		// TODO: create a slice of target album names and pass in the map of names to ids.
-		if err := uploadMediaItem(ctx, keepQueued, localConfig, gphotosClient, fileInfo, defaultAlbum, albumIdNameMap, bar, limiter); err != nil {
-			return err
+		additionalAlbumTitles := additionalAlbumsPathToTitlesMap[fileInfo.path]
+		targetAlbumTitles := append(make([]string, 0, len(additionalAlbumTitles)+1), additionalAlbumTitles...)
+		if defaultAlbum != "" {
+			targetAlbumTitles = append(targetAlbumTitles, defaultAlbum)
+		}
+		if err := uploadMediaItem(ctx, keepQueued, localConfig, gphotosClient, fileInfo, targetAlbumTitles, albumTitleToIdMap, bar, limiter); err != nil {
+			return fmt.Errorf("failed to upload media item %s: %w", fileInfo.path, err)
 		}
 	}
 
@@ -204,7 +206,7 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 // It deletes the file after uploading if "keepQueued" is false.
 // "targetAlbumIDs" are the ids for DefaultAlbums in the config.
 // TODO: need albumNames and albumNameToIdMap.
-func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConfig, gphotosClient GPhotosClient, fileInfo itemFileInfo, albums map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter) error {
+func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConfig, gphotosClient GPhotosClient, fileInfo itemFileInfo, targetAlbumTitles []string, albumTitleToIdMap map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter) error {
 	fileBasename := filepath.Base(fileInfo.path)
 	bar.Describe(fmt.Sprintf("Uploading %s", fileBasename))
 
@@ -217,7 +219,7 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 	}
 
 	// TODO: consider parallelizing uploads.
-	// TODO: consider do resumable uploads.
+	// TODO: consider doing resumable uploads.
 	// TODO: consider updating progress bar with actual upload progress. (gphotos UploadFile calls NewUploadFromFile, which returns a file, so it is close.)
 	uploadToken, err := gphotosClient.Uploader().UploadFile(ctx, fileInfo.path)
 	if err != nil {
@@ -227,7 +229,6 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 		return fmt.Errorf("failed to upload file %s: %w", fileBasename, err)
 	}
 
-	// Wait before creating media item
 	if err := limiter.Wait(ctx); err != nil {
 		return fmt.Errorf("rate limiter error before creating media item for %s: %w", fileBasename, err)
 	}
@@ -235,7 +236,7 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 		UploadToken: uploadToken,
 		Filename:    fileBasename,
 	}
-	// TODO: consider batching.
+	// TODO: consider batching media item creation.
 	mediaItem, err := gphotosClient.MediaItems().Create(ctx, simpleMediaItem)
 	if err != nil {
 		logger.Error("Error creating media item, skipping",
@@ -249,52 +250,21 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 		slog.String("media_id", mediaItem.ID))
 
 	// TODO: consider batch adding items to albums.
-	successfullyAddedToAll := true
-	// TODO: change to iterate over targetAlbumNames and look up each album's id from the map.
-	if len(targetAlbums) > 0 {
-		addedCount := 0
-		var failedAlbums []string
+	for _, albumTitle := range targetAlbumTitles {
+		albumID, ok := albumTitleToIdMap[albumTitle]
+		if !ok {
+			return fmt.Errorf("album '%s' not found in album ID map", albumTitle)
+		}
+		if err := limiter.Wait(ctx); err != nil {
+			return fmt.Errorf("rate limiter error before adding %s to album %s: %w", fileBasename, albumTitle, err)
+		}
+		if err := gphotosClient.Albums().AddMediaItems(ctx, albumID, []string{mediaItem.ID}); err != nil {
+			return fmt.Errorf("error adding media item to album %s: %w", albumTitle, err)
+		}
+		logger.Debug("Added media item to album",
+			slog.String("media_id", mediaItem.ID),
+			slog.String("album_title", albumTitle))
 
-		albumsService := gphotosClient.Albums()
-		for albumID, albumTitle := range targetAlbums {
-			// Wait before adding to album
-			if err := limiter.Wait(ctx); err != nil {
-				return fmt.Errorf("rate limiter error before adding %s to album %s: %w", fileBasename, albumTitle, err)
-			}
-			err = albumsService.AddMediaItems(ctx, albumID, []string{mediaItem.ID})
-			if err != nil {
-				logger.Error("Error adding media item to album",
-					slog.String("media_id", mediaItem.ID),
-					slog.String("album_title", albumTitle),
-					slog.String("album_id", albumID),
-					slog.String("error", err.Error()))
-				failedAlbums = append(failedAlbums, albumTitle)
-				successfullyAddedToAll = false
-			} else {
-				logger.Debug("Added media item to album",
-					slog.String("media_id", mediaItem.ID),
-					slog.String("album_title", albumTitle))
-				addedCount++
-			}
-		}
-		if len(failedAlbums) > 0 {
-			logger.Error("Failed to add to some albums",
-				slog.String("file", fileBasename),
-				slog.Int("failed_count", len(failedAlbums)),
-				slog.Any("failed_albums", failedAlbums))
-		} else if addedCount > 0 {
-			logger.Debug("Successfully added to all target albums",
-				slog.String("file", fileBasename),
-				slog.Int("album_count", addedCount))
-		}
-	}
-
-	if !successfullyAddedToAll {
-		if !keepQueued {
-			logger.Error("File was not successfully added to all target albums, it will not be moved from export queue",
-				slog.String("file", fileBasename))
-		}
-		return nil
 	}
 
 	if keepQueued {
