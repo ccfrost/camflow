@@ -84,9 +84,6 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 		}
 		itemsToUpload = append(itemsToUpload, itemFileInfo{path: path, size: info.Size(), modTime: info.ModTime()})
 		totalSize += info.Size()
-		if err := printNameIfMatch(ctx, path, "Red", "share-family"); err != nil {
-			logger.Warn("failed to do metadata work", "path", path, "error", err)
-		}
 		return nil
 	})
 	if err != nil { // This error is from WalkDir itself, e.g. root dir not found.
