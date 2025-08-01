@@ -52,8 +52,9 @@ func Import(config camflowconfig.CamflowConfig, sdcardDir string, keepSrc bool, 
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("failed to get available space: %w", err)
 	}
-	const GiB = 1 << 30
+
 	if uint64(totalSize) > targetAvailable {
+		const GiB = 1 << 30
 		return ImportResult{}, fmt.Errorf(
 			"not enough space in %s: need %d GiB more: %d GiB needed, %d GiB available",
 			config.PhotosToProcessRoot, totalSize/GiB, targetAvailable/GiB, (uint64(totalSize)-targetAvailable)/GiB)
