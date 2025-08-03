@@ -73,11 +73,11 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 			return nil // Continue walking
 		}
 
-		if d.IsDir() {
+		if d.IsDir() || d.Name() == ".DS_Store" {
 			return nil
 		}
 
-		// Assume all files in the export queue dir are media items to upload.
+		// Assume all other files in the export queue dir are media items to upload.
 		info, statErr := d.Info()
 		if statErr != nil {
 			return fmt.Errorf("failed to get file info for %s: %w", path, statErr)
