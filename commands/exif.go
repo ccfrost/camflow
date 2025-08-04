@@ -32,6 +32,9 @@ func getExifMetadata(ctx context.Context, paths []string) ([]ExifData, error) {
 	cmd := exec.CommandContext(ctx, exiftoolPath, args...)
 	output, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, fmt.Errorf("failed to run exiftool: %w", err)
 	}
 
