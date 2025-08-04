@@ -213,29 +213,32 @@ func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, 
 			return nil
 		}
 
-		// Compute target filename.
+		// Compute target filename and update counts.
 		info, err := dirEnt.Info()
 		if err != nil {
 			return fmt.Errorf("failed to Info() %s: %w", path, err)
 		}
-		relativeDir := info.ModTime().Format("2006/01/02")
+		var targetPath string
 		dirEntPrefix := info.ModTime().Format("2006-01-02-")
-		targetPath := filepath.Join(targetRoot, relativeDir, dirEntPrefix+dirEnt.Name())
-
 		srcEntry := srcDirCounts[filepath.Dir(path)]
-		dstEntry := dstDirCounts[relativeDir]
+		srcDirCounts[filepath.Dir(path)] = srcEntry
 		switch itemType {
 		case ItemTypePhoto:
+			relativeDir := info.ModTime().Format("2006/01/02")
+			targetPath = filepath.Join(targetRoot, relativeDir, dirEntPrefix+dirEnt.Name())
+
+			dstEntry := dstDirCounts[relativeDir]
 			srcEntry.Photos++
 			dstEntry.Photos++
+
+			dstDirCounts[relativeDir] = dstEntry
 		case ItemTypeVideo:
+			targetPath = filepath.Join(targetRoot, dirEntPrefix+dirEnt.Name())
+
 			srcEntry.Videos++
-			dstEntry.Videos++
 		default:
-			panic(fmt.Sprintf("unexpected item type %s for file %s", itemTypeString(itemType), path))
+			return fmt.Errorf("unexpected item type %s for file %s", itemTypeString(itemType), path)
 		}
-		srcDirCounts[filepath.Dir(path)] = srcEntry
-		dstDirCounts[relativeDir] = dstEntry
 
 		// Note: this assumes that there are no duplicate camera file names created on the same day.
 		// That could happen, eg if the camera's counter is reset or if enough photos are taken in that day,

@@ -22,7 +22,6 @@ import (
 type LocalConfig interface {
 	GetExportQueueRoot() string
 	GetExportedRoot() string
-	ExportQueueIsFlat() bool
 }
 
 type GPConfig interface {
@@ -273,20 +272,11 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 		return nil
 	}
 
-	var relPath string
-	if localConfig.ExportQueueIsFlat() {
-		year, month, day, err := parseDatePrefix(fileBasename)
-		if err != nil {
-			return fmt.Errorf("failed to parse date prefix from file name %s: %w", fileBasename, err)
-		}
-		relPath = filepath.Join(year, month, day, fileBasename)
-	} else {
-		var err error
-		relPath, err = filepath.Rel(localConfig.GetExportQueueRoot(), fileInfo.path)
-		if err != nil {
-			return fmt.Errorf("failed to get relative path for %s from export queue root %s: %w", fileInfo.path, localConfig.GetExportQueueRoot(), err)
-		}
+	year, month, day, err := parseDatePrefix(fileBasename)
+	if err != nil {
+		return fmt.Errorf("failed to parse date prefix from file name %s: %w", fileBasename, err)
 	}
+	relPath := filepath.Join(year, month, day, fileBasename)
 	destPath := filepath.Join(localConfig.GetExportedRoot(), relPath)
 	destDir := filepath.Dir(destPath)
 
@@ -321,15 +311,6 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 	logger.Debug("Successfully moved file",
 		slog.String("from", fileInfo.path),
 		slog.String("to", destPath))
-
-	// TODO: this isn't quite idempotent, because if the rename happens and this doesn't, then rerunning uploadMediaItems won't see any files and so won't clean up the empty directories.
-	// TODO: remove/disable this for photos?
-	if err := cleanupEmptyParentDirs(fileInfo.path, localConfig.GetExportQueueRoot()); err != nil {
-		// Log the error but don't cause uploadMediaItem to fail, as cleanup is secondary.
-		logger.Error("Warning: cleanup of export queue directories failed",
-			slog.String("file_path", fileInfo.path),
-			slog.String("error", err.Error()))
-	}
 
 	return nil
 }
@@ -421,79 +402,6 @@ func isSameFilesystem(path1, path2 string) (bool, error) {
 		return false, fmt.Errorf("unable to get filesystem device information for one/both of %s (%t) and %s (%t)", existingPath1, ok1, existingPath2, ok2)
 	}
 	return stat1Sys.Dev == stat2Sys.Dev, nil
-}
-
-// cleanupEmptyParentDirs removes empty parent directories of the moved video file
-// within the export queue area. It cleans directories from the video's original parent
-// up to, but not including, the exportQueueDir.
-// It returns an error if any unexpected issue occurs during the cleanup process.
-func cleanupEmptyParentDirs(videoPath string, rawExportQueueRoot string) error {
-	// This logic cleans up empty parent directories of the moved video,
-	// up to, but not including, the export queue root directory.
-	exportQueueRoot := filepath.Clean(rawExportQueueRoot)
-	currentDirToClean := filepath.Clean(filepath.Dir(videoPath))
-
-	// Loop to remove empty parent directories.
-	// The loop stops if currentDirToClean is the export queue root,
-	// is outside the export queue root, or is not empty.
-	for {
-		// Stop if currentDirToClean is no longer a strict subdirectory of exportQueueRoot,
-		// or if it's the export queue root itself, or a root-like path.
-		// We use strings.HasPrefix to ensure we are within the export queue root's path.
-		// We also check currentDirToClean != exportQueueRoot to ensure we don't process the root itself.
-		if !strings.HasPrefix(currentDirToClean, exportQueueRoot) ||
-			currentDirToClean == exportQueueRoot ||
-			currentDirToClean == "." ||
-			currentDirToClean == string(os.PathSeparator) {
-			return nil
-		}
-
-		// Ensure currentDirToClean is actually a child of exportQueueRoot, not just sharing a prefix.
-		// e.g. /tmp/export-queue-other should not be processed if root is /tmp/export-queue.
-		if !strings.HasPrefix(currentDirToClean, exportQueueRoot+string(os.PathSeparator)) {
-			return nil
-		}
-
-		entries, err := os.ReadDir(currentDirToClean)
-		if err != nil {
-			if os.IsNotExist(err) {
-				// Directory already gone, try its parent.
-				parent := filepath.Dir(currentDirToClean)
-				if parent == currentDirToClean {
-					// Safety break if at filesystem root
-					return nil
-				}
-				currentDirToClean = parent
-				continue
-			}
-			return fmt.Errorf("error reading directory %s during cleanup: %w", currentDirToClean, err)
-		}
-
-		if len(entries) != 0 {
-			// Directory is not empty, stop cleaning up this path.
-			return nil
-		}
-
-		// Directory is empty, attempt to remove it.
-		if removeErr := os.Remove(currentDirToClean); removeErr != nil {
-			if !os.IsNotExist(removeErr) { // Don\'t warn if already gone
-				return fmt.Errorf("failed to remove empty export queue subdirectory %s: %w", currentDirToClean, removeErr)
-			}
-			// If os.IsNotExist, it means it was already removed or disappeared, which is fine.
-			logger.Debug("Export queue subdirectory was already removed or disappeared",
-				slog.String("directory", currentDirToClean))
-		} else {
-			logger.Debug("Successfully removed empty export queue subdirectory",
-				slog.String("directory", currentDirToClean))
-		}
-
-		// Move to the parent directory for the next iteration.
-		parent := filepath.Dir(currentDirToClean)
-		if parent == currentDirToClean { // Safety break if at filesystem root
-			return nil
-		}
-		currentDirToClean = parent
-	}
 }
 
 // albumForKey returns the album name for the given key from the provided keyAlbums slice.

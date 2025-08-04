@@ -88,16 +88,8 @@ func (c *LocalPhotosConfig) GetExportQueueRoot() string {
 	return c.ExportQueueDir
 }
 
-func (c *LocalPhotosConfig) ExportQueueIsFlat() bool {
-	return true
-}
-
 func (c *LocalPhotosConfig) GetExportedRoot() string {
 	return c.ExportedRoot
-}
-
-func (c *LocalVideosConfig) ExportQueueIsFlat() bool {
-	return false
 }
 
 type LocalVideosConfig struct {
