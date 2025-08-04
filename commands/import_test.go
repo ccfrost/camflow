@@ -163,17 +163,17 @@ func calculateExpectedTargetPath(tc testFileCase, photoDir, videoDir string) str
 	}
 
 	year, month, day := tc.modTime.Date()
-	dateSubDir := fmt.Sprintf("%d/%02d/%02d", year, month, day)
 	baseName := filepath.Base(tc.srcRelPath)
 	targetBaseName := fmt.Sprintf("%d-%02d-%02d-%s", year, month, day, baseName)
 
-	var targetDir string
 	if tc.fileType == "photo" {
-		targetDir = photoDir
+		// Photos go to date-based subdirectories
+		dateSubDir := fmt.Sprintf("%d/%02d/%02d", year, month, day)
+		return filepath.Join(photoDir, dateSubDir, targetBaseName)
 	} else {
-		targetDir = videoDir
+		// Videos go directly to the export queue root (flat structure)
+		return filepath.Join(videoDir, targetBaseName)
 	}
-	return filepath.Join(targetDir, dateSubDir, targetBaseName)
 }
 
 func TestMoveFiles(t *testing.T) {

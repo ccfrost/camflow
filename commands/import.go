@@ -221,7 +221,6 @@ func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, 
 		var targetPath string
 		dirEntPrefix := info.ModTime().Format("2006-01-02-")
 		srcEntry := srcDirCounts[filepath.Dir(path)]
-		srcDirCounts[filepath.Dir(path)] = srcEntry
 		switch itemType {
 		case ItemTypePhoto:
 			relativeDir := info.ModTime().Format("2006/01/02")
@@ -239,6 +238,7 @@ func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, 
 		default:
 			return fmt.Errorf("unexpected item type %s for file %s", itemTypeString(itemType), path)
 		}
+		srcDirCounts[filepath.Dir(path)] = srcEntry
 
 		// Note: this assumes that there are no duplicate camera file names created on the same day.
 		// That could happen, eg if the camera's counter is reset or if enough photos are taken in that day,

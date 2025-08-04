@@ -120,22 +120,22 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 			assert.True(t, os.IsNotExist(err), "Source file %s should be deleted", tf.relPath)
 
 			// Calculate expected destination path
-			var targetRoot string
-			if tf.fileType == "photo" {
-				targetRoot = photosToProcessRoot
-			} else {
-				targetRoot = videosExportQueueRoot
-			}
-
 			year, month, day := tf.modTime.Date()
-			dateSubDir := filepath.Join(targetRoot,
-				fmt.Sprintf("%d", year),
-				fmt.Sprintf("%02d", month),
-				fmt.Sprintf("%02d", day))
-
 			baseName := filepath.Base(tf.relPath)
 			targetFileName := fmt.Sprintf("%d-%02d-%02d-%s", year, month, day, baseName)
-			expectedPath := filepath.Join(dateSubDir, targetFileName)
+
+			var expectedPath string
+			if tf.fileType == "photo" {
+				// Photos go to date-based subdirectories
+				dateSubDir := filepath.Join(photosToProcessRoot,
+					fmt.Sprintf("%d", year),
+					fmt.Sprintf("%02d", month),
+					fmt.Sprintf("%02d", day))
+				expectedPath = filepath.Join(dateSubDir, targetFileName)
+			} else {
+				// Videos go directly to the export queue root (flat structure)
+				expectedPath = filepath.Join(videosExportQueueRoot, targetFileName)
+			}
 
 			// Verify destination file exists and has correct content
 			content, err := os.ReadFile(expectedPath)
@@ -165,19 +165,15 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 		mockGPhotosClient.EXPECT().MediaItems().Return(mockMediaItemsSvc).AnyTimes()
 		mockGPhotosClient.EXPECT().Albums().Return(mockAlbumsSvc).AnyTimes()
 
-		// Find video files in orig
+		// Find video files in export queue (flat structure)
 		videoFiles := []string{}
 		for _, tf := range testFiles {
 			if tf.fileType == "video" {
 				year, month, day := tf.modTime.Date()
-				dateSubDir := filepath.Join(videosExportQueueRoot,
-					fmt.Sprintf("%d", year),
-					fmt.Sprintf("%02d", month),
-					fmt.Sprintf("%02d", day))
-
 				baseName := filepath.Base(tf.relPath)
 				targetFileName := fmt.Sprintf("%d-%02d-%02d-%s", year, month, day, baseName)
-				videoPath := filepath.Join(dateSubDir, targetFileName)
+				// Videos go directly to the export queue root (flat structure)
+				videoPath := filepath.Join(videosExportQueueRoot, targetFileName)
 				videoFiles = append(videoFiles, videoPath)
 			}
 		}
@@ -312,12 +308,10 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 		err = UploadVideos(ctx, config, configDir, false, mockGPhotosClient)
 		assert.Error(t, err, "UploadVideos should fail when Google Photos API fails")
 
-		// Verify video file is still in orig dir (not deleted due to upload failure)
+		// Verify video file is still in export queue dir (not deleted due to upload failure)
 		year, month, day := testTime.Date()
+		// Videos use flat structure in export queue
 		expectedVideoPath := filepath.Join(videosExportQueueRoot,
-			fmt.Sprintf("%d", year),
-			fmt.Sprintf("%02d", month),
-			fmt.Sprintf("%02d", day),
 			fmt.Sprintf("%d-%02d-%02d-VID_0001.MP4", year, month, day))
 
 		_, err = os.Stat(expectedVideoPath)
@@ -394,10 +388,8 @@ func TestImportAndUploadVideosIntegration_KeepFlags(t *testing.T) {
 	mockAlbumsSvc.EXPECT().List(gomock.Any()).Return([]albums.Album{*album}, nil)
 
 	year, month, day := testTime.Date()
+	// Videos use flat structure in export queue
 	expectedVideoPath := filepath.Join(videosExportQueueRoot,
-		fmt.Sprintf("%d", year),
-		fmt.Sprintf("%02d", month),
-		fmt.Sprintf("%02d", day),
 		fmt.Sprintf("%d-%02d-%02d-VID_0001.MP4", year, month, day))
 
 	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), expectedVideoPath).
