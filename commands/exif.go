@@ -111,26 +111,44 @@ type ImageStabilizationResult struct {
 	Error    error
 }
 
-// checkImageStabilizationBatch checks thatImage Stabilization was used in a batch of CR3 files.
+// checkImageStabilizationBatch checks that Image Stabilization was used in a batch of CR3 files.
 func checkImageStabilizationBatch(ctx context.Context, paths []string) ([]ImageStabilizationResult, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+
 	exiftoolPath, err := exec.LookPath("exiftool")
 	if err != nil {
 		return nil, fmt.Errorf("exiftool not found in PATH: %w", err)
 	}
 
-	results := make([]ImageStabilizationResult, 0, len(paths))
-	for _, path := range paths {
-		result := ImageStabilizationResult{FilePath: path}
+	args := []string{"-j", "-ImageStabilization"}
+	args = append(args, paths...)
 
-		cmd := exec.CommandContext(ctx, exiftoolPath, "-ImageStabilization", path)
-		output, err := cmd.Output()
+	cmd := exec.CommandContext(ctx, exiftoolPath, args...)
+	output, err := cmd.Output()
+	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		if err != nil {
-			result.Error = err
+		return nil, fmt.Errorf("failed to run exiftool: %w", err)
+	}
+
+	var exifResults []struct {
+		SourceFile         string `json:"SourceFile"`
+		ImageStabilization string `json:"ImageStabilization,omitempty"`
+	}
+	if err := json.Unmarshal(output, &exifResults); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal exiftool output: %w", err)
+	}
+
+	var results []ImageStabilizationResult
+	for _, r := range exifResults {
+		result := ImageStabilizationResult{FilePath: r.SourceFile}
+		if r.ImageStabilization == "" {
+			result.Error = fmt.Errorf("ImageStabilization field not found")
 		} else {
-			hasIS, parseErr := parseImageStabilizationOutput(string(output))
+			hasIS, parseErr := parseImageStabilizationValue(r.ImageStabilization)
 			if parseErr != nil {
 				result.Error = parseErr
 			} else {
@@ -143,14 +161,14 @@ func checkImageStabilizationBatch(ctx context.Context, paths []string) ([]ImageS
 	return results, nil
 }
 
-// parseImageStabilizationOutput parses "Image Stabilization : On (2)" format
-func parseImageStabilizationOutput(output string) (bool, error) {
-	// Look for "Image Stabilization" followed by ":" and then "On" or "Off"
-	// Example: "Image Stabilization             : On (2)"
-	re := regexp.MustCompile(`(?i)image\s+stabilization\s*:\s*(on|off)`)
-	matches := re.FindStringSubmatch(strings.TrimSpace(output))
+// parseImageStabilizationValue parses the ImageStabilization field value
+// Example values: "On (2)", "Off", "On"
+func parseImageStabilizationValue(value string) (bool, error) {
+	// Look for "On" or "Off" at the beginning of the value
+	re := regexp.MustCompile(`(?i)^(on|off)`)
+	matches := re.FindStringSubmatch(strings.TrimSpace(value))
 	if len(matches) < 2 {
-		return false, fmt.Errorf("could not parse Image Stabilization status from: %q", output)
+		return false, fmt.Errorf("could not parse Image Stabilization value: %q", value)
 	}
 
 	status := strings.ToLower(matches[1])
