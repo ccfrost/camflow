@@ -111,19 +111,22 @@ type ImageStabilizationResult struct {
 	Error    error
 }
 
-// checkImageStabilizationBatch processes a batch of CR3 files for Image Stabilization status
+// checkImageStabilizationBatch checks thatImage Stabilization was used in a batch of CR3 files.
 func checkImageStabilizationBatch(ctx context.Context, paths []string) ([]ImageStabilizationResult, error) {
 	exiftoolPath, err := exec.LookPath("exiftool")
 	if err != nil {
-		return nil, fmt.Errorf("exiftool command not found in PATH: %w", err)
+		return nil, fmt.Errorf("exiftool not found in PATH: %w", err)
 	}
 
-	var results []ImageStabilizationResult
+	results := make([]ImageStabilizationResult, 0, len(paths))
 	for _, path := range paths {
 		result := ImageStabilizationResult{FilePath: path}
 
 		cmd := exec.CommandContext(ctx, exiftoolPath, "-ImageStabilization", path)
 		output, err := cmd.Output()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		if err != nil {
 			result.Error = err
 		} else {
