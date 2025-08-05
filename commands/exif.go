@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
+	"strings"
 )
 
 // ExifData holds the extracted metadata for a single file.
@@ -100,4 +102,54 @@ func printNameIfMatch(ctx context.Context, path, label, subject string) error {
 func PrintNameIfMatch(ctx context.Context, path, label, subject string) error {
 	// This is a public function to allow testing.
 	return printNameIfMatch(ctx, path, label, subject)
+}
+
+// ImageStabilizationResult holds the IS check result for one file
+type ImageStabilizationResult struct {
+	FilePath string
+	HasIS    bool
+	Error    error
+}
+
+// checkImageStabilizationBatch processes a batch of CR3 files for Image Stabilization status
+func checkImageStabilizationBatch(ctx context.Context, paths []string) ([]ImageStabilizationResult, error) {
+	exiftoolPath, err := exec.LookPath("exiftool")
+	if err != nil {
+		return nil, fmt.Errorf("exiftool command not found in PATH: %w", err)
+	}
+
+	var results []ImageStabilizationResult
+	for _, path := range paths {
+		result := ImageStabilizationResult{FilePath: path}
+
+		cmd := exec.CommandContext(ctx, exiftoolPath, "-ImageStabilization", path)
+		output, err := cmd.Output()
+		if err != nil {
+			result.Error = err
+		} else {
+			hasIS, parseErr := parseImageStabilizationOutput(string(output))
+			if parseErr != nil {
+				result.Error = parseErr
+			} else {
+				result.HasIS = hasIS
+			}
+		}
+		results = append(results, result)
+	}
+
+	return results, nil
+}
+
+// parseImageStabilizationOutput parses "Image Stabilization : On (2)" format
+func parseImageStabilizationOutput(output string) (bool, error) {
+	// Look for "Image Stabilization" followed by ":" and then "On" or "Off"
+	// Example: "Image Stabilization             : On (2)"
+	re := regexp.MustCompile(`(?i)image\s+stabilization\s*:\s*(on|off)`)
+	matches := re.FindStringSubmatch(strings.TrimSpace(output))
+	if len(matches) < 2 {
+		return false, fmt.Errorf("could not parse Image Stabilization status from: %q", output)
+	}
+
+	status := strings.ToLower(matches[1])
+	return status == "on", nil
 }

@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
@@ -16,14 +17,33 @@ import (
 	"github.com/schollz/progressbar/v3"
 )
 
+// ItemType represents the type of media item being processed.
+type ItemType int
+
+const (
+	ItemTypeUnknown ItemType = iota
+	ItemTypePhoto
+	ItemTypeVideo
+)
+
 type ImportDirEntry struct {
 	RelativeDir string
 	PhotoCount  int
 	VideoCount  int
 }
+
+// ImportedFile represents a file that was imported with its metadata
+type ImportedFile struct {
+	SrcPath  string
+	DstPath  string
+	ModTime  time.Time
+	ItemType ItemType
+}
+
 type ImportResult struct {
-	SrcEntries []ImportDirEntry
-	DstEntries []ImportDirEntry
+	SrcEntries    []ImportDirEntry
+	DstEntries    []ImportDirEntry
+	ImportedFiles []ImportedFile
 }
 
 // Import mvoes the DCIM/ files to the photo to process dir and the export queue video dir.
@@ -79,6 +99,12 @@ func Import(config camflowconfig.CamflowConfig, sdcardDir string, keepSrc bool, 
 		fmt.Printf("warning: failed to close progress bar\n")
 	}
 	fmt.Println() // End the progress bar line.
+
+	// Check Image Stabilization for CR3 files
+	ctx := context.Background()
+	if err := CheckISEnabled(ctx, importRes.ImportedFiles); err != nil {
+		return ImportResult{}, fmt.Errorf("failed to check Image Stabilization: %w", err)
+	}
 
 	if !keepSrc {
 		// Delete any leaf dirs that we moved files out of and are now empty, so that the
@@ -160,13 +186,6 @@ func getAvailableSpace(dir string) (uint64, error) {
 // moveFiles moves files from srcDir into the photo/video dirs for the date of each file.
 // It preserves the modification times.
 func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, bar *progressbar.ProgressBar) (ImportResult, error) {
-	// ItemType represents the type of media item being processed.
-	type ItemType int
-	const (
-		ItemTypeUnknown ItemType = iota
-		ItemTypePhoto
-		ItemTypeVideo
-	)
 	// itemTypeString returns the string representation of ItemType for better debugging.
 	itemTypeString := func(it ItemType) string {
 		switch it {
@@ -185,6 +204,7 @@ func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, 
 	}
 	srcDirCounts := make(map[string]PhotoVideoCount)
 	dstDirCounts := make(map[string]PhotoVideoCount)
+	var importedFiles []ImportedFile
 
 	err := filepath.WalkDir(srcDir, func(path string, dirEnt fs.DirEntry, err error) error {
 		if err != nil {
@@ -247,6 +267,14 @@ func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, 
 			return err
 		}
 
+		// Collect imported file information
+		importedFiles = append(importedFiles, ImportedFile{
+			SrcPath:  path,
+			DstPath:  targetPath,
+			ModTime:  info.ModTime(),
+			ItemType: itemType,
+		})
+
 		if !keepSrc {
 			if err := os.Remove(path); err != nil {
 				return fmt.Errorf("failed to delete source file %s: %w", path, err)
@@ -283,6 +311,7 @@ func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, 
 		return result.DstEntries[i].RelativeDir < result.DstEntries[j].RelativeDir
 	})
 
+	result.ImportedFiles = importedFiles
 	return result, nil
 }
 
@@ -322,4 +351,121 @@ func deleteEmptyDirs(files []string) error {
 		}
 	}
 	return nil
+}
+
+// isCR3File checks if a file path has a CR3 extension (case-insensitive)
+func isCR3File(path string) bool {
+	return strings.ToLower(filepath.Ext(path)) == ".cr3"
+}
+
+// filterCR3Files extracts only CR3 files from imported files
+func filterCR3Files(importedFiles []ImportedFile) []ImportedFile {
+	var cr3Files []ImportedFile
+	for _, f := range importedFiles {
+		if isCR3File(f.DstPath) {
+			cr3Files = append(cr3Files, f)
+		}
+	}
+	return cr3Files
+}
+
+// CheckISEnabled checks Image Stabilization status for imported CR3 files and prints warnings
+func CheckISEnabled(ctx context.Context, importedFiles []ImportedFile) error {
+	const exifBatchSize = 100
+
+	// Filter for CR3 files
+	cr3Files := filterCR3Files(importedFiles)
+	if len(cr3Files) == 0 {
+		return nil // No CR3 files to check
+	}
+
+	// Sort by modification time (newest first) to find most recent
+	sort.Slice(cr3Files, func(i, j int) bool {
+		return cr3Files[i].ModTime.After(cr3Files[j].ModTime)
+	})
+
+	// Process in batches
+	var allResults []ImageStabilizationResult
+	for i := 0; i < len(cr3Files); i += exifBatchSize {
+		end := i + exifBatchSize
+		if end > len(cr3Files) {
+			end = len(cr3Files)
+		}
+
+		batch := cr3Files[i:end]
+		batchPaths := make([]string, len(batch))
+		for j, f := range batch {
+			batchPaths[j] = f.DstPath
+		}
+
+		results, err := checkImageStabilizationBatch(ctx, batchPaths)
+		if err != nil {
+			return fmt.Errorf("failed to check IS for batch starting at %d: %w", i, err)
+		}
+		allResults = append(allResults, results...)
+	}
+
+	// Analyze results and print warning if needed
+	printISWarningIfNeeded(allResults, cr3Files[0].DstPath) // Most recent file
+	return nil
+}
+
+// printISWarningIfNeeded formats and prints the IS warning
+func printISWarningIfNeeded(results []ImageStabilizationResult, mostRecentPath string) {
+	disabledCount := 0
+	errorCount := 0
+	successfulChecks := 0
+
+	for _, r := range results {
+		if r.Error != nil {
+			errorCount++
+		} else {
+			successfulChecks++
+			if !r.HasIS {
+				disabledCount++
+			}
+		}
+	}
+
+	// Log errors if any occurred
+	if errorCount > 0 {
+		fmt.Printf("Warning: Failed to check Image Stabilization for %d of %d CR3 files\n",
+			errorCount, len(results))
+	}
+
+	// Only show IS warning if we have successful checks and some had IS disabled
+	if successfulChecks == 0 || disabledCount == 0 {
+		return // No warning needed
+	}
+
+	// Find IS status of most recent file
+	mostRecentHasIS := false
+	mostRecentCheckSuccessful := false
+	for _, r := range results {
+		if r.FilePath == mostRecentPath {
+			if r.Error == nil {
+				mostRecentHasIS = r.HasIS
+				mostRecentCheckSuccessful = true
+			}
+			break
+		}
+	}
+
+	// Print IS warning with formatting
+	fmt.Printf("⚠️  Image Stabilization Warning:\n")
+	fmt.Printf("   %d of %d Canon CR3 files had Image Stabilization turned OFF\n",
+		disabledCount, successfulChecks)
+
+	if mostRecentCheckSuccessful {
+		if mostRecentHasIS {
+			fmt.Printf("   ✓ Most recent photo (%s) has IS ON - looks like you've fixed it!\n",
+				filepath.Base(mostRecentPath))
+		} else {
+			fmt.Printf("   ✗ Most recent photo (%s) still has IS OFF\n",
+				filepath.Base(mostRecentPath))
+		}
+	} else {
+		fmt.Printf("   ? Most recent photo (%s) could not be checked for IS status\n",
+			filepath.Base(mostRecentPath))
+	}
 }
