@@ -269,7 +269,6 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 // It updates "bar" with the bytes it has uploaded.
 // It deletes the file after uploading if "keepQueued" is false.
 // "targetAlbumIDs" are the ids for DefaultAlbums in the config.
-// TODO: need albumNames and albumNameToIdMap.
 func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConfig, gphotosClient GPhotosClient, fileInfo itemFileInfo, targetAlbumTitles []string, albumTitleToIdMap map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter) error {
 	fileBasename := filepath.Base(fileInfo.path)
 	bar.Describe(fmt.Sprintf("Uploading %s", fileBasename))
