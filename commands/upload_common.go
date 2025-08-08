@@ -37,6 +37,105 @@ type itemFileInfo struct {
 	modTime time.Time
 }
 
+// scanExportQueue walks the export queue directory and returns the list of files to process,
+// the total size of those files, and a slice of non-fatal warnings encountered during the walk.
+func scanExportQueue(exportQueueDir string) ([]itemFileInfo, int64, error) {
+	if _, err := os.Stat(exportQueueDir); os.IsNotExist(err) {
+		return nil, 0, fmt.Errorf("export queue directory does not exist: %s", exportQueueDir)
+	}
+
+	var items []itemFileInfo
+	var totalSize int64
+	var numWalkErrors int
+	err := filepath.WalkDir(exportQueueDir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			// If the error is about the root exportQueueDir itself not existing, propagate it.
+			if path == exportQueueDir && os.IsNotExist(walkErr) {
+				return fmt.Errorf("export queue directory '%s' disappeared or unreadable: %w", exportQueueDir, walkErr)
+			}
+			// For other errors (e.g. permission on a sub-file/dir), collect and continue.
+			logger.Error("Error accessing path during walk, skipping",
+				slog.String("path", path),
+				slog.String("error", walkErr.Error()))
+			numWalkErrors++
+			return nil
+		}
+
+		if d.IsDir() || d.Name() == ".DS_Store" {
+			return nil
+		}
+
+		info, statErr := d.Info()
+		if statErr != nil {
+			return fmt.Errorf("failed to get file info for %s: %w", path, statErr)
+		}
+		items = append(items, itemFileInfo{path: path, size: info.Size(), modTime: info.ModTime()})
+		totalSize += info.Size()
+		return nil
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to walk export queue dir '%s': %w", exportQueueDir, err)
+	}
+	if numWalkErrors > 0 {
+		logger.Warn("Encountered errors during directory walk, proceeding with successfully found files",
+			slog.Int("error_count", numWalkErrors))
+	}
+	return items, totalSize, nil
+}
+
+// moveToExported moves a single media item from export queue to the exported directory.
+// Returns the destination path.
+func moveToExported(localConfig LocalConfig, fileInfo itemFileInfo) (string, error) {
+	fileBasename := filepath.Base(fileInfo.path)
+
+	year, month, day, err := parseDatePrefix(fileBasename)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse date prefix from file name %s: %w", fileBasename, err)
+	}
+	relPath := filepath.Join(year, month, day, fileBasename)
+	destPath := filepath.Join(localConfig.GetExportedRoot(), relPath)
+	destDir := filepath.Dir(destPath)
+
+	logger.Debug("Moving file",
+		slog.String("from", fileInfo.path),
+		slog.String("to", destPath))
+
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create destination directory %s for moving %s: %w", destDir, fileInfo.path, err)
+	}
+
+	// Destination collision handling
+	if _, statErr := os.Stat(destPath); statErr == nil {
+		return "", fmt.Errorf("failed to move %s: destination file %s already exists", fileInfo.path, destPath)
+	} else if !os.IsNotExist(statErr) {
+		return "", fmt.Errorf("failed to check destination %s: %w", destPath, statErr)
+	}
+
+	// Move the file
+	sameFilesystem, err := isSameFilesystem(fileInfo.path, destDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to check if source and destination are on the same filesystem: %w", err)
+	}
+	if sameFilesystem {
+		if err := os.Rename(fileInfo.path, destPath); err != nil {
+			return "", fmt.Errorf("failed to move %s from export queue to %s: %w", fileInfo.path, destPath, err)
+		}
+	} else {
+		// Cross-filesystem move: copy then delete.
+		// TOOD: clean up the possible .tmp file that could be left if this doesn't complete.
+		if err := copyFile(fileInfo.path, destPath, fileInfo.size, fileInfo.modTime, nil /*bar*/); err != nil {
+			return "", fmt.Errorf("failed to copy %s to %s: %w", fileInfo.path, destPath, err)
+		}
+		if err := os.Remove(fileInfo.path); err != nil {
+			return "", fmt.Errorf("failed to remove original file %s after copying to %s: %w", fileInfo.path, destPath, err)
+		}
+	}
+	logger.Debug("Successfully moved file",
+		slog.String("from", fileInfo.path),
+		slog.String("to", destPath))
+	return destPath, nil
+}
+
 // uploadMediaItems uploads media items from the export queue dir to Google Photos.
 // Media items are added to Google Photos album named DefaultAlbum.
 // Uploaded media items are moved from export queue to exported dir; unless keepQueued is true, in which case they are copied (but not moved).
@@ -54,43 +153,9 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 	// TODO: check the actual rate limits for Google Photos API.
 	limiter := rate.NewLimiter(rate.Every(time.Second/5), 10)
 
-	// List all files in export queue, store path and size, calculate total size
-	var itemsToUpload []itemFileInfo
-	var totalSize int64
-	var walkErrs []error
-	err := filepath.WalkDir(exportQueueDir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			// If the error is about the root exportQueueDir itself not existing, propagate it.
-			if path == exportQueueDir && os.IsNotExist(err) {
-				return fmt.Errorf("export queue directory '%s' disappeared or unreadable: %w", exportQueueDir, err)
-			}
-			// For other errors (e.g. permission on a sub-file/dir), log and try to continue.
-			logger.Error("Error accessing path during walk, skipping",
-				slog.String("path", path),
-				slog.String("error", err.Error()))
-			walkErrs = append(walkErrs, err)
-			return nil // Continue walking
-		}
-
-		if d.IsDir() || d.Name() == ".DS_Store" {
-			return nil
-		}
-
-		// Assume all other files in the export queue dir are media items to upload.
-		info, statErr := d.Info()
-		if statErr != nil {
-			return fmt.Errorf("failed to get file info for %s: %w", path, statErr)
-		}
-		itemsToUpload = append(itemsToUpload, itemFileInfo{path: path, size: info.Size(), modTime: info.ModTime()})
-		totalSize += info.Size()
-		return nil
-	})
-	if err != nil { // This error is from WalkDir itself, e.g. root dir not found.
-		return fmt.Errorf("failed to walk export queue dir '%s': %w", exportQueueDir, err)
-	}
-	if len(walkErrs) > 0 {
-		logger.Warn("Encountered errors during directory walk, proceeding with successfully found files",
-			slog.Int("error_count", len(walkErrs)))
+	itemsToUpload, totalSize, err := scanExportQueue(exportQueueDir)
+	if err != nil {
+		return err
 	}
 
 	if len(itemsToUpload) == 0 {
@@ -266,51 +331,15 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 
 	}
 
-	if keepQueued {
-		logger.Debug("Keeping file in export queue directory as per keepQueued flag",
-			slog.String("file", fileInfo.path))
-		return nil
-	}
-
-	year, month, day, err := parseDatePrefix(fileBasename)
-	if err != nil {
-		return fmt.Errorf("failed to parse date prefix from file name %s: %w", fileBasename, err)
-	}
-	relPath := filepath.Join(year, month, day, fileBasename)
-	destPath := filepath.Join(localConfig.GetExportedRoot(), relPath)
-	destDir := filepath.Dir(destPath)
-
-	// Check for collision at destination
-	if _, err := os.Stat(destPath); err == nil {
-		return fmt.Errorf("failed to move %s: destination file %s already exists", fileInfo.path, destPath)
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("failed to move %s: error checking destination %s: %w", fileInfo.path, destPath, err)
-	}
-
-	logger.Debug("Moving file",
-		slog.String("from", fileInfo.path),
-		slog.String("to", destPath))
-	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return fmt.Errorf("failed to create destination directory %s for moving %s: %w", destDir, fileInfo.path, err)
-	}
-	if sameFilesystem, err := isSameFilesystem(fileInfo.path, destDir); err != nil {
-		return fmt.Errorf("failed to check if source and destination are on the same filesystem: %w", err)
-	} else if sameFilesystem {
-		if err := os.Rename(fileInfo.path, destPath); err != nil {
-			return fmt.Errorf("failed to move %s from export queue to %s: %w", fileInfo.path, destPath, err)
+	// Only move when keepQueued is false; uploading with keepQueued=true does not copy to exported.
+	if !keepQueued {
+		if _, err := moveToExported(localConfig, fileInfo); err != nil {
+			return err
 		}
 	} else {
-		// TODO: clean up the possible .tmp file that could be left behind if this doesn't complete.
-		if err := copyFile(fileInfo.path, destPath, fileInfo.size, fileInfo.modTime, nil /*bar*/); err != nil {
-			return fmt.Errorf("failed to copy %s to %s: %w", fileInfo.path, destPath, err)
-		}
-		if err := os.Remove(fileInfo.path); err != nil {
-			return fmt.Errorf("failed to remove original file %s after copying to %s: %w", fileInfo.path, destPath, err)
-		}
+		logger.Debug("Keeping file in export queue directory as per keepQueued flag",
+			slog.String("file", fileInfo.path))
 	}
-	logger.Debug("Successfully moved file",
-		slog.String("from", fileInfo.path),
-		slog.String("to", destPath))
 
 	return nil
 }

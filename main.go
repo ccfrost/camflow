@@ -175,24 +175,16 @@ Successfully uploaded videos are deleted from staging unless --keep is specified
 		Use:   "mark-videos-exported",
 		Short: "Move videos from export queue to exported directory without uploading",
 		Long: `Move videos from the export queue to the exported directory.
-This is a workaround for when uploads don't work correctly.
-Videos are moved from staging unless --keep is specified.`,
+This is a workaround for video uploads not preserving the video's timezone.`,
 		Args: cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
-			keep, err := cmd.Flags().GetBool("keep")
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "error: invalid keep flag:", err)
-				os.Exit(1)
-			}
-
 			ctx := context.Background()
-			if err := commands.MarkVideosExported(ctx, config, keep); err != nil {
+			if err := commands.MarkVideosExported(ctx, config); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}
 		},
 	}
-	markVideosExportedCmd.Flags().BoolP("keep", "k", false, "Keep videos in staging (copy instead of move)")
 	rootCmd.AddCommand(&markVideosExportedCmd)
 
 	if err := rootCmd.Execute(); err != nil {
