@@ -332,9 +332,9 @@ func TestUploadVideos_ErrorCreateMediaItem(t *testing.T) {
 		Return(nil, errors.New(expectedErrStr))
 
 	err := UploadVideos(ctx, cfg, tempConfigDir, false, mockGPhotosClient)
-	// The main UploadVideos function currently continues on CreateMediaItem error, so no top-level error is expected here.
-	// It logs the error and proceeds. If this behavior changes, this check needs an update.
-	assert.NoError(t, err, "UploadVideos failed unexpectedly: %v. Expected to continue on CreateMediaItem error.", err)
+	// UploadVideos should now return an error when CreateMediaItem fails.
+	require.Error(t, err, "Expected UploadVideos to fail due to CreateMediaItem error, but it succeeded")
+	assert.Contains(t, err.Error(), expectedErrStr, "Error message should include the CreateMediaItem failure")
 
 	_, statErr := os.Stat(filepath.Join(cfg.VideosExportQueueRoot, videoFileName))
 	assert.NoError(t, statErr, "Expected %s to be kept in exportQueue after CreateMediaItem failure, but it was deleted (os.IsNotExist was true for stat error: %v)", videoFileName, statErr)

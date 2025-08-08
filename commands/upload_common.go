@@ -302,11 +302,7 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 	// TODO: consider batching media item creation.
 	mediaItem, err := gphotosClient.MediaItems().Create(ctx, simpleMediaItem)
 	if err != nil {
-		logger.Error("Error creating media item, skipping",
-			slog.String("file", fileBasename),
-			slog.String("token", uploadToken),
-			slog.String("error", err.Error()))
-		return nil // Skip to the next item, progress bar will be updated by defer
+		return fmt.Errorf("failed to create media item for %s: uploadToken %s: %w", fileBasename, uploadToken, err)
 	}
 	logger.Debug("Successfully created media item",
 		slog.String("file", fileBasename),
