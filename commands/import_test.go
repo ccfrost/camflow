@@ -211,7 +211,7 @@ func TestMoveFiles(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verification: Check targets and source deletion
-		expectedResultMap := make(map[string]ImportDirEntry)
+		expectedResultMap := make(map[string]ImportSrcDirEntry)
 
 		for _, tc := range testCases {
 			fullSrcPath := srcPaths[tc.srcRelPath]
@@ -257,7 +257,7 @@ func TestMoveFiles(t *testing.T) {
 		}
 
 		// Convert expected result map to slice for comparison
-		expectedResult := []ImportDirEntry{}
+		expectedResult := []ImportSrcDirEntry{}
 		for _, entry := range expectedResultMap {
 			expectedResult = append(expectedResult, entry)
 		}
@@ -297,7 +297,7 @@ func TestMoveFiles(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verification: Check targets and source *retention*
-		expectedResultMap := make(map[string]ImportDirEntry)
+		expectedResultMap := make(map[string]ImportSrcDirEntry)
 
 		for _, tc := range testCases {
 			fullSrcPath := srcPaths[tc.srcRelPath]
@@ -342,7 +342,7 @@ func TestMoveFiles(t *testing.T) {
 		}
 
 		// Convert expected result map to slice
-		expectedResult := []ImportDirEntry{}
+		expectedResult := []ImportSrcDirEntry{}
 		for _, entry := range expectedResultMap {
 			expectedResult = append(expectedResult, entry)
 		}

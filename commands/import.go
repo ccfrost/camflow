@@ -26,10 +26,15 @@ const (
 	ItemTypeVideo
 )
 
-type ImportDirEntry struct {
+type ImportSrcDirEntry struct {
 	RelativeDir string
 	PhotoCount  int
 	VideoCount  int
+}
+
+type ImportDstDirEntry struct {
+	RelativeDir string
+	PhotoCount  int
 }
 
 // ImportedFile represents a file that was imported with its metadata
@@ -41,8 +46,8 @@ type ImportedFile struct {
 }
 
 type ImportResult struct {
-	SrcEntries    []ImportDirEntry
-	DstEntries    []ImportDirEntry
+	SrcEntries    []ImportSrcDirEntry
+	DstEntries    []ImportDstDirEntry
 	ImportedFiles []ImportedFile
 }
 
@@ -205,7 +210,7 @@ func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, 
 		Videos int
 	}
 	srcDirCounts := make(map[string]PhotoVideoCount)
-	dstDirCounts := make(map[string]PhotoVideoCount)
+	photoDstDirCounts := make(map[string]PhotoVideoCount)
 	var importedFiles []ImportedFile
 
 	err := filepath.WalkDir(srcDir, func(path string, dirEnt fs.DirEntry, err error) error {
@@ -248,11 +253,11 @@ func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, 
 			relativeDir := info.ModTime().Format("2006/01/02")
 			targetPath = filepath.Join(targetRoot, relativeDir, dirEntPrefix+dirEnt.Name())
 
-			dstEntry := dstDirCounts[relativeDir]
 			srcEntry.Photos++
-			dstEntry.Photos++
 
-			dstDirCounts[relativeDir] = dstEntry
+			dstEntry := photoDstDirCounts[relativeDir]
+			dstEntry.Photos++
+			photoDstDirCounts[relativeDir] = dstEntry
 		case ItemTypeVideo:
 			targetPath = filepath.Join(targetRoot, dirEntPrefix+dirEnt.Name())
 
@@ -292,7 +297,7 @@ func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, 
 	var result ImportResult
 
 	for dir, entry := range srcDirCounts {
-		result.SrcEntries = append(result.SrcEntries, ImportDirEntry{
+		result.SrcEntries = append(result.SrcEntries, ImportSrcDirEntry{
 			RelativeDir: dir,
 			PhotoCount:  entry.Photos,
 			VideoCount:  entry.Videos,
@@ -302,11 +307,10 @@ func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, 
 		return result.SrcEntries[i].RelativeDir < result.SrcEntries[j].RelativeDir
 	})
 
-	for dir, entry := range dstDirCounts {
-		result.DstEntries = append(result.DstEntries, ImportDirEntry{
+	for dir, entry := range photoDstDirCounts {
+		result.DstEntries = append(result.DstEntries, ImportDstDirEntry{
 			RelativeDir: dir,
 			PhotoCount:  entry.Photos,
-			VideoCount:  entry.Videos,
 		})
 	}
 	sort.Slice(result.DstEntries, func(i, j int) bool {
