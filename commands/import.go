@@ -117,12 +117,14 @@ func Import(config camflowconfig.CamflowConfig, sdcardDir string, keepSrc bool, 
 	// Eject the sdcard, because there is nothing else to do with it.
 	// Only attempt to eject if this appears to be a real mounted volume under /Volumes/
 	if strings.HasPrefix(sdcardDir, "/Volumes/") {
+		fmt.Printf("Ejecting sdcard...")
+		os.Stdout.Sync()
 		cmd := exec.Command("diskutil", "eject", sdcardDir)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			return ImportResult{}, fmt.Errorf("failed to eject disk at %s: %s, error: %w", sdcardDir, string(output), err)
 		}
-		fmt.Printf("Ejected sdcard\n")
+		fmt.Printf(" done\n")
 	} else {
 		fmt.Printf("Skipping disk ejection for non-volume path: %s\n", sdcardDir)
 	}
