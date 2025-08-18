@@ -244,7 +244,7 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 
 	bar := progressbar.DefaultBytes(
 		totalSize,
-		fmt.Sprint("Uploading ", itemTypePluralName),
+		"Uploading",
 	)
 
 	// TODO: consider batching adding media items to albums. How to make it idempotent in face of failure part way through?
@@ -271,7 +271,7 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 // "targetAlbumIDs" are the ids for DefaultAlbums in the config.
 func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConfig, gphotosClient GPhotosClient, fileInfo itemFileInfo, targetAlbumTitles []string, albumTitleToIdMap map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter) error {
 	fileBasename := filepath.Base(fileInfo.path)
-	bar.Describe(fmt.Sprintf("Uploading %s", fileBasename))
+	bar.Describe("Uploading")
 
 	// Defer the progress bar update to ensure it happens once per file attempt.
 	defer bar.Add64(fileInfo.size)
