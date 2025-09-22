@@ -86,16 +86,7 @@ func Import(config camflowconfig.CamflowConfig, sdcardDir string, keepSrc bool, 
 	}
 
 	// Move the files into the target dirs.
-	bar := progressbar.NewOptions64(totalSize,
-		progressbar.OptionSetDescription("moving:"),
-		progressbar.OptionSetWidth(20), // Fit in an 80-column terminal.
-		progressbar.OptionShowBytes(true),
-		progressbar.OptionUseIECUnits(true),
-		progressbar.OptionShowCount(), // Show number of bytes moved.
-		progressbar.OptionSetPredictTime(true),
-		progressbar.OptionShowTotalBytes(true),
-		progressbar.OptionShowElapsedTimeOnFinish(),
-	)
+	bar := NewProgressBar(totalSize, "moving")
 	importRes, err := moveFiles(config, srcDir, keepSrc, bar)
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("failed to move files: %w", err)

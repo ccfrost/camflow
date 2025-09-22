@@ -6,10 +6,8 @@ import (
 	"log/slog"
 	"math"
 	"os"
-	"path/filepath"
 
 	"github.com/ccfrost/camflow/camflowconfig"
-	"github.com/schollz/progressbar/v3"
 )
 
 // MarkVideosExported moves videos from the video export queue to the exported directory.
@@ -43,14 +41,9 @@ func MarkVideosExported(ctx context.Context, config camflowconfig.CamflowConfig)
 		slog.Float64("total_size_gb", math.Ceil(float64(totalSize)/1024/1024/1024)))
 
 	// Move media items to exported directory with progress bar
-	bar := progressbar.DefaultBytes(
-		totalSize,
-		"Moving videos to exported directory",
-	)
+	bar := NewProgressBar(totalSize, "moving")
 
 	for _, fileInfo := range itemsToMove {
-		base := filepath.Base(fileInfo.path)
-		bar.Describe(fmt.Sprintf("Moving %s", base))
 		if _, err := moveToExported(&config.LocalVideos, fileInfo); err != nil {
 			return fmt.Errorf("failed to move media item %s: %w", fileInfo.path, err)
 		}
@@ -58,6 +51,7 @@ func MarkVideosExported(ctx context.Context, config camflowconfig.CamflowConfig)
 	}
 
 	_ = bar.Finish()
+	fmt.Println() // End the progress bar line.
 
 	logger.Debug("Finished moving videos to exported directory")
 	return nil
