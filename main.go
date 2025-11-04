@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
-	"os" // Added for filepath.Dir
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ccfrost/camflow/camflowconfig"
@@ -178,6 +180,21 @@ Successfully uploaded videos are deleted from staging unless --keep is specified
 This is a workaround for video uploads not preserving the video's timezone.`,
 		Args: cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
+			// Confirm with user to protect against accidental invocation.
+			reader := bufio.NewReader(os.Stdin)
+			fmt.Print("Confirm: move all videos in export queue to the exported directory? [y/N]: ")
+			response, err := reader.ReadString('\n')
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "error: failed to read confirmation:", err)
+				os.Exit(1)
+			}
+
+			response = strings.TrimSpace(strings.ToLower(response))
+			if response != "y" && response != "yes" {
+				fmt.Println("Aborted")
+				return
+			}
+
 			ctx := context.Background()
 			if err := commands.MarkVideosExported(ctx, config); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
