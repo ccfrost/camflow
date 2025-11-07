@@ -113,14 +113,14 @@ func Import(config camflowconfig.CamflowConfig, sdcardDir string, keepSrc bool, 
 	// Eject the sdcard, because there is nothing else to do with it.
 	// Only attempt to eject if this appears to be a real mounted volume under /Volumes/
 	if strings.HasPrefix(sdcardDir, "/Volumes/") {
-		fmt.Printf("Ejecting sdcard...")
+		fmt.Printf("Ejecting sdcard... ")
 		os.Stdout.Sync()
 		cmd := exec.Command("diskutil", "eject", sdcardDir)
 		output, err := cmd.CombinedOutput()
 		if err != nil {
 			return ImportResult{}, fmt.Errorf("failed to eject disk at %s: %s, error: %w", sdcardDir, string(output), err)
 		}
-		fmt.Printf(" done\n")
+		fmt.Printf("done\n")
 	} else {
 		fmt.Printf("Skipping disk ejection for non-volume path: %s\n", sdcardDir)
 	}
@@ -370,6 +370,8 @@ func filterCR3Files(importedFiles []ImportedFile) []ImportedFile {
 func CheckISEnabled(ctx context.Context, importedFiles []ImportedFile) error {
 	const exifBatchSize = 100
 
+	fmt.Printf("Running IS check... ")
+
 	// Filter for CR3 files
 	cr3Files := filterCR3Files(importedFiles)
 	if len(cr3Files) == 0 {
@@ -401,6 +403,8 @@ func CheckISEnabled(ctx context.Context, importedFiles []ImportedFile) error {
 		}
 		allResults = append(allResults, results...)
 	}
+
+	fmt.Println("done")
 
 	// Analyze results and print warning if needed
 	printISWarningIfNeeded(allResults, cr3Files[0].DstPath) // Most recent file
