@@ -1,0 +1,9 @@
+camflow
+
+.DS_Store
+.claude/
+
+my-config.toml
+sandbox/
+tmp/
+*.log
