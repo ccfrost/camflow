@@ -1,4 +1,4 @@
-package commands
+package lib
 
 import (
 	"log/slog"

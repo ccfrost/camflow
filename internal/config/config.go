@@ -1,4 +1,4 @@
-package camflowconfig
+package config
 
 import (
 	"fmt"

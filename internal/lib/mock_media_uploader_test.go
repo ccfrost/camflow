@@ -2,7 +2,7 @@
 // Source: github.com/gphotosuploader/google-photos-api-client-go/v3 (interfaces: MediaUploader)
 
 // Package commands is a generated GoMock package.
-package commands
+package lib
 
 import (
 	context "context"

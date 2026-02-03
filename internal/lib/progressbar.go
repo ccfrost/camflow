@@ -1,4 +1,4 @@
-package commands
+package lib
 
 import "github.com/schollz/progressbar/v3"
 

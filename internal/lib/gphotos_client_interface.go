@@ -1,7 +1,7 @@
 //go:generate go run github.com/golang/mock/mockgen -source=${GOFILE} -destination=zz_generated_local_mocks_test.go -package=commands GPhotosClient,AppAlbumsService,AppMediaItemsService
 //go:generate go run github.com/golang/mock/mockgen -destination=mock_media_uploader_test.go -package=commands github.com/gphotosuploader/google-photos-api-client-go/v3 MediaUploader
 
-package commands
+package lib
 
 import (
 	"context"

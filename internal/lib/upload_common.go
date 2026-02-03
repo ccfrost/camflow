@@ -1,4 +1,4 @@
-package commands
+package lib
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"time"
 
 	//"github.com/evanoberholster/imagemeta/xmp"
-	"github.com/ccfrost/camflow/camflowconfig"
+	"github.com/ccfrost/camflow/internal/config"
 	"github.com/gphotosuploader/google-photos-api-client-go/v3/media_items"
 	"github.com/schollz/progressbar/v3"
 	"golang.org/x/time/rate"
@@ -26,8 +26,8 @@ type LocalConfig interface {
 
 type GPConfig interface {
 	GetDefaultAlbum() string
-	GetLabelAlbums() []camflowconfig.KeyAlbum
-	GetSubjectAlbums() []camflowconfig.KeyAlbum
+	GetLabelAlbums() []config.KeyAlbum
+	GetSubjectAlbums() []config.KeyAlbum
 }
 
 // itemFileInfo stores path and size for progress tracking.
@@ -426,7 +426,7 @@ func isSameFilesystem(path1, path2 string) (bool, error) {
 }
 
 // albumForKey returns the album name for the given key from the provided keyAlbums slice.
-func albumForKey(keyAlbums []camflowconfig.KeyAlbum, key string) (string, bool) {
+func albumForKey(keyAlbums []config.KeyAlbum, key string) (string, bool) {
 	for _, ka := range keyAlbums {
 		if ka.Key == key {
 			return ka.Album, true

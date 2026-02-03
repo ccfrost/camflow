@@ -1,4 +1,4 @@
-package commands
+package lib
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ccfrost/camflow/camflowconfig"
+	"github.com/ccfrost/camflow/internal/config"
 	"github.com/golang/mock/gomock"
 	"github.com/gphotosuploader/google-photos-api-client-go/v3/albums"
 	"github.com/gphotosuploader/google-photos-api-client-go/v3/media_items"
@@ -21,10 +21,10 @@ import (
 func TestImportAndUploadVideosIntegration(t *testing.T) {
 	ctx := context.Background()
 
-	// Setup test directories and config using the helper
+	// Setup test directories and cfg using the helper
 	photosDefaultAlbum := "Test Album Photos"
 	videosDefaultAlbum := "Test Album Videos"
-	config := newTestConfig(t, photosDefaultAlbum, videosDefaultAlbum) // Use helper from util_test.go
+	cfg := newTestConfig(t, photosDefaultAlbum, videosDefaultAlbum) // Use helper from util_test.go
 	sdCardRoot := t.TempDir()                                          // Still need a separate SD card root
 	configDir := t.TempDir()                                           // For album cache, etc.
 
@@ -33,9 +33,9 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 	require.NoError(t, os.MkdirAll(dcimDir, 0755))
 
 	// The newTestConfig helper already creates PhotosToProcessRoot and VideosExportQueueRoot
-	photosToProcessRoot := config.PhotosToProcessRoot
-	videosExportQueueRoot := config.VideosExportQueueRoot
-	// VideosExportedRoot is also created by newTestConfig, can be accessed via config.VideosExportedRoot if needed for verification
+	photosToProcessRoot := cfg.PhotosToProcessRoot
+	videosExportQueueRoot := cfg.VideosExportQueueRoot
+	// VideosExportedRoot is also created by newTestConfig, can be accessed via cfg.VideosExportedRoot if needed for verification
 
 	// Define test files with specific modification times
 	testTime1 := time.Date(2024, 5, 15, 10, 30, 0, 0, time.UTC)
@@ -91,7 +91,7 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 
 	t.Run("Step1_ImportFiles", func(t *testing.T) {
 		// Run the import command - pass the SD card root, not the DCIM dir
-		importResult, err := Import(config, sdCardRoot, false, time.Now()) // keepSrc = false
+		importResult, err := Import(cfg, sdCardRoot, false, time.Now()) // keepSrc = false
 		require.NoError(t, err, "Import command should succeed")
 
 		// Verify import results
@@ -210,7 +210,7 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 		}
 
 		// Run upload-videos command
-		err := UploadVideos(ctx, config, configDir, false, mockGPhotosClient) // keepTargetRoot = false
+		err := UploadVideos(ctx, cfg, configDir, false, mockGPhotosClient) // keepTargetRoot = false
 		require.NoError(t, err, "UploadVideos command should succeed")
 
 		// Verify videos were deleted from orig (keepTargetRoot = false)
@@ -253,7 +253,7 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 		// Setup test directories with a video file
 		photosDefaultAlbum := "Test Album Photos"
 		videosDefaultAlbum := "Test Album Videos"
-		config := newTestConfig(t, photosDefaultAlbum, videosDefaultAlbum) // Use helper
+		cfg := newTestConfig(t, photosDefaultAlbum, videosDefaultAlbum) // Use helper
 		sdCardRoot := t.TempDir()
 		configDir := t.TempDir() // For album cache
 
@@ -262,8 +262,8 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 		require.NoError(t, os.MkdirAll(dcimDir, 0755))
 
 		// Config fields are now set by newTestConfig
-		// photosToProcessRoot := config.PhotosToProcessRoot // Not directly used in this specific sub-test for video
-		videosExportQueueRoot := config.VideosExportQueueRoot
+		// photosToProcessRoot := cfg.PhotosToProcessRoot // Not directly used in this specific sub-test for video
+		videosExportQueueRoot := cfg.VideosExportQueueRoot
 
 		// Create a test video file
 		testTime := time.Date(2024, 5, 15, 10, 30, 0, 0, time.UTC)
@@ -273,9 +273,9 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 		require.NoError(t, os.Chtimes(videoPath, testTime, testTime))
 
 		// Import the video
-		// The Import command needs all photo paths in config to be valid for its own validation,
+		// The Import command needs all photo paths in cfg to be valid for its own validation,
 		// even if we are only testing video upload failure. newTestConfig handles this.
-		_, err := Import(config, sdCardRoot, false, time.Now())
+		_, err := Import(cfg, sdCardRoot, false, time.Now())
 		require.NoError(t, err)
 
 		// Setup mocks for upload failure
@@ -305,7 +305,7 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 			Return("", assert.AnError)
 
 		// Run upload-videos command (should fail)
-		err = UploadVideos(ctx, config, configDir, false, mockGPhotosClient)
+		err = UploadVideos(ctx, cfg, configDir, false, mockGPhotosClient)
 		assert.Error(t, err, "UploadVideos should fail when Google Photos API fails")
 
 		// Verify video file is still in export queue dir (not deleted due to upload failure)
@@ -320,10 +320,10 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 
 	t.Run("ConfigValidationError", func(t *testing.T) {
 		// Test with invalid configuration
-		invalidConfig := camflowconfig.CamflowConfig{
+		invalidConfig := config.CamflowConfig{
 			// Missing required paths. newTestConfig cannot be used here as it creates a valid config.
 			// To test Validate() properly for missing paths, we manually create an incomplete config.
-			GooglePhotos: camflowconfig.GooglePhotosConfig{ // Need this to avoid nil pointer if Validate() on it is called
+			GooglePhotos: config.GooglePhotosConfig{ // Need this to avoid nil pointer if Validate() on it is called
 				ClientId:     "test",
 				ClientSecret: "test",
 				RedirectURI:  "test",
@@ -331,7 +331,7 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 		}
 
 		err := invalidConfig.Validate()
-		assert.Error(t, err, "Invalid config should fail validation")
+		assert.Error(t, err, "Invalid cfg should fail validation")
 	})
 }
 
@@ -339,10 +339,10 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 func TestImportAndUploadVideosIntegration_KeepFlags(t *testing.T) {
 	ctx := context.Background()
 
-	// Setup test directories and config using the helper
+	// Setup test directories and cfg using the helper
 	photosDefaultAlbum := "Test Album Photos"
 	videosDefaultAlbum := "Test Album Videos"
-	config := newTestConfig(t, photosDefaultAlbum, videosDefaultAlbum) // Use helper
+	cfg := newTestConfig(t, photosDefaultAlbum, videosDefaultAlbum) // Use helper
 	sdCardRoot := t.TempDir()
 	configDir := t.TempDir() // For album cache
 
@@ -351,8 +351,8 @@ func TestImportAndUploadVideosIntegration_KeepFlags(t *testing.T) {
 	require.NoError(t, os.MkdirAll(dcimDir, 0755))
 
 	// Config fields are now set by newTestConfig
-	// photosToProcessRoot := config.PhotosToProcessRoot // Not directly used here
-	videosExportQueueRoot := config.VideosExportQueueRoot
+	// photosToProcessRoot := cfg.PhotosToProcessRoot // Not directly used here
+	videosExportQueueRoot := cfg.VideosExportQueueRoot
 
 	// Create a test video file
 	testTime := time.Date(2024, 5, 15, 10, 30, 0, 0, time.UTC)
@@ -362,8 +362,8 @@ func TestImportAndUploadVideosIntegration_KeepFlags(t *testing.T) {
 	require.NoError(t, os.Chtimes(videoPath, testTime, testTime))
 
 	// Import with keepSrc = true
-	// The Import command needs all photo paths in config to be valid.
-	_, err := Import(config, sdCardRoot, true, time.Now())
+	// The Import command needs all photo paths in cfg to be valid.
+	_, err := Import(cfg, sdCardRoot, true, time.Now())
 	require.NoError(t, err)
 
 	// Verify source file still exists
@@ -400,7 +400,7 @@ func TestImportAndUploadVideosIntegration_KeepFlags(t *testing.T) {
 		Return(nil)
 
 	// Upload with keepTargetRoot = true
-	err = UploadVideos(ctx, config, configDir, true, mockGPhotosClient)
+	err = UploadVideos(ctx, cfg, configDir, true, mockGPhotosClient)
 	require.NoError(t, err)
 
 	// Verify video still exists in orig

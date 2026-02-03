@@ -1,4 +1,4 @@
-package commands
+package lib
 
 import (
 	"fmt"
@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ccfrost/camflow/camflowconfig"
+	"github.com/ccfrost/camflow/internal/config"
 	"github.com/schollz/progressbar/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -116,7 +116,7 @@ func createDummyFile(t *testing.T, path string, content string, modTime time.Tim
 }
 
 // setupMoveFilesTest sets up directories and config for moveFiles tests.
-func setupMoveFilesTest(t *testing.T) (config camflowconfig.CamflowConfig, srcRoot, photosToProcessRoot, videosExportQueueRoot string, cleanup func()) {
+func setupMoveFilesTest(t *testing.T) (cfg config.CamflowConfig, srcRoot, photosToProcessRoot, videosExportQueueRoot string, cleanup func()) {
 	t.Helper()
 	sdcardRoot := t.TempDir()
 	mediaRoot := t.TempDir()
@@ -134,7 +134,7 @@ func setupMoveFilesTest(t *testing.T) (config camflowconfig.CamflowConfig, srcRo
 	err = os.MkdirAll(videosExportQueueRoot, 0755)
 	require.NoError(t, err)
 
-	config = camflowconfig.CamflowConfig{
+	cfg = config.CamflowConfig{
 		PhotosToProcessRoot:   photosToProcessRoot,
 		VideosExportQueueRoot: videosExportQueueRoot,
 		// Other config fields can be default/zero if not used by moveFiles directly
@@ -145,7 +145,7 @@ func setupMoveFilesTest(t *testing.T) (config camflowconfig.CamflowConfig, srcRo
 		// os.RemoveAll(sdcardRoot) // Handled by t.TempDir()
 	}
 
-	return config, srcRoot, photosToProcessRoot, videosExportQueueRoot, cleanup
+	return cfg, srcRoot, photosToProcessRoot, videosExportQueueRoot, cleanup
 }
 
 // Helper struct for defining test file scenarios
@@ -181,7 +181,7 @@ func TestMoveFiles(t *testing.T) {
 
 	// --- Test Case: Success, keepSrc=false ---
 	t.Run("SuccessKeepSrcFalse", func(t *testing.T) {
-		config, srcDir, photoTargetRoot, videoTargetRoot, cleanup := setupMoveFilesTest(t)
+		cfg, srcDir, photoTargetRoot, videoTargetRoot, cleanup := setupMoveFilesTest(t)
 		defer cleanup()
 
 		// Define test file scenarios declaratively
@@ -207,7 +207,7 @@ func TestMoveFiles(t *testing.T) {
 		}
 
 		// Run moveFiles
-		result, err := moveFiles(config, srcDir, false, bar) // keepSrc = false
+		result, err := moveFiles(cfg, srcDir, false, bar) // keepSrc = false
 		require.NoError(t, err)
 
 		// Verification: Check targets and source deletion
@@ -271,7 +271,7 @@ func TestMoveFiles(t *testing.T) {
 
 	// --- Test Case: Success, keepSrc=true ---
 	t.Run("SuccessKeepSrcTrue", func(t *testing.T) {
-		config, srcDir, photoTargetRoot, videoTargetRoot, cleanup := setupMoveFilesTest(t)
+		cfg, srcDir, photoTargetRoot, videoTargetRoot, cleanup := setupMoveFilesTest(t)
 		defer cleanup()
 
 		// Define test file scenarios
@@ -293,7 +293,7 @@ func TestMoveFiles(t *testing.T) {
 		}
 
 		// Run moveFiles
-		result, err := moveFiles(config, srcDir, true, bar) // keepSrc = true
+		result, err := moveFiles(cfg, srcDir, true, bar) // keepSrc = true
 		require.NoError(t, err)
 
 		// Verification: Check targets and source *retention*
@@ -356,11 +356,11 @@ func TestMoveFiles(t *testing.T) {
 
 	// --- Test Case: Empty Source Directory ---
 	t.Run("EmptySourceDir", func(t *testing.T) {
-		config, srcDir, _, _, cleanup := setupMoveFilesTest(t)
+		cfg, srcDir, _, _, cleanup := setupMoveFilesTest(t)
 		defer cleanup()
 
 		// Run moveFiles on an empty directory
-		result, err := moveFiles(config, srcDir, false, bar)
+		result, err := moveFiles(cfg, srcDir, false, bar)
 		require.NoError(t, err)
 
 		// Verify ImportResult is empty
@@ -369,7 +369,7 @@ func TestMoveFiles(t *testing.T) {
 
 	// --- Test Case: Copy Error (Destination Not Writable) ---
 	t.Run("ErrorCopyCannotWriteDest", func(t *testing.T) {
-		config, srcDir, photoTargetRoot, _, cleanup := setupMoveFilesTest(t)
+		cfg, srcDir, photoTargetRoot, _, cleanup := setupMoveFilesTest(t)
 		defer cleanup()
 
 		time1 := time.Date(2024, 5, 1, 10, 0, 0, 0, time.UTC)
@@ -383,7 +383,7 @@ func TestMoveFiles(t *testing.T) {
 		defer os.Chmod(photoTargetRoot, 0755)
 
 		// Run moveFiles - expect failure during copyFile's MkdirAll or Create
-		result, err := moveFiles(config, srcDir, false, bar)
+		result, err := moveFiles(cfg, srcDir, false, bar)
 		require.Error(t, err, "moveFiles should fail when destination is not writable")
 
 		// Check the error message indicates a permission or creation issue

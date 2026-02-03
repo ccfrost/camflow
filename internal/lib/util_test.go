@@ -1,4 +1,4 @@
-package commands
+package lib
 
 import (
 	"os"
@@ -6,17 +6,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ccfrost/camflow/camflowconfig"
+	"github.com/ccfrost/camflow/internal/config"
 	"github.com/schollz/progressbar/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func newTestConfig(t *testing.T, photosDefaultAlbum, videosDefaultAlbum string) camflowconfig.CamflowConfig {
+func newTestConfig(t *testing.T, photosDefaultAlbum, videosDefaultAlbum string) config.CamflowConfig {
 	t.Helper()
 
 	tempDir := t.TempDir()
-	c := camflowconfig.CamflowConfig{
+	c := config.CamflowConfig{
 		PhotosToProcessRoot:  filepath.Join(tempDir, "PhotosToProcessRoot"),
 		PhotosExportQueueDir: filepath.Join(tempDir, "PhotosExportQueueDir"),
 		PhotosExportedRoot:   filepath.Join(tempDir, "PhotosExportedRoot"),
@@ -24,27 +24,27 @@ func newTestConfig(t *testing.T, photosDefaultAlbum, videosDefaultAlbum string) 
 		VideosExportQueueRoot: filepath.Join(tempDir, "VideosExportQueueRoot"),
 		VideosExportedRoot:    filepath.Join(tempDir, "VideosExportedRoot"),
 
-		GooglePhotos: camflowconfig.GooglePhotosConfig{
+		GooglePhotos: config.GooglePhotosConfig{
 			ClientId:     "test-client-id",
 			ClientSecret: "test-client-secret",
 			RedirectURI:  "test-redirect-uri",
 
-			Photos: camflowconfig.GPPhotosConfig{
+			Photos: config.GPPhotosConfig{
 				DefaultAlbum: photosDefaultAlbum,
 			},
-			Videos: camflowconfig.GPVideosConfig{
+			Videos: config.GPVideosConfig{
 				DefaultAlbum: videosDefaultAlbum,
 			},
 
 			// Does not set ToFav or KeywordAlbums fields.
 		},
 	}
-	c.LocalPhotos = camflowconfig.LocalPhotosConfig{
+	c.LocalPhotos = config.LocalPhotosConfig{
 		ToProcessRoot:  c.PhotosToProcessRoot,
 		ExportQueueDir: c.PhotosExportQueueDir,
 		ExportedRoot:   c.PhotosExportedRoot,
 	}
-	c.LocalVideos = camflowconfig.LocalVideosConfig{
+	c.LocalVideos = config.LocalVideosConfig{
 		ExportQueueRoot: c.VideosExportQueueRoot,
 		ExportedRoot:    c.VideosExportedRoot,
 	}

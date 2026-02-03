@@ -1,4 +1,4 @@
-package commands
+package lib
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/ccfrost/camflow/camflowconfig"
+	"github.com/ccfrost/camflow/internal/config"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -18,14 +18,14 @@ import (
 // GetAuthenticatedGooglePhotosClient creates an authenticated HTTP client using OAuth2 credentials.
 // It handles token loading, refreshing, and saving.
 // Takes configDir to locate the token file.
-func GetAuthenticatedGooglePhotosClient(ctx context.Context, config camflowconfig.CamflowConfig, cacheDir string) (*http.Client, error) {
-	if config.GooglePhotos.ClientId == "" || config.GooglePhotos.ClientSecret == "" {
+func GetAuthenticatedGooglePhotosClient(ctx context.Context, cfg config.CamflowConfig, cacheDir string) (*http.Client, error) {
+	if cfg.GooglePhotos.ClientId == "" || cfg.GooglePhotos.ClientSecret == "" {
 		return nil, fmt.Errorf("google Photos ClientId or ClientSecret not configured")
 	}
 
 	// Use http://localhost:0 for auto-selected port if RedirectURI is empty,
 	// otherwise use the configured one.
-	redirectURI := config.GooglePhotos.RedirectURI
+	redirectURI := cfg.GooglePhotos.RedirectURI
 	if redirectURI == "" {
 		// Using a fixed common port for simplicity as dynamic port requires a listener.
 		redirectURI = "http://localhost:8080"
@@ -33,8 +33,8 @@ func GetAuthenticatedGooglePhotosClient(ctx context.Context, config camflowconfi
 	}
 
 	conf := &oauth2.Config{
-		ClientID:     config.GooglePhotos.ClientId,
-		ClientSecret: config.GooglePhotos.ClientSecret,
+		ClientID:     cfg.GooglePhotos.ClientId,
+		ClientSecret: cfg.GooglePhotos.ClientSecret,
 		RedirectURL:  redirectURI,
 		Scopes: []string{
 			"https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata",

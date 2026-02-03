@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ccfrost/camflow/camflowconfig"
-	"github.com/ccfrost/camflow/commands"
+	"github.com/ccfrost/camflow/internal/config"
+	"github.com/ccfrost/camflow/internal/lib"
 	gphotos "github.com/gphotosuploader/google-photos-api-client-go/v3"
 	"github.com/spf13/cobra"
 )
@@ -19,25 +19,25 @@ const camflow = "camflow"
 
 func main() {
 	var configPath, cacheDir string
-	var config camflowconfig.CamflowConfig
+	var cfg config.CamflowConfig
 
 	rootCmd := cobra.Command{
 		Use:   camflow,
 		Short: "Manage camera media files",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			var err error
-			config, err = camflowconfig.LoadConfig(configPath)
+			cfg, err = config.LoadConfig(configPath)
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
 			}
-			if err := config.Validate(); err != nil {
+			if err := cfg.Validate(); err != nil {
 				return fmt.Errorf("invalid config: %w", err)
 			}
 			return nil
 		},
 	}
 	{
-		defaultConfigPath, err := camflowconfig.DefaultConfigPath()
+		defaultConfigPath, err := config.DefaultConfigPath()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error: unable to determine default config path:", err)
 			os.Exit(1)
@@ -76,7 +76,7 @@ func main() {
 				os.Exit(1)
 			}
 
-			res, err := commands.Import(config, srcDir, keep, time.Now())
+			res, err := lib.Import(cfg, srcDir, keep, time.Now())
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
@@ -117,7 +117,7 @@ Successfully uploaded photos are deleted from staging unless --keep is specified
 			}
 
 			ctx := context.Background()
-			gphotosHttpClient, err := commands.GetAuthenticatedGooglePhotosClient(ctx, config, cacheDir)
+			gphotosHttpClient, err := lib.GetAuthenticatedGooglePhotosClient(ctx, cfg, cacheDir)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
@@ -127,9 +127,9 @@ Successfully uploaded photos are deleted from staging unless --keep is specified
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}
-			wrappedGphotosClient := commands.NewGPhotosClientWrapper(gphotosClient)
+			wrappedGphotosClient := lib.NewGPhotosClientWrapper(gphotosClient)
 
-			if err := commands.UploadPhotos(ctx, config, cacheDir, keep, wrappedGphotosClient); err != nil {
+			if err := lib.UploadPhotos(ctx, cfg, cacheDir, keep, wrappedGphotosClient); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}
@@ -152,7 +152,7 @@ Successfully uploaded videos are deleted from staging unless --keep is specified
 			}
 
 			ctx := context.Background()
-			gphotosHttpClient, err := commands.GetAuthenticatedGooglePhotosClient(ctx, config, cacheDir)
+			gphotosHttpClient, err := lib.GetAuthenticatedGooglePhotosClient(ctx, cfg, cacheDir)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
@@ -162,9 +162,9 @@ Successfully uploaded videos are deleted from staging unless --keep is specified
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}
-			wrappedGphotosClient := commands.NewGPhotosClientWrapper(gphotosClient)
+			wrappedGphotosClient := lib.NewGPhotosClientWrapper(gphotosClient)
 
-			if err := commands.UploadVideos(ctx, config, cacheDir, keep, wrappedGphotosClient); err != nil {
+			if err := lib.UploadVideos(ctx, cfg, cacheDir, keep, wrappedGphotosClient); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}
@@ -196,7 +196,7 @@ This is a workaround for video uploads not preserving the video's timezone.`,
 			}
 
 			ctx := context.Background()
-			if err := commands.MarkVideosExported(ctx, config); err != nil {
+			if err := lib.MarkVideosExported(ctx, cfg); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}

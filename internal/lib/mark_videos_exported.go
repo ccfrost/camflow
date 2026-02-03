@@ -1,4 +1,4 @@
-package commands
+package lib
 
 import (
 	"context"
@@ -7,18 +7,18 @@ import (
 	"math"
 	"os"
 
-	"github.com/ccfrost/camflow/camflowconfig"
+	"github.com/ccfrost/camflow/internal/config"
 )
 
 // MarkVideosExported moves videos from the video export queue to the exported directory.
 // Unlike UploadVideos, this does not upload to Google Photos - it only organizes files locally.
 // Videos are moved from export queue to exported dir.
-func MarkVideosExported(ctx context.Context, config camflowconfig.CamflowConfig) error {
-	if err := config.Validate(); err != nil {
+func MarkVideosExported(ctx context.Context, cfg config.CamflowConfig) error {
+	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
 
-	exportQueueDir := config.LocalVideos.GetExportQueueRoot()
+	exportQueueDir := cfg.LocalVideos.GetExportQueueRoot()
 	if _, err := os.Stat(exportQueueDir); os.IsNotExist(err) {
 		logger.Info("Export queue directory does not exist, nothing to move",
 			slog.String("export_queue_dir", exportQueueDir))
@@ -44,7 +44,7 @@ func MarkVideosExported(ctx context.Context, config camflowconfig.CamflowConfig)
 	bar := NewProgressBar(totalSize, "moving")
 
 	for _, fileInfo := range itemsToMove {
-		if _, err := moveToExported(&config.LocalVideos, fileInfo); err != nil {
+		if _, err := moveToExported(&cfg.LocalVideos, fileInfo); err != nil {
 			return fmt.Errorf("failed to move media item %s: %w", fileInfo.path, err)
 		}
 		bar.Add64(fileInfo.size)

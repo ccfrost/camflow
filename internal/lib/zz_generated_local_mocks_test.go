@@ -2,7 +2,7 @@
 // Source: gphotos_client_interface.go
 
 // Package commands is a generated GoMock package.
-package commands
+package lib
 
 import (
 	context "context"

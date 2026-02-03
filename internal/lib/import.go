@@ -1,4 +1,4 @@
-package commands
+package lib
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/ccfrost/camflow/camflowconfig"
+	"github.com/ccfrost/camflow/internal/config"
 	"github.com/schollz/progressbar/v3"
 )
 
@@ -53,8 +53,8 @@ type ImportResult struct {
 
 // Import mvoes the DCIM/ files to the photo to process dir and the export queue video dir.
 // It returns the relative target directory for the photos and any error.
-func Import(config camflowconfig.CamflowConfig, sdcardDir string, keepSrc bool, now time.Time) (ImportResult, error) {
-	if err := config.Validate(); err != nil {
+func Import(cfg config.CamflowConfig, sdcardDir string, keepSrc bool, now time.Time) (ImportResult, error) {
+	if err := cfg.Validate(); err != nil {
 		return ImportResult{}, fmt.Errorf("invalid config: %w", err)
 	}
 
@@ -73,7 +73,7 @@ func Import(config camflowconfig.CamflowConfig, sdcardDir string, keepSrc bool, 
 	// and check apppropriately.
 	// TODO: when we move from export queue to exported, we should check that there is enough space?
 	// TODO: or just remove this, and let the OS handle it?
-	targetAvailable, err := getAvailableSpace(config.PhotosToProcessRoot)
+	targetAvailable, err := getAvailableSpace(cfg.PhotosToProcessRoot)
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("failed to get available space: %w", err)
 	}
@@ -82,12 +82,12 @@ func Import(config camflowconfig.CamflowConfig, sdcardDir string, keepSrc bool, 
 		const GiB = 1 << 30
 		return ImportResult{}, fmt.Errorf(
 			"not enough space in %s: need %d GiB more: %d GiB needed, %d GiB available",
-			config.PhotosToProcessRoot, totalSize/GiB, targetAvailable/GiB, (uint64(totalSize)-targetAvailable)/GiB)
+			cfg.PhotosToProcessRoot, totalSize/GiB, targetAvailable/GiB, (uint64(totalSize)-targetAvailable)/GiB)
 	}
 
 	// Move the files into the target dirs.
 	bar := NewProgressBar(totalSize, "moving")
-	importRes, err := moveFiles(config, srcDir, keepSrc, bar)
+	importRes, err := moveFiles(cfg, srcDir, keepSrc, bar)
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("failed to move files: %w", err)
 	}
@@ -183,7 +183,7 @@ func getAvailableSpace(dir string) (uint64, error) {
 
 // moveFiles moves files from srcDir into the photo/video dirs for the date of each file.
 // It preserves the modification times.
-func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, bar *progressbar.ProgressBar) (ImportResult, error) {
+func moveFiles(cfg config.CamflowConfig, srcDir string, keepSrc bool, bar *progressbar.ProgressBar) (ImportResult, error) {
 	// itemTypeString returns the string representation of ItemType for better debugging.
 	itemTypeString := func(it ItemType) string {
 		switch it {
@@ -220,10 +220,10 @@ func moveFiles(config camflowconfig.CamflowConfig, srcDir string, keepSrc bool, 
 		var itemType ItemType
 		switch filepath.Ext(dirEnt.Name()) {
 		case ".CR3", ".cr3", ".JPG", ".jpg":
-			targetRoot = config.PhotosToProcessRoot
+			targetRoot = cfg.PhotosToProcessRoot
 			itemType = ItemTypePhoto
 		case ".MP4", ".mp4":
-			targetRoot = config.VideosExportQueueRoot
+			targetRoot = cfg.VideosExportQueueRoot
 			itemType = ItemTypeVideo
 		default:
 			// Skip unsupported file types.
