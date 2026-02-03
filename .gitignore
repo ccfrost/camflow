@@ -1,6 +1,8 @@
 camflow
 
 .DS_Store
+.vscode/
+*.swp
 .claude/
 
 my-config.toml
