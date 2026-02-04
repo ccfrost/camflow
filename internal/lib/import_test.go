@@ -136,7 +136,7 @@ func setupMoveFilesTest(t *testing.T) (cfg config.CamflowConfig, srcRoot, photos
 
 	cfg = config.CamflowConfig{
 		PhotosProcessQueueRoot: photosProcessQueueRoot,
-		VideosUploadQueueRoot:    videosUploadQueueRoot,
+		VideosUploadQueueRoot:  videosUploadQueueRoot,
 		// Other config fields can be default/zero if not used by moveFiles directly
 	}
 
