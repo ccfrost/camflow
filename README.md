@@ -1,6 +1,8 @@
 # Camflow
 
-Camflow is a CLI tool designed to automate the photography workflow for enthusiasts who use Google Photos. It handles the tedious parts of moving files from your camera to your computer and from your computer to the cloud, while preserving your freedom to use your own editing tools in between.
+Camflow is the "CAMera workFLOW tool": a CLI tool that automates the photography workflow for enthusiasts who publish to Google Photos.
+It handles the tedious moving of files from your camera to your computer to edit and then from your computer to the cloud,
+while preserving your freedom to use your own editing tools.
 
 ## The Workflow
 
