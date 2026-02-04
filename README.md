@@ -1,23 +1,42 @@
 # Camflow
 
-Camflow is the "CAMera workFLOW tool": a CLI tool that automates the photography workflow for enthusiasts who publish to Google Photos.
-It handles the tedious moving of files from your camera to your computer to edit and then from your computer to the cloud,
-while preserving your freedom to use your own editing tools.
+**The camera workflow tool for enthusiastic photographers.**
+
+Camflow automates the tedious file management parts of photo and video processing --- importing from SD cards, organizing folders by date, tracking which files have and haven't been processed, and uploading to Google Photos --- while giving you total freedom to use the editing tools you love (e.g., Lightroom, Capture One, Photo Mechanic).
+
+## Why Camflow?
+
+Cloud sync tools want to control your entire library. Camflow assumes you want control.
+
+*   **Keep your original files local:** Camflow moves RAW files to your local processing queue, not the cloud.
+*   **Upload your edits:** Only your finished, exported JPEGs get uploaded to Google Photos.
+*   **Automated hygiene:** It automatically sorts files into `YYYY/MM/DD` folders locally, so you don't have to manage directories manually.
+*   **Metadata-driven:** Optionally file uploads into specific Google Photos albums based on metadata tags and labels from your editor.
 
 ## The Workflow
 
-Camflow supports a "Curate & Edit" philosophy for photos, while keeping video management simple.
+Camflow is designed for a "Curate & Edit" philosophy:
 
-1.  **Import**: `camflow import` moves media off your SD card.
-    *   **Photos** go to an "Inbox" (`photos_to_process_root`) for you to edit.
-    *   **Videos** go straight to an "Upload Queue" (`videos_upload_queue_root`), as they are rarely edited.
-2.  **Process (Photos)**: You use your favorite tool (Lightroom, Capture One, Photo Mechanic) to review the Inbox. Delete the bad shots, edit the good ones, and export your final JPEGs to the "Photo Upload Queue" (`photos_upload_queue_dir`).
-3.  **Upload (Videos)**: You drag-and-drop videos from the queue to the Google Photos website (to preserve metadata), then run `camflow mark-videos-uploaded` to archive them locally.
-4.  **Upload (Photos)**: Run `camflow upload-photos` to upload your finished JPEGs to Google Photos and archive them locally.
+1.  **Import**: Insert your SD card and run `camflow import`.
+    *   **Photos** are moved to your **Processing Queue** (`photos_to_process_root`).
+    *   **Videos** are moved directly to your **Upload Queue** (`videos_upload_queue_root`).
+2.  **Process (Photos)**: Use your favorite editor to process your Processing Queue. Pick the good shots, edit, export the final images to the Photo **Upload Queue**, and move the originals to the processing archive.
+
+3.  **Upload (Photos)**: Run `camflow upload-photos`. Your images are uploaded to Google Photos and then moved to the upload archive.
+
+4.  **Upload (Videos)**: *Video upload is currently manual to preserve metadata.* Upload them via the browser, then run `camflow mark-videos-uploaded` to move the files to the upload archive.
+
+## Prerequisites
+
+Before installing, be aware that Camflow requires a one-time setup of Google API credentials.
+
+1.  **Go**: Ensure you have [Go](https://go.dev/dl/) installed (1.21+).
+2.  **Google Cloud Project**: To upload to your personal Google Photos account, you must create a project and generate OAuth 2.0 credentials (`client_id` and `client_secret`).
+    > **Guide:** Follow this tutorial to obtain your credentials:
+    > [https://gilesknap.github.io/gphotos-sync/main/tutorials/oauth2.html](https://gilesknap.github.io/gphotos-sync/main/tutorials/oauth2.html)
 
 ## Installation
-
-Currently, Camflow must be built from source. Ensure you have [Go](https://go.dev/dl/) installed.
+Currently, Camflow must be built from source.
 
 ```bash
 go install github.com/ccfrost/camflow@latest
@@ -25,95 +44,67 @@ go install github.com/ccfrost/camflow@latest
 
 ## Configuration
 
-Before running Camflow, you need to set up a `config.toml` file.
+You need to create a `config.toml` file to tell Camflow where your folders are and to provide your Google credentials.
 
-### 1. Google Cloud Credentials
-To upload to your Google Photos account, you must create a Google Cloud Project and generate OAuth 2.0 credentials (Client ID and Client Secret).
+1.  **Locate your config directory:**
+    *   **macOS:** `~/Library/Application Support/camflow/`
+    *   **Linux:** `~/.config/camflow/`
 
-> **Guide:** Follow this excellent tutorial to obtain your `client_id` and `client_secret`:
-> [https://gilesknap.github.io/gphotos-sync/main/tutorials/oauth2.html](https://gilesknap.github.io/gphotos-sync/main/tutorials/oauth2.html)
+2.  **Create the config file:**
+    Copy the example configuration from this repository ([config.example.toml](config.example.toml)) to your config directory as `config.toml`.
 
-### 2. Configuration File
-
-Camflow uses a configuration file named `config.toml`. You can find an annotated example configuration file in the repository at [config.example.toml](config.example.toml).
-
-To set it up:
-1.  Copy `config.example.toml` to your configuration directory (see the example config file for where to place it).
-2.  Edit the file to fill in your Google Cloud credentials and local paths.
+3.  **Edit `config.toml`:**
+    *   Paste your `client_id` and `client_secret` for the Google Photos API.
+    *   Update the paths for your photo and video "Processing Queue", "Upload Queue", and "Uploaded" directories.
 
 ## Usage
 
 ### 1. Import from SD Card
-Copies media from your SD card to your computer and deletes the originals from the card.
-*   **Photos** go to your `photos_to_process_root` (Inbox), organized by date (YYYY/MM/DD).
-*   **Videos** go directly into the root of `videos_upload_queue_root` (Upload Queue).
+Copy the media from your SD card to your computer and delete the originals from the SD card.
 
 ```bash
-# Import (copy and delete) all media from a camera's SD card, into the
-# 
-# Useful flags:
-# --keep:
-#     Don't delete media from the SD card.
-#     Defaults to false (does delete source media).
-# --src:
-#     Path to the SD card.
-#     Defaults to "/Volumes/EOS_DIGITAL", for Canon cameras mounted in macOS.
 camflow import --src /Volumes/EOS_DIGITAL
 ```
 
-### 2. Curate & Edit Photos (Manual Step)
-Open your `photos_to_process_root` folder with your editing software (e.g., Lightroom).
-1.  **Filter**: Review your photos and delete the rejects.
-2.  **Edit**: Process your RAW files.
-3.  **Export**: Export the final JPEGs you want to upload into the `photos_upload_queue_dir`.
-    *   *Note: You may be exporting JPEGs from RAW sources; Camflow handles this fine.*
-
-### 3. Upload Videos (Manual Step)
-*Currently, automated video upload has a bug with timestamps, so the manual workflow is recommended.*
-
-1.  Open your `videos_upload_queue_root` folder.
-2.  Drag and drop the video files into the Google Photos website.
-3.  Run the following command to move the videos to your archive folder:
-    ```bash
-    camflow mark-videos-uploaded
-    ```
-
-### 4. Upload Photos
-Run the automated uploader for your processed photos. This command:
-1.  Uploads files from `photos_upload_queue_dir`.
-2.  Sorts them into albums based on your config and file metadata (Labels/Subjects).
-3.  Moves the local files to `photos_uploaded_root` (Archive).
+### 2. Upload Photos
+Run this after you have exported your finished images to the upload queue.
 
 ```bash
 camflow upload-photos
 ```
+*This uploads the photos, adds them to the desired albums, and moves the local files to your uploaded directory.*
 
-### 5. Check Version
-To check the version of the installed tool:
+### 3. Upload Videos (Manual Upload)
+Currently, we recommend uploading videos manually via the Google Photos website, to preserve their metadata.
 
+1.  Drag your video files from the **Video Upload Queue** directory into the Google Photos website.
+2.  Run this command to move the videos from your upload queue into your uploaded directory:
+    ```bash
+    camflow mark-videos-uploaded
+    ```
+
+### Check Version
 ```bash
 camflow version
 ```
 
-## Recommended Setup & Tips
+## Power User Tips
 
-### Cloud Storage for Archives
-Over time, your `uploaded_root` (Archive) folders will grow very large. A good strategy is to point these paths to a directory synced with cloud storage (e.g., a mounted Google Drive folder).
-*   **Benefit**: Your archives are automatically backed up off-site.
-*   **Benefit**: You can access your original high-res exports via the cloud provider's API (which Google Photos does not offer).
+### Using Metadata to Organize Albums
+Camflow can organize uploads into Google Photos albums based on image metadata (Labels or Subjects) defined in your editor. This is great for workflows where you want to "Favorite" or "Share" photos immediately.
 
-### Using Metadata to Organize Albums (Lightroom Example)
-Camflow can organize uploads into specific Google Photos albums based on image metadata. However, the Google Photos API has limitations: it cannot "Favorite" photos, and it cannot add photos to albums it didn't create.
+**Example: Mark photos as favorites**
+1.  **Config**: Map the Label "Red" to a Google Album named "Camflow: Favorites".
+2.  **Edit**: In Lightroom, add the "Red" label to a photo.
+3.  **Upload**: `camflow upload-photos` puts that photo into the "Camflow: Favorites" album online.
+4.  **Review**: Open Google Photos, go to "Camflow: Favorites", mark each as a favorite, then select all and remove them from the temporary Camflow album.
 
-You can use "workflow albums" to get around this:
+**Example: Add photos to a specific album**
+1.  **Config**: Map the Subject "share-family" to a Google Album named "Camflow: Family".
+2.  **Edit**: In Lightroom, add the "share-family" keyword to a photo.
+3.  **Upload**: `camflow upload-photos` puts that photo into the "Camflow: Family" album online.
+4.  **Review**: Open Google Photos, go to "Camflow: Family", select all, add them to your real shared album, and remove them from the temporary Camflow album.
 
-**1. Workaround for Favorites**
-*   **Setup**: Configure Camflow to map a metadata Label (eg, "Red") to a special Google Photos album (eg, "Camflow: Favorite").
-*   **Workflow**: Mark your best shots with the Red label in Lightroom.
-*   **After Upload**: Go to the "Camflow: Favorite" album in Google Photos, favorite each photo, select all the photos and remove them from the album.
-
-**2. Workaround for Shared Albums**
-*   **Setup**: Configure Camflow to map a metadata Subject (eg, "share-family") to a Google Photos album (eg, "Camflow: Family Album").
-*   **Workflow**: Add the subject "share-family" to relevant photos.
-*   **After Upload**: Go to the "Camflow: Family Album". Select all -> Add to your actual "Shared Family Album" -> Remove from "Camflow: Family Album".
-
+### Cloud Storage for Uploads
+Camflow keeps the files it has uploaded to Google Photos, so that you have access to them outside of Google Photos. (The Google Photos API essentially doesn't provide access.) These **Uploaded** folders will grow large over time.
+To support the space requirement, we recommend pointing these paths to directories backed by a cloud storage provider (like a mounted Google Drive or Dropbox folder) or NAS.
