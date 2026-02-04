@@ -116,14 +116,14 @@ func createDummyFile(t *testing.T, path string, content string, modTime time.Tim
 }
 
 // setupMoveFilesTest sets up directories and config for moveFiles tests.
-func setupMoveFilesTest(t *testing.T) (cfg config.CamflowConfig, srcRoot, photosToProcessRoot, videosExportQueueRoot string, cleanup func()) {
+func setupMoveFilesTest(t *testing.T) (cfg config.CamflowConfig, srcRoot, photosToProcessRoot, videosUploadQueueRoot string, cleanup func()) {
 	t.Helper()
 	sdcardRoot := t.TempDir()
 	mediaRoot := t.TempDir()
 
 	srcRoot = filepath.Join(sdcardRoot, "DCIM")
 	photosToProcessRoot = filepath.Join(mediaRoot, "photos-to-process")
-	videosExportQueueRoot = filepath.Join(mediaRoot, "videos-export-queue")
+	videosUploadQueueRoot = filepath.Join(mediaRoot, "videos-upload-queue")
 
 	// Create the base source DCIM directory
 	err := os.MkdirAll(srcRoot, 0755)
@@ -131,12 +131,12 @@ func setupMoveFilesTest(t *testing.T) (cfg config.CamflowConfig, srcRoot, photos
 	// Create the base destination directories
 	err = os.MkdirAll(photosToProcessRoot, 0755)
 	require.NoError(t, err)
-	err = os.MkdirAll(videosExportQueueRoot, 0755)
+	err = os.MkdirAll(videosUploadQueueRoot, 0755)
 	require.NoError(t, err)
 
 	cfg = config.CamflowConfig{
 		PhotosToProcessRoot:   photosToProcessRoot,
-		VideosExportQueueRoot: videosExportQueueRoot,
+		VideosUploadQueueRoot: videosUploadQueueRoot,
 		// Other config fields can be default/zero if not used by moveFiles directly
 	}
 
@@ -145,7 +145,7 @@ func setupMoveFilesTest(t *testing.T) (cfg config.CamflowConfig, srcRoot, photos
 		// os.RemoveAll(sdcardRoot) // Handled by t.TempDir()
 	}
 
-	return cfg, srcRoot, photosToProcessRoot, videosExportQueueRoot, cleanup
+	return cfg, srcRoot, photosToProcessRoot, videosUploadQueueRoot, cleanup
 }
 
 // Helper struct for defining test file scenarios
@@ -171,7 +171,7 @@ func calculateExpectedTargetPath(tc testFileCase, photoDir, videoDir string) str
 		dateSubDir := fmt.Sprintf("%d/%02d/%02d", year, month, day)
 		return filepath.Join(photoDir, dateSubDir, targetBaseName)
 	} else {
-		// Videos go directly to the export queue root (flat structure)
+		// Videos go directly to the upload queue root (flat structure)
 		return filepath.Join(videoDir, targetBaseName)
 	}
 }

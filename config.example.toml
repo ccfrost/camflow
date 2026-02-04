@@ -21,25 +21,25 @@ photos_to_process_root = "/Users/you/Google Drive/My Drive/media/photos/process_
 #    Structure: Flat (all files directly in this folder).
 #    Note: this is not in Google Drive, because a bug in macOS+Google Drive
 #          causes file loss.
-photos_export_queue_dir = "/Users/you/Pictures/camflow_photos_queue_export"
+photos_upload_queue_dir = "/Users/you/Pictures/camflow_photos_queue_upload"
 #
 # 3. Archive: Where photos are moved after upload.
 #    Structure: date-based subfolders (YYYY/MM/DD/).
-photos_exported_root = "/Users/you/Google Drive/My Drive/media/photos/exported"
+photos_uploaded_root = "/Users/you/Google Drive/My Drive/media/photos/uploaded"
 
 ### Paths for videos.
 #
-# Videos skip the process queue during import and go straight to the export queue.
+# Videos skip the process queue during import and go straight to the upload queue.
 #
 # 1. Upload source: Videos waiting to be uploaded.
 #    Structure: Flat (all files directly in this folder).
 #    Note: this is not in Google Drive, because a bug in macOS+Google Drive
 #          causes file loss.
-videos_export_queue_root = "/Users/you/Pictures/camflow_videos_queue_export"
+videos_upload_queue_root = "/Users/you/Pictures/camflow_videos_queue_upload"
 #
-# 2. Archive: Where videos are moved after upload (or marking as exported).
+# 2. Archive: Where videos are moved after upload (or marking as uploaded).
 #    Structure: date-based subfolders (YYYY/MM/DD/).
-videos_exported_root = "/Users/you/Google Drive/My Drive/media/videos/exported"
+videos_uploaded_root = "/Users/you/Google Drive/My Drive/media/videos/uploaded"
 
 
 ## Google Photos.

@@ -156,9 +156,9 @@ func main() {
 
 	uploadPhotosCmd := cobra.Command{
 		Use:   "upload-photos",
-		Short: "Upload photos from export queue to Google Photos",
-		Long: `Upload photos from the export queue to Google Photos.
-Successfully uploaded photos are deleted from staging unless --keep is specified.`,
+		Short: "Upload photos from upload queue to Google Photos",
+		Long: `Upload photos from the upload queue to Google Photos.
+Successfully uploaded photos are deleted from upload queue unless --keep is specified.`,
 		Args: cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			keep, err := cmd.Flags().GetBool("keep")
@@ -186,14 +186,14 @@ Successfully uploaded photos are deleted from staging unless --keep is specified
 			}
 		},
 	}
-	uploadPhotosCmd.Flags().BoolP("keep", "k", false, "Keep photos in staging after upload")
+	uploadPhotosCmd.Flags().BoolP("keep", "k", false, "Keep photos in upload queue after upload")
 	rootCmd.AddCommand(&uploadPhotosCmd)
 
 	uploadVideosCmd := cobra.Command{
 		Use:   "upload-videos",
-		Short: "Upload videos from export queue to Google Photos",
-		Long: `Upload videos from the export queue to Google Photos.
-Successfully uploaded videos are deleted from staging unless --keep is specified.`,
+		Short: "Upload videos from upload queue to Google Photos",
+		Long: `Upload videos from the upload queue to Google Photos.
+Successfully uploaded videos are deleted from upload queue unless --keep is specified.`,
 		Args: cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			keep, err := cmd.Flags().GetBool("keep")
@@ -221,19 +221,19 @@ Successfully uploaded videos are deleted from staging unless --keep is specified
 			}
 		},
 	}
-	uploadVideosCmd.Flags().BoolP("keep", "k", false, "Keep videos in staging after upload")
+	uploadVideosCmd.Flags().BoolP("keep", "k", false, "Keep videos in upload queue after upload")
 	rootCmd.AddCommand(&uploadVideosCmd)
 
-	markVideosExportedCmd := cobra.Command{
-		Use:   "mark-videos-exported",
-		Short: "Move videos from export queue to exported directory without uploading",
-		Long: `Move videos from the export queue to the exported directory.
+	markVideosUploadedCmd := cobra.Command{
+		Use:   "mark-videos-uploaded",
+		Short: "Move videos from upload queue to uploaded directory without uploading",
+		Long: `Move videos from the upload queue to the uploaded directory.
 This is a workaround for video uploads not preserving the video's timezone.`,
 		Args: cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			// Confirm with user to protect against accidental invocation.
 			reader := bufio.NewReader(os.Stdin)
-			fmt.Print("Confirm: move all videos in export queue to the exported directory? [y/N]: ")
+			fmt.Print("Confirm: move all videos in upload queue to the uploaded directory? [y/N]: ")
 			response, err := reader.ReadString('\n')
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "error: failed to read confirmation:", err)
@@ -247,13 +247,13 @@ This is a workaround for video uploads not preserving the video's timezone.`,
 			}
 
 			ctx := context.Background()
-			if err := lib.MarkVideosExported(ctx, cfg); err != nil {
+			if err := lib.MarkVideosUploaded(ctx, cfg); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}
 		},
 	}
-	rootCmd.AddCommand(&markVideosExportedCmd)
+	rootCmd.AddCommand(&markVideosUploadedCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)

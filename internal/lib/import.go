@@ -51,7 +51,7 @@ type ImportResult struct {
 	ImportedFiles []ImportedFile
 }
 
-// Import mvoes the DCIM/ files to the photo to process dir and the export queue video dir.
+// Import moves the DCIM/ files to the photo to process dir and the upload queue video dir.
 // It returns the relative target directory for the photos and any error.
 func Import(cfg config.CamflowConfig, sdcardDir string, keepSrc bool, now time.Time) (ImportResult, error) {
 	if err := cfg.Validate(); err != nil {
@@ -69,9 +69,9 @@ func Import(cfg config.CamflowConfig, sdcardDir string, keepSrc bool, now time.T
 	}
 
 	// Check that there is sufficient space to move the files.
-	// TODO: check whether VideosExportQueueRoot is on the same filesystem as PhotosToProcessRoot
+	// TODO: check whether VideosUploadQueueRoot is on the same filesystem as PhotosToProcessRoot
 	// and check apppropriately.
-	// TODO: when we move from export queue to exported, we should check that there is enough space?
+	// TODO: when we move from upload queue to uploaded, we should check that there is enough space?
 	// TODO: or just remove this, and let the OS handle it?
 	targetAvailable, err := getAvailableSpace(cfg.PhotosToProcessRoot)
 	if err != nil {
@@ -223,7 +223,7 @@ func moveFiles(cfg config.CamflowConfig, srcDir string, keepSrc bool, bar *progr
 			targetRoot = cfg.PhotosToProcessRoot
 			itemType = ItemTypePhoto
 		case ".MP4", ".mp4":
-			targetRoot = cfg.VideosExportQueueRoot
+			targetRoot = cfg.VideosUploadQueueRoot
 			itemType = ItemTypeVideo
 		default:
 			// Skip unsupported file types.

@@ -18,11 +18,11 @@ func newTestConfig(t *testing.T, photosDefaultAlbum, videosDefaultAlbum string) 
 	tempDir := t.TempDir()
 	c := config.CamflowConfig{
 		PhotosToProcessRoot:  filepath.Join(tempDir, "PhotosToProcessRoot"),
-		PhotosExportQueueDir: filepath.Join(tempDir, "PhotosExportQueueDir"),
-		PhotosExportedRoot:   filepath.Join(tempDir, "PhotosExportedRoot"),
+		PhotosUploadQueueDir: filepath.Join(tempDir, "PhotosUploadQueueDir"),
+		PhotosUploadedRoot:   filepath.Join(tempDir, "PhotosUploadedRoot"),
 
-		VideosExportQueueRoot: filepath.Join(tempDir, "VideosExportQueueRoot"),
-		VideosExportedRoot:    filepath.Join(tempDir, "VideosExportedRoot"),
+		VideosUploadQueueRoot: filepath.Join(tempDir, "VideosUploadQueueRoot"),
+		VideosUploadedRoot:    filepath.Join(tempDir, "VideosUploadedRoot"),
 
 		GooglePhotos: config.GooglePhotosConfig{
 			ClientId:     "test-client-id",
@@ -41,19 +41,19 @@ func newTestConfig(t *testing.T, photosDefaultAlbum, videosDefaultAlbum string) 
 	}
 	c.LocalPhotos = config.LocalPhotosConfig{
 		ToProcessRoot:  c.PhotosToProcessRoot,
-		ExportQueueDir: c.PhotosExportQueueDir,
-		ExportedRoot:   c.PhotosExportedRoot,
+		UploadQueueDir: c.PhotosUploadQueueDir,
+		UploadedRoot:   c.PhotosUploadedRoot,
 	}
 	c.LocalVideos = config.LocalVideosConfig{
-		ExportQueueRoot: c.VideosExportQueueRoot,
-		ExportedRoot:    c.VideosExportedRoot,
+		UploadQueueRoot: c.VideosUploadQueueRoot,
+		UploadedRoot:    c.VideosUploadedRoot,
 	}
 	for _, dir := range []string{
 		c.PhotosToProcessRoot,
-		c.PhotosExportQueueDir,
-		c.PhotosExportedRoot,
-		c.VideosExportQueueRoot,
-		c.VideosExportedRoot,
+		c.PhotosUploadQueueDir,
+		c.PhotosUploadedRoot,
+		c.VideosUploadQueueRoot,
+		c.VideosUploadedRoot,
 	} {
 		require.NoError(t, os.MkdirAll(dir, 0755), dir)
 	}

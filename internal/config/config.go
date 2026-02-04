@@ -66,12 +66,12 @@ func (c *GPVideosConfig) GetSubjectAlbums() []KeyAlbum {
 // TODO: move flat fields into the new structs.
 type CamflowConfig struct {
 	PhotosToProcessRoot  string            `mapstructure:"photos_to_process_root"`
-	PhotosExportQueueDir string            `mapstructure:"photos_export_queue_dir"`
-	PhotosExportedRoot   string            `mapstructure:"photos_exported_root"`
+	PhotosUploadQueueDir string            `mapstructure:"photos_upload_queue_dir"`
+	PhotosUploadedRoot   string            `mapstructure:"photos_uploaded_root"`
 	LocalPhotos          LocalPhotosConfig `mapstructure:"-"`
 
-	VideosExportQueueRoot string            `mapstructure:"videos_export_queue_root"`
-	VideosExportedRoot    string            `mapstructure:"videos_exported_root"`
+	VideosUploadQueueRoot string            `mapstructure:"videos_upload_queue_root"`
+	VideosUploadedRoot    string            `mapstructure:"videos_uploaded_root"`
 	LocalVideos           LocalVideosConfig `mapstructure:"-"`
 
 	GooglePhotos GooglePhotosConfig `mapstructure:"google_photos"`
@@ -81,29 +81,29 @@ type CamflowConfig struct {
 
 type LocalPhotosConfig struct {
 	ToProcessRoot  string `mapstructure:"photos_to_process_root"`
-	ExportQueueDir string `mapstructure:"photos_export_queue_dir"`
-	ExportedRoot   string `mapstructure:"photos_exported_root"`
+	UploadQueueDir string `mapstructure:"photos_upload_queue_dir"`
+	UploadedRoot   string `mapstructure:"photos_uploaded_root"`
 }
 
-func (c *LocalPhotosConfig) GetExportQueueRoot() string {
-	return c.ExportQueueDir
+func (c *LocalPhotosConfig) GetUploadQueueRoot() string {
+	return c.UploadQueueDir
 }
 
-func (c *LocalPhotosConfig) GetExportedRoot() string {
-	return c.ExportedRoot
+func (c *LocalPhotosConfig) GetUploadedRoot() string {
+	return c.UploadedRoot
 }
 
 type LocalVideosConfig struct {
-	ExportQueueRoot string `mapstructure:"videos_export_queue_root"`
-	ExportedRoot    string `mapstructure:"videos_exported_root"`
+	UploadQueueRoot string `mapstructure:"videos_upload_queue_root"`
+	UploadedRoot    string `mapstructure:"videos_uploaded_root"`
 }
 
-func (c *LocalVideosConfig) GetExportQueueRoot() string {
-	return c.ExportQueueRoot
+func (c *LocalVideosConfig) GetUploadQueueRoot() string {
+	return c.UploadQueueRoot
 }
 
-func (c *LocalVideosConfig) GetExportedRoot() string {
-	return c.ExportedRoot
+func (c *LocalVideosConfig) GetUploadedRoot() string {
+	return c.UploadedRoot
 }
 
 func (c *GooglePhotosConfig) Validate() error {
@@ -121,19 +121,19 @@ func (c *GooglePhotosConfig) Validate() error {
 
 func (c *CamflowConfig) Validate() error {
 	// Check that at least a base set of fields have values.
-	if c.PhotosToProcessRoot == "" || c.PhotosExportQueueDir == "" || c.PhotosExportedRoot == "" {
+	if c.PhotosToProcessRoot == "" || c.PhotosUploadQueueDir == "" || c.PhotosUploadedRoot == "" {
 		return fmt.Errorf("missing photos field (%s)", c.path)
 	}
-	if c.VideosExportQueueRoot == "" || c.VideosExportedRoot == "" {
+	if c.VideosUploadQueueRoot == "" || c.VideosUploadedRoot == "" {
 		return fmt.Errorf("missing videos field (%s)", c.path)
 	}
 	if c.PhotosToProcessRoot != c.LocalPhotos.ToProcessRoot ||
-		c.PhotosExportQueueDir != c.LocalPhotos.ExportQueueDir ||
-		c.PhotosExportedRoot != c.LocalPhotos.ExportedRoot {
+		c.PhotosUploadQueueDir != c.LocalPhotos.UploadQueueDir ||
+		c.PhotosUploadedRoot != c.LocalPhotos.UploadedRoot {
 		return fmt.Errorf("local_photos config does not match flat fields (%s)", c.path)
 	}
-	if c.VideosExportQueueRoot != c.LocalVideos.ExportQueueRoot ||
-		c.VideosExportedRoot != c.LocalVideos.ExportedRoot {
+	if c.VideosUploadQueueRoot != c.LocalVideos.UploadQueueRoot ||
+		c.VideosUploadedRoot != c.LocalVideos.UploadedRoot {
 		return fmt.Errorf("local_videos config does not match flat fields (%s)", c.path)
 	}
 	if err := c.GooglePhotos.Validate(); err != nil {
@@ -189,12 +189,12 @@ func LoadConfig(configPathFlag string) (CamflowConfig, error) {
 	}
 	config.LocalPhotos = LocalPhotosConfig{
 		ToProcessRoot:  config.PhotosToProcessRoot,
-		ExportQueueDir: config.PhotosExportQueueDir,
-		ExportedRoot:   config.PhotosExportedRoot,
+		UploadQueueDir: config.PhotosUploadQueueDir,
+		UploadedRoot:   config.PhotosUploadedRoot,
 	}
 	config.LocalVideos = LocalVideosConfig{
-		ExportQueueRoot: config.VideosExportQueueRoot,
-		ExportedRoot:    config.VideosExportedRoot,
+		UploadQueueRoot: config.VideosUploadQueueRoot,
+		UploadedRoot:    config.VideosUploadedRoot,
 	}
 
 	return config, nil

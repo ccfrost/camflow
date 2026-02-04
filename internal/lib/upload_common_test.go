@@ -376,27 +376,27 @@ func TestIsSameFilesystemIntegration(t *testing.T) {
 		tempDir := t.TempDir()
 
 		// Create directory structure similar to the upload scenario
-		exportQueueRoot := filepath.Join(tempDir, "export-queue")
-		exportedRoot := filepath.Join(tempDir, "exported")
-		require.NoError(t, os.Mkdir(exportQueueRoot, 0755))
-		require.NoError(t, os.Mkdir(exportedRoot, 0755))
+		uploadQueueRoot := filepath.Join(tempDir, "upload-queue")
+		uploadedRoot := filepath.Join(tempDir, "uploaded")
+		require.NoError(t, os.Mkdir(uploadQueueRoot, 0755))
+		require.NoError(t, os.Mkdir(uploadedRoot, 0755))
 
 		// Test paths that would be used in uploadMediaItem
-		srcFile := filepath.Join(exportQueueRoot, "2024", "06", "20", "video.mp4")
-		destFile := filepath.Join(exportedRoot, "2024", "06", "20", "video.mp4")
+		srcFile := filepath.Join(uploadQueueRoot, "2024", "06", "20", "video.mp4")
+		destFile := filepath.Join(uploadedRoot, "2024", "06", "20", "video.mp4")
 
 		same, err := isSameFilesystem(srcFile, destFile)
 		require.NoError(t, err)
-		assert.True(t, same, "Export queue and exported directories should be on same filesystem in test")
+		assert.True(t, same, "Export queue and uploaded directories should be on same filesystem in test")
 
 		// Verify the function found the correct existing parents
 		srcParent, err := findExistingParent(srcFile)
 		require.NoError(t, err)
-		assert.Equal(t, exportQueueRoot, srcParent)
+		assert.Equal(t, uploadQueueRoot, srcParent)
 
 		destParent, err := findExistingParent(destFile)
 		require.NoError(t, err)
-		assert.Equal(t, exportedRoot, destParent)
+		assert.Equal(t, uploadedRoot, destParent)
 	})
 }
 

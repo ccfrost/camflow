@@ -60,25 +60,25 @@ func assertDirNotExists(t *testing.T, path string, msg string) {
 
 func TestUploadVideos_TargetRootDirNotConfigured(t *testing.T) {
 	cfg := newTestConfig(t, "", "") // No default albums
-	// Intentionally make VideosExportQueueRoot unconfigured for this test case
-	cfg.VideosExportQueueRoot = ""
+	// Intentionally make VideosUploadQueueRoot unconfigured for this test case
+	cfg.VideosUploadQueueRoot = ""
 
 	ctrl := gomock.NewController(t)
 	mockGPhotosClient := NewMockGPhotosClient(ctrl) // Changed from localMocks.NewMockGPhotosClient
 
 	err := UploadVideos(context.Background(), cfg, t.TempDir(), false, mockGPhotosClient)
-	require.Error(t, err, "Expected an error when exportQueue dir is not configured, got nil")
-	assert.Contains(t, err.Error(), "missing videos field", "Expected error message about exportQueue dir not configured, got: %v", err)
+	require.Error(t, err, "Expected an error when uploadQueue dir is not configured, got nil")
+	assert.Contains(t, err.Error(), "missing videos field", "Expected error message about uploadQueue dir not configured, got: %v", err)
 }
 
 func TestUploadVideos_TargetRootDirDoesNotExist(t *testing.T) {
 	cfg := newTestConfig(t, "", "") // No default albums
-	require.NoError(t, os.RemoveAll(cfg.VideosExportQueueRoot))
+	require.NoError(t, os.RemoveAll(cfg.VideosUploadQueueRoot))
 	ctrl := gomock.NewController(t)
 	mockGPhotosClient := NewMockGPhotosClient(ctrl) // Changed from localMocks.NewMockGPhotosClient
 
 	err := UploadVideos(context.Background(), cfg, t.TempDir(), false, mockGPhotosClient)
-	assert.NoError(t, err, "Expected no error when exportQueue dir does not exist, got: %v", err)
+	assert.NoError(t, err, "Expected no error when uploadQueue dir does not exist, got: %v", err)
 }
 
 func TestUploadVideos_EmptyTargetRootDir(t *testing.T) {
@@ -87,7 +87,7 @@ func TestUploadVideos_EmptyTargetRootDir(t *testing.T) {
 	mockGPhotosClient := NewMockGPhotosClient(ctrl) // Changed from localMocks.NewMockGPhotosClient
 
 	err := UploadVideos(context.Background(), cfg, t.TempDir(), false, mockGPhotosClient)
-	assert.NoError(t, err, "Expected no error for empty exportQueue dir, got: %v", err)
+	assert.NoError(t, err, "Expected no error for empty uploadQueue dir, got: %v", err)
 }
 
 func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles(t *testing.T) {
@@ -95,7 +95,7 @@ func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles(t *testing.T) {
 
 	cfg := newTestConfig(t, "", "") // No default albums
 	filesToCreate := map[string]string{"2024-01-28-video1.mp4": "content1", "2024-01-29-video2.mov": "content2"}
-	exportQueueDir := createTestFiles(t, cfg.VideosExportQueueRoot, filesToCreate)
+	uploadQueueDir := createTestFiles(t, cfg.VideosUploadQueueRoot, filesToCreate)
 
 	tempConfigDir := t.TempDir()
 
@@ -111,7 +111,7 @@ func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles(t *testing.T) {
 
 	// Expectations for UploadFile and CreateMediaItem for each file
 	for baseName := range filesToCreate {
-		filePath := filepath.Join(exportQueueDir, baseName)
+		filePath := filepath.Join(uploadQueueDir, baseName)
 		uploadToken := "upload_token_for_" + baseName
 		mediaItemID := "media_item_id_for_" + baseName
 
@@ -124,24 +124,24 @@ func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles(t *testing.T) {
 	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient)
 	require.NoError(t, err, "UploadVideos failed: %v", err)
 
-	// Verify files are moved from exportQueue and exist in VideosExportedRoot
+	// Verify files are moved from uploadQueue and exist in VideosUploadedRoot
 	for baseName := range filesToCreate {
-		exportQueuePath := filepath.Join(exportQueueDir, baseName)
-		// Files should be moved to date-based structure in exported directory
+		uploadQueuePath := filepath.Join(uploadQueueDir, baseName)
+		// Files should be moved to date-based structure in uploaded directory
 		year, month, day, err := parseDatePrefix(baseName)
 		require.NoError(t, err)
-		destPath := filepath.Join(cfg.VideosExportedRoot, year, month, day, baseName)
+		destPath := filepath.Join(cfg.VideosUploadedRoot, year, month, day, baseName)
 
-		_, statErr := os.Stat(exportQueuePath)
-		assert.True(t, os.IsNotExist(statErr), "Expected file %s to be moved from exportQueue %s, but it still exists", baseName, exportQueueDir)
+		_, statErr := os.Stat(uploadQueuePath)
+		assert.True(t, os.IsNotExist(statErr), "Expected file %s to be moved from uploadQueue %s, but it still exists", baseName, uploadQueueDir)
 
 		_, statErr = os.Stat(destPath)
 		assert.NoError(t, statErr, "Expected file %s to be moved to %s, but it's not there", baseName, destPath)
 	}
 
-	// Check that exportQueue dir is now empty (since files were in root, no subdirectories to clean)
-	remainingFiles, _ := os.ReadDir(exportQueueDir)
-	assert.Empty(t, remainingFiles, "Expected exportQueue directory to be empty after moves, but found %d files", len(remainingFiles))
+	// Check that uploadQueue dir is now empty (since files were in root, no subdirectories to clean)
+	remainingFiles, _ := os.ReadDir(uploadQueueDir)
+	assert.Empty(t, remainingFiles, "Expected uploadQueue directory to be empty after moves, but found %d files", len(remainingFiles))
 }
 
 func TestUploadVideos_FilesToUpload_NoAlbums_KeepFiles(t *testing.T) {
@@ -149,7 +149,7 @@ func TestUploadVideos_FilesToUpload_NoAlbums_KeepFiles(t *testing.T) {
 
 	cfg := newTestConfig(t, "", "") // No default albums
 	videoFile := "2024-01-28-video1.mp4"
-	createTestFiles(t, cfg.VideosExportQueueRoot, map[string]string{videoFile: "content1"})
+	createTestFiles(t, cfg.VideosUploadQueueRoot, map[string]string{videoFile: "content1"})
 	tempConfigDir := t.TempDir()
 
 	ctrl := gomock.NewController(t)
@@ -162,7 +162,7 @@ func TestUploadVideos_FilesToUpload_NoAlbums_KeepFiles(t *testing.T) {
 
 	uploadToken := "token_for_" + videoFile
 	mediaItemID := "id_for_" + videoFile
-	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), filepath.Join(cfg.VideosExportQueueRoot, videoFile)).
+	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), filepath.Join(cfg.VideosUploadQueueRoot, videoFile)).
 		Return(uploadToken, nil)
 	mockMediaItemsSvc.EXPECT().Create(gomock.Any(), media_items.SimpleMediaItem{UploadToken: uploadToken, Filename: videoFile}).
 		Return(&media_items.MediaItem{ID: mediaItemID, Filename: videoFile}, nil)
@@ -170,8 +170,8 @@ func TestUploadVideos_FilesToUpload_NoAlbums_KeepFiles(t *testing.T) {
 	err := UploadVideos(ctx, cfg, tempConfigDir, true /* keepQueued */, mockGPhotosClient)
 	require.NoError(t, err, "UploadVideos failed: %v", err)
 
-	_, statErr := os.Stat(filepath.Join(cfg.VideosExportQueueRoot, videoFile))
-	assert.NoError(t, statErr, "Expected %s to be kept in exportQueue, but it was deleted (os.IsNotExist was true for stat error: %v)", videoFile, statErr)
+	_, statErr := os.Stat(filepath.Join(cfg.VideosUploadQueueRoot, videoFile))
+	assert.NoError(t, statErr, "Expected %s to be kept in uploadQueue, but it was deleted (os.IsNotExist was true for stat error: %v)", videoFile, statErr)
 }
 
 // TestUploadVideos_FilesToUpload_WithAlbums_CreatesAndAddsToAlbum tests uploading a video,
@@ -183,7 +183,7 @@ func TestUploadVideos_FilesToUpload_WithAlbums_CreatesAndAddsToAlbum(t *testing.
 	cfg := newTestConfig(t, "", albumTitle) // Video default album
 
 	videoFileName := "2024-01-28-video1.mp4"
-	videoFilePath := filepath.Join(cfg.VideosExportQueueRoot, videoFileName)
+	videoFilePath := filepath.Join(cfg.VideosUploadQueueRoot, videoFileName)
 	err := os.WriteFile(videoFilePath, []byte("content"), 0644)
 	require.NoError(t, err, "Failed to write video file: %v", err)
 
@@ -223,14 +223,14 @@ func TestUploadVideos_FilesToUpload_WithAlbums_CreatesAndAddsToAlbum(t *testing.
 	err = UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient)
 	require.NoError(t, err, "UploadVideos failed: %v", err)
 
-	// Verify file is moved from exportQueue
+	// Verify file is moved from uploadQueue
 	_, statErr := os.Stat(videoFilePath)
-	assert.True(t, os.IsNotExist(statErr), "Expected video file %s to be moved from exportQueue, but it still exists. Error: %v", videoFilePath, statErr)
+	assert.True(t, os.IsNotExist(statErr), "Expected video file %s to be moved from uploadQueue, but it still exists. Error: %v", videoFilePath, statErr)
 
-	// Verify file exists in VideosExportedRoot (moved to date-based structure)
+	// Verify file exists in VideosUploadedRoot (moved to date-based structure)
 	year, month, day, err := parseDatePrefix(videoFileName)
 	require.NoError(t, err)
-	expectedDestPath := filepath.Join(cfg.VideosExportedRoot, year, month, day, videoFileName)
+	expectedDestPath := filepath.Join(cfg.VideosUploadedRoot, year, month, day, videoFileName)
 	_, statErr = os.Stat(expectedDestPath)
 	assert.NoError(t, statErr, "Expected video file %s to be moved to %s, but it does not exist. Error: %v", videoFileName, expectedDestPath, statErr)
 }
@@ -239,7 +239,7 @@ func TestUploadVideos_ErrorLoadAlbumCache(t *testing.T) {
 	ctx := context.Background()
 
 	cfg := newTestConfig(t, "", "Album1") // Video default album
-	createTestFiles(t, cfg.VideosExportQueueRoot, map[string]string{"2024-01-28-video1.mp4": "content"})
+	createTestFiles(t, cfg.VideosUploadQueueRoot, map[string]string{"2024-01-28-video1.mp4": "content"})
 
 	tempConfigDir := t.TempDir()
 	// Ensure the cache path logic in test matches the main code's getAlbumCachePath
@@ -263,7 +263,7 @@ func TestUploadVideos_ErrorGetOrCreateAlbumIDs(t *testing.T) {
 	ctx := context.Background()
 	albumTitle := "AlbumThatCausesError"
 	cfg := newTestConfig(t, "", albumTitle) // Video default album
-	createTestFiles(t, cfg.VideosExportQueueRoot, map[string]string{"2024-01-28-video1.mp4": "content"})
+	createTestFiles(t, cfg.VideosUploadQueueRoot, map[string]string{"2024-01-28-video1.mp4": "content"})
 	tempConfigDir := t.TempDir()
 
 	ctrl := gomock.NewController(t)
@@ -285,7 +285,7 @@ func TestUploadVideos_ErrorUploadFile(t *testing.T) {
 	ctx := context.Background()
 	cfg := newTestConfig(t, "", "") // No default albums
 	videoFileName := "2024-01-28-video1.mp4"
-	createTestFiles(t, cfg.VideosExportQueueRoot, map[string]string{videoFileName: "content"})
+	createTestFiles(t, cfg.VideosUploadQueueRoot, map[string]string{videoFileName: "content"})
 	tempConfigDir := t.TempDir()
 
 	ctrl := gomock.NewController(t)
@@ -295,7 +295,7 @@ func TestUploadVideos_ErrorUploadFile(t *testing.T) {
 	mockGPhotosClient.EXPECT().Uploader().Return(mockUploaderSvc).AnyTimes()
 
 	expectedErrStr := "simulated upload failure"
-	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), filepath.Join(cfg.VideosExportQueueRoot, videoFileName)).
+	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), filepath.Join(cfg.VideosUploadQueueRoot, videoFileName)).
 		Return("", errors.New(expectedErrStr))
 
 	err := UploadVideos(ctx, cfg, tempConfigDir, false, mockGPhotosClient)
@@ -304,15 +304,15 @@ func TestUploadVideos_ErrorUploadFile(t *testing.T) {
 	assert.Contains(t, err.Error(), videoFileName, "Error message should contain filename")
 	assert.Contains(t, err.Error(), expectedErrStr, "Error message should contain original error")
 
-	_, statErr := os.Stat(filepath.Join(cfg.VideosExportQueueRoot, videoFileName))
-	assert.NoError(t, statErr, "Expected %s to be kept in exportQueue after upload failure, but it was deleted (os.IsNotExist was true for stat error: %v)", videoFileName, statErr)
+	_, statErr := os.Stat(filepath.Join(cfg.VideosUploadQueueRoot, videoFileName))
+	assert.NoError(t, statErr, "Expected %s to be kept in uploadQueue after upload failure, but it was deleted (os.IsNotExist was true for stat error: %v)", videoFileName, statErr)
 }
 
 func TestUploadVideos_ErrorCreateMediaItem(t *testing.T) {
 	ctx := context.Background()
 	cfg := newTestConfig(t, "", "") // No default albums
 	videoFileName := "2024-01-28-video1.mp4"
-	createTestFiles(t, cfg.VideosExportQueueRoot, map[string]string{videoFileName: "content"})
+	createTestFiles(t, cfg.VideosUploadQueueRoot, map[string]string{videoFileName: "content"})
 	tempConfigDir := t.TempDir()
 
 	ctrl := gomock.NewController(t)
@@ -324,7 +324,7 @@ func TestUploadVideos_ErrorCreateMediaItem(t *testing.T) {
 	mockGPhotosClient.EXPECT().MediaItems().Return(mockMediaItemsSvc).AnyTimes()
 
 	uploadToken := "upload_token_for_" + videoFileName
-	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), filepath.Join(cfg.VideosExportQueueRoot, videoFileName)).
+	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), filepath.Join(cfg.VideosUploadQueueRoot, videoFileName)).
 		Return(uploadToken, nil)
 
 	expectedErrStr := "simulated create media item failure"
@@ -336,8 +336,8 @@ func TestUploadVideos_ErrorCreateMediaItem(t *testing.T) {
 	require.Error(t, err, "Expected UploadVideos to fail due to CreateMediaItem error, but it succeeded")
 	assert.Contains(t, err.Error(), expectedErrStr, "Error message should include the CreateMediaItem failure")
 
-	_, statErr := os.Stat(filepath.Join(cfg.VideosExportQueueRoot, videoFileName))
-	assert.NoError(t, statErr, "Expected %s to be kept in exportQueue after CreateMediaItem failure, but it was deleted (os.IsNotExist was true for stat error: %v)", videoFileName, statErr)
+	_, statErr := os.Stat(filepath.Join(cfg.VideosUploadQueueRoot, videoFileName))
+	assert.NoError(t, statErr, "Expected %s to be kept in uploadQueue after CreateMediaItem failure, but it was deleted (os.IsNotExist was true for stat error: %v)", videoFileName, statErr)
 }
 
 func TestUploadVideos_ErrorAddMediaToAlbum_FileKept_WhenAlbumExists(t *testing.T) {
@@ -347,7 +347,7 @@ func TestUploadVideos_ErrorAddMediaToAlbum_FileKept_WhenAlbumExists(t *testing.T
 	cfg := newTestConfig(t, "", albumTitle) // Video default album
 
 	videoFileName := "2024-01-28-video1.mp4"
-	videoFilePath := filepath.Join(cfg.VideosExportQueueRoot, videoFileName)
+	videoFilePath := filepath.Join(cfg.VideosUploadQueueRoot, videoFileName)
 	require.NoError(t, os.WriteFile(videoFilePath, []byte("content"), 0644))
 
 	tempConfigDir := t.TempDir() // For album cache
@@ -396,7 +396,7 @@ func TestUploadVideos_ContextCancellationDuringLimiterWait(t *testing.T) {
 	cfg := newTestConfig(t, "", "") // No default albums
 
 	videoFileName := "2024-01-28-video1.mp4"
-	createTestFiles(t, cfg.VideosExportQueueRoot, map[string]string{videoFileName: "content"})
+	createTestFiles(t, cfg.VideosUploadQueueRoot, map[string]string{videoFileName: "content"})
 
 	tempConfigDir := t.TempDir()
 
@@ -435,8 +435,8 @@ func TestUploadVideos_ContextCancellationDuringLimiterWait(t *testing.T) {
 	isContextError := errors.Is(errUpload, context.Canceled) || errors.Is(errUpload, context.DeadlineExceeded)
 	assert.True(t, isContextError, "Expected context.Canceled or context.DeadlineExceeded, got %v", errUpload)
 
-	_, statErr := os.Stat(filepath.Join(cfg.VideosExportQueueRoot, videoFileName))
-	assert.NoError(t, statErr, "Expected %s to be kept in exportQueue after context cancellation, but it was deleted (os.IsNotExist was true for stat error: %v)", videoFileName, statErr)
+	_, statErr := os.Stat(filepath.Join(cfg.VideosUploadQueueRoot, videoFileName))
+	assert.NoError(t, statErr, "Expected %s to be kept in uploadQueue after context cancellation, but it was deleted (os.IsNotExist was true for stat error: %v)", videoFileName, statErr)
 }
 
 // TestUploadVideos_FilesToUpload_WithAlbums_AlbumExists tests uploading a video,
@@ -448,7 +448,7 @@ func TestUploadVideos_FilesToUpload_WithAlbums_AlbumExists(t *testing.T) {
 	cfg := newTestConfig(t, "", albumTitle) // Video default album
 
 	videoFileName := "2024-01-28-existing_album_video.mp4"
-	videoFilePath := filepath.Join(cfg.VideosExportQueueRoot, videoFileName)
+	videoFilePath := filepath.Join(cfg.VideosUploadQueueRoot, videoFileName)
 	err := os.WriteFile(videoFilePath, []byte("content for existing album test"), 0644)
 	require.NoError(t, err, "Failed to write video file: %v", err)
 
@@ -485,14 +485,14 @@ func TestUploadVideos_FilesToUpload_WithAlbums_AlbumExists(t *testing.T) {
 	err = UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient)
 	require.NoError(t, err, "UploadVideos failed: %v", err)
 
-	// Verify file is moved from exportQueue
+	// Verify file is moved from uploadQueue
 	_, statErr := os.Stat(videoFilePath)
-	assert.True(t, os.IsNotExist(statErr), "Expected video file %s to be moved from exportQueue, but it still exists. Error: %v", videoFilePath, statErr)
+	assert.True(t, os.IsNotExist(statErr), "Expected video file %s to be moved from uploadQueue, but it still exists. Error: %v", videoFilePath, statErr)
 
-	// Verify file exists in VideosExportedRoot (moved to date-based structure)
+	// Verify file exists in VideosUploadedRoot (moved to date-based structure)
 	year, month, day, err := parseDatePrefix(videoFileName)
 	require.NoError(t, err)
-	expectedDestPath := filepath.Join(cfg.VideosExportedRoot, year, month, day, videoFileName)
+	expectedDestPath := filepath.Join(cfg.VideosUploadedRoot, year, month, day, videoFileName)
 	_, statErr = os.Stat(expectedDestPath)
 	assert.NoError(t, statErr, "Expected video file %s to be moved to %s, but it does not exist. Error: %v", videoFileName, expectedDestPath, statErr)
 }
@@ -511,8 +511,8 @@ func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles_WithCleanup(t *testing.T)
 		"2024-02-01-video3.mp4": "content3",
 	}
 
-	exportQueueDir := cfg.VideosExportQueueRoot
-	createTestFiles(t, exportQueueDir, filesToCreate)
+	uploadQueueDir := cfg.VideosUploadQueueRoot
+	createTestFiles(t, uploadQueueDir, filesToCreate)
 
 	tempConfigDir := t.TempDir()
 
@@ -526,7 +526,7 @@ func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles_WithCleanup(t *testing.T)
 
 	// Expectations for UploadFile and CreateMediaItem for each file
 	for baseName := range filesToCreate {
-		filePath := filepath.Join(exportQueueDir, baseName)
+		filePath := filepath.Join(uploadQueueDir, baseName)
 		uploadToken := "upload_token_for_" + baseName
 		mediaItemID := "media_item_id_for_" + baseName
 
@@ -539,16 +539,16 @@ func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles_WithCleanup(t *testing.T)
 	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient)
 	require.NoError(t, err, "UploadVideos failed: %v", err)
 
-	// Verify files are moved from exportQueue and exist in VideosExportedRoot
+	// Verify files are moved from uploadQueue and exist in VideosUploadedRoot
 	for baseName := range filesToCreate {
-		exportQueuePath := filepath.Join(exportQueueDir, baseName)
+		uploadQueuePath := filepath.Join(uploadQueueDir, baseName)
 		// Files should be moved to date-based structure in exported directory
 		year, month, day, err := parseDatePrefix(baseName)
 		require.NoError(t, err)
-		destPath := filepath.Join(cfg.VideosExportedRoot, year, month, day, baseName)
+		destPath := filepath.Join(cfg.VideosUploadedRoot, year, month, day, baseName)
 
-		_, statErr := os.Stat(exportQueuePath)
-		assert.True(t, os.IsNotExist(statErr), "Expected file %s to be moved from exportQueue", baseName)
+		_, statErr := os.Stat(uploadQueuePath)
+		assert.True(t, os.IsNotExist(statErr), "Expected file %s to be moved from uploadQueue", baseName)
 
 		_, statErr = os.Stat(destPath)
 		assert.NoError(t, statErr, "Expected file %s to be moved to %s", baseName, destPath)
@@ -556,7 +556,7 @@ func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles_WithCleanup(t *testing.T)
 
 	// No directory cleanup needed since files are directly in export queue root
 	// TargetRoot root should still exist
-	assertDirExists(t, exportQueueDir, "Expected exportQueue root to remain")
+	assertDirExists(t, uploadQueueDir, "Expected uploadQueue root to remain")
 }
 
 func TestUploadVideos_FilesToUpload_WithAlbums_CleanupOnSuccess(t *testing.T) {
@@ -567,7 +567,7 @@ func TestUploadVideos_FilesToUpload_WithAlbums_CleanupOnSuccess(t *testing.T) {
 
 	// Create video directly in export queue root (flat structure)
 	videoFileName := "2024-01-28-video1.mp4"
-	videoFilePath := filepath.Join(cfg.VideosExportQueueRoot, videoFileName)
+	videoFilePath := filepath.Join(cfg.VideosUploadQueueRoot, videoFileName)
 	require.NoError(t, os.WriteFile(videoFilePath, []byte("content"), 0644))
 
 	tempConfigDir := t.TempDir()
@@ -601,17 +601,17 @@ func TestUploadVideos_FilesToUpload_WithAlbums_CleanupOnSuccess(t *testing.T) {
 
 	// Verify file is moved
 	_, statErr := os.Stat(videoFilePath)
-	assert.True(t, os.IsNotExist(statErr), "Expected video file to be moved from exportQueue")
+	assert.True(t, os.IsNotExist(statErr), "Expected video file to be moved from uploadQueue")
 
 	// Verify file exists in destination (moved to date-based structure)
 	year, month, day, err := parseDatePrefix(videoFileName)
 	require.NoError(t, err)
-	expectedDestPath := filepath.Join(cfg.VideosExportedRoot, year, month, day, videoFileName)
+	expectedDestPath := filepath.Join(cfg.VideosUploadedRoot, year, month, day, videoFileName)
 	_, statErr = os.Stat(expectedDestPath)
 	assert.NoError(t, statErr, "Expected video file to be moved to destination")
 
 	// No directory cleanup needed since file was directly in export queue root
-	assertDirExists(t, cfg.VideosExportQueueRoot, "Expected exportQueue root to remain")
+	assertDirExists(t, cfg.VideosUploadQueueRoot, "Expected uploadQueue root to remain")
 }
 
 func TestUploadVideos_ErrorUploadFile_NoCleanup(t *testing.T) {
@@ -621,7 +621,7 @@ func TestUploadVideos_ErrorUploadFile_NoCleanup(t *testing.T) {
 	// Create video in nested directory structure
 	videoFileName := "2024-01-28-video1.mp4"
 	videoRelPath := filepath.Join("2024", "05", "15", videoFileName)
-	videoFilePath := filepath.Join(cfg.VideosExportQueueRoot, videoRelPath)
+	videoFilePath := filepath.Join(cfg.VideosUploadQueueRoot, videoRelPath)
 	require.NoError(t, os.MkdirAll(filepath.Dir(videoFilePath), 0755))
 	require.NoError(t, os.WriteFile(videoFilePath, []byte("content"), 0644))
 
@@ -640,14 +640,14 @@ func TestUploadVideos_ErrorUploadFile_NoCleanup(t *testing.T) {
 	err := UploadVideos(ctx, cfg, tempConfigDir, false, mockGPhotosClient)
 	require.Error(t, err, "UploadVideos expected to fail due to UploadFile error, but succeeded")
 
-	// Verify file is still in exportQueue (not moved)
+	// Verify file is still in uploadQueue (not moved)
 	_, statErr := os.Stat(videoFilePath)
-	assert.NoError(t, statErr, "Expected video file to remain in exportQueue after upload failure")
+	assert.NoError(t, statErr, "Expected video file to remain in uploadQueue after upload failure")
 
 	// Verify directories were NOT cleaned up since file wasn't moved
-	assertDirExists(t, filepath.Join(cfg.VideosExportQueueRoot, "2024", "05", "15"), "Expected directory to remain after upload failure")
-	assertDirExists(t, filepath.Join(cfg.VideosExportQueueRoot, "2024", "05"), "Expected parent directory to remain after upload failure")
-	assertDirExists(t, filepath.Join(cfg.VideosExportQueueRoot, "2024"), "Expected year directory to remain after upload failure")
+	assertDirExists(t, filepath.Join(cfg.VideosUploadQueueRoot, "2024", "05", "15"), "Expected directory to remain after upload failure")
+	assertDirExists(t, filepath.Join(cfg.VideosUploadQueueRoot, "2024", "05"), "Expected parent directory to remain after upload failure")
+	assertDirExists(t, filepath.Join(cfg.VideosUploadQueueRoot, "2024"), "Expected year directory to remain after upload failure")
 }
 
 func TestUploadVideos_ErrorAddMediaToAlbum_NoCleanup(t *testing.T) {
@@ -659,7 +659,7 @@ func TestUploadVideos_ErrorAddMediaToAlbum_NoCleanup(t *testing.T) {
 	// Create video in nested directory structure
 	videoFileName := "2024-01-28-video1.mp4"
 	videoRelPath := filepath.Join("2024", "05", "15", videoFileName)
-	videoFilePath := filepath.Join(cfg.VideosExportQueueRoot, videoRelPath)
+	videoFilePath := filepath.Join(cfg.VideosUploadQueueRoot, videoRelPath)
 	require.NoError(t, os.MkdirAll(filepath.Dir(videoFilePath), 0755))
 	require.NoError(t, os.WriteFile(videoFilePath, []byte("content"), 0644))
 
@@ -707,7 +707,7 @@ func TestUploadVideos_keepQueued_NoCleanup(t *testing.T) {
 	// Create video in nested directory structure
 	videoFileName := "2024-01-28-video1.mp4"
 	videoRelPath := filepath.Join("2024", "05", "15", videoFileName)
-	videoFilePath := filepath.Join(cfg.VideosExportQueueRoot, videoRelPath)
+	videoFilePath := filepath.Join(cfg.VideosUploadQueueRoot, videoRelPath)
 	require.NoError(t, os.MkdirAll(filepath.Dir(videoFilePath), 0755))
 	require.NoError(t, os.WriteFile(videoFilePath, []byte("content"), 0644))
 
@@ -730,14 +730,14 @@ func TestUploadVideos_keepQueued_NoCleanup(t *testing.T) {
 	err := UploadVideos(ctx, cfg, tempConfigDir, true /* keepQueued */, mockGPhotosClient)
 	require.NoError(t, err, "UploadVideos failed: %v", err)
 
-	// Verify file is kept in exportQueue
+	// Verify file is kept in uploadQueue
 	_, statErr := os.Stat(videoFilePath)
-	assert.NoError(t, statErr, "Expected video file to be kept in exportQueue when keepQueued=true")
+	assert.NoError(t, statErr, "Expected video file to be kept in uploadQueue when keepQueued=true")
 
 	// Verify directories were NOT cleaned up since file wasn't moved
-	assertDirExists(t, filepath.Join(cfg.VideosExportQueueRoot, "2024", "05", "15"), "Expected directory to remain when keepQueued=true")
-	assertDirExists(t, filepath.Join(cfg.VideosExportQueueRoot, "2024", "05"), "Expected parent directory to remain when keepQueued=true")
-	assertDirExists(t, filepath.Join(cfg.VideosExportQueueRoot, "2024"), "Expected year directory to remain when keepQueued=true")
+	assertDirExists(t, filepath.Join(cfg.VideosUploadQueueRoot, "2024", "05", "15"), "Expected directory to remain when keepQueued=true")
+	assertDirExists(t, filepath.Join(cfg.VideosUploadQueueRoot, "2024", "05"), "Expected parent directory to remain when keepQueued=true")
+	assertDirExists(t, filepath.Join(cfg.VideosUploadQueueRoot, "2024"), "Expected year directory to remain when keepQueued=true")
 }
 
 func TestUploadVideos_FilesToUpload_CleanupFailsButUploadSucceeds(t *testing.T) {
@@ -746,11 +746,11 @@ func TestUploadVideos_FilesToUpload_CleanupFailsButUploadSucceeds(t *testing.T) 
 
 	// Create videos directly in export queue root (flat structure)
 	videoFileName := "2024-01-28-video1.mp4"
-	videoFilePath := filepath.Join(cfg.VideosExportQueueRoot, videoFileName)
+	videoFilePath := filepath.Join(cfg.VideosUploadQueueRoot, videoFileName)
 	require.NoError(t, os.WriteFile(videoFilePath, []byte("content"), 0644))
 
 	// Create an additional video file
-	siblingVideoFile := filepath.Join(cfg.VideosExportQueueRoot, "2024-06-01-sibling.mp4")
+	siblingVideoFile := filepath.Join(cfg.VideosUploadQueueRoot, "2024-06-01-sibling.mp4")
 	require.NoError(t, os.WriteFile(siblingVideoFile, []byte("sibling"), 0644))
 
 	tempConfigDir := t.TempDir()
@@ -781,25 +781,25 @@ func TestUploadVideos_FilesToUpload_CleanupFailsButUploadSucceeds(t *testing.T) 
 
 	// Verify both files are moved successfully
 	_, statErr := os.Stat(videoFilePath)
-	assert.True(t, os.IsNotExist(statErr), "Expected video file to be moved from exportQueue")
+	assert.True(t, os.IsNotExist(statErr), "Expected video file to be moved from uploadQueue")
 	_, statErr = os.Stat(siblingVideoFile)
-	assert.True(t, os.IsNotExist(statErr), "Expected sibling video file to be moved from exportQueue")
+	assert.True(t, os.IsNotExist(statErr), "Expected sibling video file to be moved from uploadQueue")
 
 	// Verify files exist in destination (moved to date-based structure)
 	year1, month1, day1, err := parseDatePrefix(videoFileName)
 	require.NoError(t, err)
-	expectedDestPath := filepath.Join(cfg.VideosExportedRoot, year1, month1, day1, videoFileName)
+	expectedDestPath := filepath.Join(cfg.VideosUploadedRoot, year1, month1, day1, videoFileName)
 	_, statErr = os.Stat(expectedDestPath)
 	assert.NoError(t, statErr, "Expected video file to be moved to destination")
 
 	year2, month2, day2, err := parseDatePrefix("2024-06-01-sibling.mp4")
 	require.NoError(t, err)
-	expectedSiblingDestPath := filepath.Join(cfg.VideosExportedRoot, year2, month2, day2, "2024-06-01-sibling.mp4")
+	expectedSiblingDestPath := filepath.Join(cfg.VideosUploadedRoot, year2, month2, day2, "2024-06-01-sibling.mp4")
 	_, statErr = os.Stat(expectedSiblingDestPath)
 	assert.NoError(t, statErr, "Expected sibling video file to be moved to destination")
 
 	// No directory cleanup needed since files were directly in export queue root
-	assertDirExists(t, cfg.VideosExportQueueRoot, "Expected exportQueue root to remain")
+	assertDirExists(t, cfg.VideosUploadQueueRoot, "Expected uploadQueue root to remain")
 }
 
 // --- Test for mixed scenarios ---
@@ -817,8 +817,8 @@ func TestUploadVideos_MixedSuccessAndFailure_PartialCleanup(t *testing.T) {
 		"2024-06-01-c_success_video.mp4": "content3", // This will NOT be processed due to early exit
 	}
 
-	exportQueueDir := cfg.VideosExportQueueRoot
-	createTestFiles(t, exportQueueDir, videoFiles)
+	uploadQueueDir := cfg.VideosUploadQueueRoot
+	createTestFiles(t, uploadQueueDir, videoFiles)
 
 	tempConfigDir := t.TempDir()
 
@@ -831,13 +831,13 @@ func TestUploadVideos_MixedSuccessAndFailure_PartialCleanup(t *testing.T) {
 	mockGPhotosClient.EXPECT().MediaItems().Return(mockMediaItemsSvc).AnyTimes()
 
 	// Mock success for first video (processed first due to alphabetical order)
-	successPath1 := filepath.Join(exportQueueDir, "2024-05-15-a_success_video.mp4")
+	successPath1 := filepath.Join(uploadQueueDir, "2024-05-15-a_success_video.mp4")
 	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), successPath1).Return("token1", nil)
 	mockMediaItemsSvc.EXPECT().Create(gomock.Any(), media_items.SimpleMediaItem{UploadToken: "token1", Filename: "2024-05-15-a_success_video.mp4"}).
 		Return(&media_items.MediaItem{ID: "id1", Filename: "2024-05-15-a_success_video.mp4"}, nil)
 
 	// Mock failure for second video - this causes early exit
-	failurePath := filepath.Join(exportQueueDir, "2024-05-16-b_failure_video.mp4")
+	failurePath := filepath.Join(uploadQueueDir, "2024-05-16-b_failure_video.mp4")
 	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), failurePath).Return("", errors.New("upload failed"))
 
 	// No mock for third video because it won't be processed due to early exit
@@ -851,12 +851,12 @@ func TestUploadVideos_MixedSuccessAndFailure_PartialCleanup(t *testing.T) {
 
 	// Verify failed video remained
 	_, statErr = os.Stat(failurePath)
-	assert.NoError(t, statErr, "Expected failed video to remain in exportQueue")
+	assert.NoError(t, statErr, "Expected failed video to remain in uploadQueue")
 
 	// Verify third video was never processed (remains due to early exit)
-	thirdPath := filepath.Join(exportQueueDir, "2024-06-01-c_success_video.mp4")
+	thirdPath := filepath.Join(uploadQueueDir, "2024-06-01-c_success_video.mp4")
 	_, statErr = os.Stat(thirdPath)
-	assert.NoError(t, statErr, "Expected unprocessed video to remain in exportQueue due to early exit")
+	assert.NoError(t, statErr, "Expected unprocessed video to remain in uploadQueue due to early exit")
 
 	// No directory cleanup concerns since files are directly in export queue root
 }
@@ -870,8 +870,8 @@ func TestUploadVideos_CrossFilesystem_NoAlbums_CopyAndDelete(t *testing.T) {
 	videoFileName := "2024-01-28-video1.mp4"
 	filesToCreate := map[string]string{videoFileName: "video_content_cross_fs"}
 
-	exportQueueDir := cfg.VideosExportQueueRoot
-	createTestFiles(t, exportQueueDir, filesToCreate)
+	uploadQueueDir := cfg.VideosUploadQueueRoot
+	createTestFiles(t, uploadQueueDir, filesToCreate)
 	tempConfigDir := t.TempDir()
 
 	// Force cross-filesystem behavior
@@ -889,22 +889,22 @@ func TestUploadVideos_CrossFilesystem_NoAlbums_CopyAndDelete(t *testing.T) {
 
 	uploadToken := "token_for_" + videoFileName
 	mediaItemID := "media_id_for_" + videoFileName
-	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), filepath.Join(exportQueueDir, videoFileName)).Return(uploadToken, nil)
+	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), filepath.Join(uploadQueueDir, videoFileName)).Return(uploadToken, nil)
 	mockMediaItemsSvc.EXPECT().Create(gomock.Any(), media_items.SimpleMediaItem{UploadToken: uploadToken, Filename: videoFileName}).
 		Return(&media_items.MediaItem{ID: mediaItemID, Filename: videoFileName}, nil)
 
 	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient)
 	require.NoError(t, err, "UploadVideos should work with cross-filesystem copy+delete")
 
-	// Verify file is moved from exportQueue using copy+delete
-	exportQueuePath := filepath.Join(exportQueueDir, videoFileName)
+	// Verify file is moved from uploadQueue using copy+delete
+	uploadQueuePath := filepath.Join(uploadQueueDir, videoFileName)
 	// Files should be moved to date-based structure in exported directory
 	year, month, day, err := parseDatePrefix(videoFileName)
 	require.NoError(t, err)
-	destPath := filepath.Join(cfg.VideosExportedRoot, year, month, day, videoFileName)
+	destPath := filepath.Join(cfg.VideosUploadedRoot, year, month, day, videoFileName)
 
-	_, statErr := os.Stat(exportQueuePath)
-	assert.True(t, os.IsNotExist(statErr), "Expected file %s to be deleted from exportQueue after copy+delete", videoFileName)
+	_, statErr := os.Stat(uploadQueuePath)
+	assert.True(t, os.IsNotExist(statErr), "Expected file %s to be deleted from uploadQueue after copy+delete", videoFileName)
 
 	_, statErr = os.Stat(destPath)
 	assert.NoError(t, statErr, "Expected file %s to be copied to %s", videoFileName, destPath)
@@ -924,8 +924,8 @@ func TestUploadVideos_CrossFilesystem_WithAlbums_CopyAndDelete(t *testing.T) {
 	videoFileName := "2024-06-20-cross-fs-video.mp4"
 	filesToCreate := map[string]string{videoFileName: "video_content_with_albums_cross_fs"}
 
-	exportQueueDir := cfg.VideosExportQueueRoot
-	createTestFiles(t, exportQueueDir, filesToCreate)
+	uploadQueueDir := cfg.VideosUploadQueueRoot
+	createTestFiles(t, uploadQueueDir, filesToCreate)
 	tempConfigDir := t.TempDir()
 
 	// Force cross-filesystem behavior
@@ -950,7 +950,7 @@ func TestUploadVideos_CrossFilesystem_WithAlbums_CopyAndDelete(t *testing.T) {
 	}, nil)
 
 	// Mock file upload
-	videoFilePath := filepath.Join(exportQueueDir, videoFileName)
+	videoFilePath := filepath.Join(uploadQueueDir, videoFileName)
 	uploadToken := "token_for_cross_fs_video"
 	mediaItemID := "media_id_for_cross_fs_video"
 	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), videoFilePath).Return(uploadToken, nil)
@@ -963,12 +963,12 @@ func TestUploadVideos_CrossFilesystem_WithAlbums_CopyAndDelete(t *testing.T) {
 
 	// Verify file is moved using copy+delete
 	_, statErr := os.Stat(videoFilePath)
-	assert.True(t, os.IsNotExist(statErr), "Expected video file to be deleted from exportQueue after copy+delete")
+	assert.True(t, os.IsNotExist(statErr), "Expected video file to be deleted from uploadQueue after copy+delete")
 
 	// Verify file exists in destination with correct structure (moved to date-based structure)
 	year, month, day, err := parseDatePrefix(videoFileName)
 	require.NoError(t, err)
-	expectedDestPath := filepath.Join(cfg.VideosExportedRoot, year, month, day, videoFileName)
+	expectedDestPath := filepath.Join(cfg.VideosUploadedRoot, year, month, day, videoFileName)
 	_, statErr = os.Stat(expectedDestPath)
 	assert.NoError(t, statErr, "Expected video file to be copied to destination")
 
@@ -979,7 +979,7 @@ func TestUploadVideos_CrossFilesystem_WithAlbums_CopyAndDelete(t *testing.T) {
 	assert.Equal(t, originalContent, string(copiedContent), "File content should be preserved during copy+delete")
 
 	// No directory cleanup needed since file was directly in export queue root
-	assertDirExists(t, exportQueueDir, "Expected exportQueue root to remain after copy+delete")
+	assertDirExists(t, uploadQueueDir, "Expected uploadQueue root to remain after copy+delete")
 }
 
 func TestUploadVideos_CrossFilesystem_KeepFiles_CopyOnly(t *testing.T) {
@@ -989,8 +989,8 @@ func TestUploadVideos_CrossFilesystem_KeepFiles_CopyOnly(t *testing.T) {
 	videoFileName := "keep-video.mp4"
 	filesToCreate := map[string]string{videoFileName: "video_content_keep_cross_fs"}
 
-	exportQueueDir := cfg.VideosExportQueueRoot
-	createTestFiles(t, exportQueueDir, filesToCreate)
+	uploadQueueDir := cfg.VideosUploadQueueRoot
+	createTestFiles(t, uploadQueueDir, filesToCreate)
 	tempConfigDir := t.TempDir()
 
 	// Force cross-filesystem behavior
@@ -1008,26 +1008,26 @@ func TestUploadVideos_CrossFilesystem_KeepFiles_CopyOnly(t *testing.T) {
 
 	uploadToken := "token_for_keep_" + videoFileName
 	mediaItemID := "media_id_for_keep_" + videoFileName
-	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), filepath.Join(exportQueueDir, videoFileName)).Return(uploadToken, nil)
+	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), filepath.Join(uploadQueueDir, videoFileName)).Return(uploadToken, nil)
 	mockMediaItemsSvc.EXPECT().Create(gomock.Any(), media_items.SimpleMediaItem{UploadToken: uploadToken, Filename: videoFileName}).
 		Return(&media_items.MediaItem{ID: mediaItemID, Filename: videoFileName}, nil)
 
 	err := UploadVideos(ctx, cfg, tempConfigDir, true /* keepQueued */, mockGPhotosClient)
 	require.NoError(t, err, "UploadVideos with keepQueued should work with cross-filesystem behavior")
 
-	// With keepQueued=true, file should remain in exportQueue and NOT be moved/copied
-	exportQueuePath := filepath.Join(exportQueueDir, videoFileName)
-	_, statErr := os.Stat(exportQueuePath)
-	assert.NoError(t, statErr, "Expected file %s to remain in exportQueue when keepQueued=true", videoFileName)
+	// With keepQueued=true, file should remain in uploadQueue and NOT be moved/copied
+	uploadQueuePath := filepath.Join(uploadQueueDir, videoFileName)
+	_, statErr := os.Stat(uploadQueuePath)
+	assert.NoError(t, statErr, "Expected file %s to remain in uploadQueue when keepQueued=true", videoFileName)
 
 	// Verify file content is unchanged
 	originalContent := filesToCreate[videoFileName]
-	sourceContent, err := os.ReadFile(exportQueuePath)
+	sourceContent, err := os.ReadFile(uploadQueuePath)
 	require.NoError(t, err, "Failed to read source file")
 	assert.Equal(t, originalContent, string(sourceContent), "Source file should be unchanged when keepQueued=true")
 
 	// Verify file is NOT copied to destination (keepQueued=true means no move/copy)
-	destPath := filepath.Join(cfg.VideosExportedRoot, videoFileName)
+	destPath := filepath.Join(cfg.VideosUploadedRoot, videoFileName)
 	_, statErr = os.Stat(destPath)
 	assert.True(t, os.IsNotExist(statErr), "File should NOT be copied to destination when keepQueued=true")
 }

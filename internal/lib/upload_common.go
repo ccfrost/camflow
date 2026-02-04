@@ -20,8 +20,8 @@ import (
 )
 
 type LocalConfig interface {
-	GetExportQueueRoot() string
-	GetExportedRoot() string
+	GetUploadQueueRoot() string
+	GetUploadedRoot() string
 }
 
 type GPConfig interface {
@@ -37,21 +37,21 @@ type itemFileInfo struct {
 	modTime time.Time
 }
 
-// scanExportQueue walks the export queue directory and returns the list of files to process,
+// scanUploadQueue walks the upload queue directory and returns the list of files to process,
 // the total size of those files, and a slice of non-fatal warnings encountered during the walk.
-func scanExportQueue(exportQueueDir string) ([]itemFileInfo, int64, error) {
-	if _, err := os.Stat(exportQueueDir); os.IsNotExist(err) {
-		return nil, 0, fmt.Errorf("export queue directory does not exist: %s", exportQueueDir)
+func scanUploadQueue(uploadQueueDir string) ([]itemFileInfo, int64, error) {
+	if _, err := os.Stat(uploadQueueDir); os.IsNotExist(err) {
+		return nil, 0, fmt.Errorf("upload queue directory does not exist: %s", uploadQueueDir)
 	}
 
 	var items []itemFileInfo
 	var totalSize int64
 	var numWalkErrors int
-	err := filepath.WalkDir(exportQueueDir, func(path string, d fs.DirEntry, walkErr error) error {
+	err := filepath.WalkDir(uploadQueueDir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
-			// If the error is about the root exportQueueDir itself not existing, propagate it.
-			if path == exportQueueDir && os.IsNotExist(walkErr) {
-				return fmt.Errorf("export queue directory '%s' disappeared or unreadable: %w", exportQueueDir, walkErr)
+			// If the error is about the root uploadQueueDir itself not existing, propagate it.
+			if path == uploadQueueDir && os.IsNotExist(walkErr) {
+				return fmt.Errorf("upload queue directory '%s' disappeared or unreadable: %w", uploadQueueDir, walkErr)
 			}
 			// For other errors (e.g. permission on a sub-file/dir), collect and continue.
 			logger.Error("Error accessing path during walk, skipping",
@@ -74,7 +74,7 @@ func scanExportQueue(exportQueueDir string) ([]itemFileInfo, int64, error) {
 		return nil
 	})
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to walk export queue dir '%s': %w", exportQueueDir, err)
+		return nil, 0, fmt.Errorf("failed to walk upload queue dir '%s': %w", uploadQueueDir, err)
 	}
 	if numWalkErrors > 0 {
 		logger.Warn("Encountered errors during directory walk, proceeding with successfully found files",
@@ -83,9 +83,9 @@ func scanExportQueue(exportQueueDir string) ([]itemFileInfo, int64, error) {
 	return items, totalSize, nil
 }
 
-// moveToExported moves a single media item from export queue to the exported directory.
+// moveToUploaded moves a single media item from upload queue to the uploaded directory.
 // Returns the destination path.
-func moveToExported(localConfig LocalConfig, fileInfo itemFileInfo) (string, error) {
+func moveToUploaded(localConfig LocalConfig, fileInfo itemFileInfo) (string, error) {
 	fileBasename := filepath.Base(fileInfo.path)
 
 	year, month, day, err := parseDatePrefix(fileBasename)
@@ -93,7 +93,7 @@ func moveToExported(localConfig LocalConfig, fileInfo itemFileInfo) (string, err
 		return "", fmt.Errorf("failed to parse date prefix from file name %s: %w", fileBasename, err)
 	}
 	relPath := filepath.Join(year, month, day, fileBasename)
-	destPath := filepath.Join(localConfig.GetExportedRoot(), relPath)
+	destPath := filepath.Join(localConfig.GetUploadedRoot(), relPath)
 	destDir := filepath.Dir(destPath)
 
 	logger.Debug("Moving file",
@@ -136,15 +136,15 @@ func moveToExported(localConfig LocalConfig, fileInfo itemFileInfo) (string, err
 	return destPath, nil
 }
 
-// uploadMediaItems uploads media items from the export queue dir to Google Photos.
+// uploadMediaItems uploads media items from the upload queue dir to Google Photos.
 // Media items are added to Google Photos album named DefaultAlbum.
-// Uploaded media items are moved from export queue to exported dir; unless keepQueued is true, in which case they are copied (but not moved).
+// Uploaded media items are moved from upload queue to uploaded dir; unless keepQueued is true, in which case they are copied (but not moved).
 // The function is idempotent - if interrupted, it can be recalled to resume.
 func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, localConfig LocalConfig, gpConfig GPConfig, itemTypePluralName string, gphotosClient GPhotosClient) error {
-	exportQueueDir := localConfig.GetExportQueueRoot()
-	if _, err := os.Stat(exportQueueDir); os.IsNotExist(err) {
-		logger.Info("Export queue directory does not exist, nothing to upload",
-			slog.String("export_queue_dir", exportQueueDir))
+	uploadQueueDir := localConfig.GetUploadQueueRoot()
+	if _, err := os.Stat(uploadQueueDir); os.IsNotExist(err) {
+		logger.Info("Upload queue directory does not exist, nothing to upload",
+			slog.String("upload_queue_dir", uploadQueueDir))
 		return nil
 	}
 
@@ -153,14 +153,14 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 	// TODO: check the actual rate limits for Google Photos API.
 	limiter := rate.NewLimiter(rate.Every(time.Second/5), 10)
 
-	itemsToUpload, totalSize, err := scanExportQueue(exportQueueDir)
+	itemsToUpload, totalSize, err := scanUploadQueue(uploadQueueDir)
 	if err != nil {
 		return err
 	}
 
 	if len(itemsToUpload) == 0 {
-		logger.Info("No media items found in export queue directory",
-			slog.String("export_queue_dir", exportQueueDir))
+		logger.Info("No media items found in upload queue directory",
+			slog.String("upload_queue_dir", uploadQueueDir))
 		return nil
 	}
 	logger.Info("Found files to upload",
@@ -323,13 +323,13 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 
 	}
 
-	// Only move when keepQueued is false; uploading with keepQueued=true does not copy to exported.
+	// Only move when keepQueued is false; uploading with keepQueued=true does not copy to uploaded.
 	if !keepQueued {
-		if _, err := moveToExported(localConfig, fileInfo); err != nil {
+		if _, err := moveToUploaded(localConfig, fileInfo); err != nil {
 			return err
 		}
 	} else {
-		logger.Debug("Keeping file in export queue directory as per keepQueued flag",
+		logger.Debug("Keeping file in upload queue directory as per keepQueued flag",
 			slog.String("file", fileInfo.path))
 	}
 
