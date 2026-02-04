@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -172,6 +173,12 @@ func LoadConfig(configPathFlag string) (CamflowConfig, error) {
 	}
 	viper.SetConfigFile(path)
 	viper.SetConfigType("toml")
+
+	// Allow users to override config values with environment variables.
+	// In particular, may be desired for the Google Photos API credentials.
+	viper.SetEnvPrefix("CAMFLOW")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	viper.AutomaticEnv()
 
 	if err := viper.ReadInConfig(); err != nil {
 		return CamflowConfig{}, fmt.Errorf("error reading (%s): %w", path, err)
