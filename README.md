@@ -35,44 +35,11 @@ To upload to your Google Photos account, you must create a Google Cloud Project 
 
 ### 2. Configuration File
 
-Create a file named `config.toml` in your configuration directory (e.g., `~/.config/camflow/` or the directory you run the tool from).
+Camflow uses a configuration file named `config.toml`. You can find an annotated example configuration file in the repository at [config.example.toml](config.example.toml).
 
-```toml
-# config.toml
-
-# Google Photos API Credentials
-[google_photos]
-client_id = "YOUR_CLIENT_ID.apps.googleusercontent.com"
-client_secret = "YOUR_CLIENT_SECRET"
-redirect_uri = "http://localhost:8080" 
-
-[google_photos.photos]
-default_album = "Camera Uploads"
-
-[google_photos.videos]
-default_album = "Videos"
-
-# Local Workflow Paths (Use absolute paths)
-
-# Photos Flow
-# 1. Import destination: Where raw photos land for curation.
-#    Structure: Organized into date-based subfolders (YYYY/MM/DD/).
-photos_to_process_root = "/Users/you/Pictures/Camflow/Inbox"
-# 2. Upload source: Where you place curated/edited JPGs ready for upload.
-#    Structure: Flat (all files directly in this folder).
-photos_upload_queue_dir = "/Users/you/Pictures/Camflow/UploadQueue"
-# 3. Archive: Where photos are moved after successful upload.
-#    Structure: Organized into date-based subfolders (YYYY/MM/DD/).
-photos_uploaded_root = "/Users/you/Pictures/Camflow/Archive"
-
-# Videos Flow
-# Videos skip the inbox and go straight to the queue.
-# Structure: Flat (all files directly in this folder).
-videos_upload_queue_root = "/Users/you/Movies/Camflow/UploadQueue"
-
-# Structure: Organized into date-based subfolders (YYYY/MM/DD/).
-videos_uploaded_root = "/Users/you/Movies/Camflow/Archive"
-```
+To set it up:
+1.  Copy `config.example.toml` to your configuration directory (see the example config file for where to place it).
+2.  Edit the file to fill in your Google Cloud credentials and local paths.
 
 ## Usage
 
