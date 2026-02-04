@@ -1,0 +1,77 @@
+## Camflow example configuration file.
+#
+# Copy this file to your config location (e.g., on macOS at
+# "/Users/chris/Library/Application Support/camflow/config.toml"
+# and on Linux at "~/.config/camflow/config.toml")
+# and update the values for your environment.
+#
+# Local path examples are for macOS-style home directories.
+# For Linux, replace "/Users/you" with "/home/you".
+
+
+## Local paths.
+
+### Paths for photos.
+#
+# 1. Import destination: Where photos from the camera land for curation when importing from SD card.
+#    Structure: date-based subfolders (YYYY/MM/DD/).
+photos_to_process_root = "/Users/you/Google Drive/My Drive/media/photos/process_queue"
+#
+# 2. Upload source: Where you place curated+edited files ready for upload.
+#    Structure: Flat (all files directly in this folder).
+#    Note: this is not in Google Drive, because a bug in macOS+Google Drive
+#          causes file loss.
+photos_export_queue_dir = "/Users/you/Pictures/camflow_photos_queue_export"
+#
+# 3. Archive: Where photos are moved after upload.
+#    Structure: date-based subfolders (YYYY/MM/DD/).
+photos_exported_root = "/Users/you/Google Drive/My Drive/media/photos/exported"
+
+### Paths for videos.
+#
+# Videos skip the process queue during import and go straight to the export queue.
+#
+# 1. Upload source: Videos waiting to be uploaded.
+#    Structure: Flat (all files directly in this folder).
+#    Note: this is not in Google Drive, because a bug in macOS+Google Drive
+#          causes file loss.
+videos_export_queue_root = "/Users/you/Pictures/camflow_videos_queue_export"
+#
+# 2. Archive: Where videos are moved after upload (or marking as exported).
+#    Structure: date-based subfolders (YYYY/MM/DD/).
+videos_exported_root = "/Users/you/Google Drive/My Drive/media/videos/exported"
+
+
+## Google Photos.
+[google_photos]
+    # Credentials for the Google Photos API.
+    # You must create a Google Cloud Project and generate OAuth 2.0 credentials
+    # (Client ID and Client Secret).
+    # Guide: https://gilesknap.github.io/gphotos-sync/main/tutorials/oauth2.html
+    client_secret = "YOUR_CLIENT_SECRET"
+    client_id = "YOUR_CLIENT_ID.apps.googleusercontent.com"
+    redirect_uri = "http://localhost:8080" 
+
+    [google_photos.photos]
+        # The default album where uploaded photos will be added.
+        # Camflow will create this album the first time it runs.
+        # It must be an album that camflow creates (Google Photos API rule).
+        default_album = "Camflow: Photos"
+
+        # Optional: Map metadata labels (from Lightroom/Capture One) to specific Albums.
+        # This allows you to organize photos into additional albums automatically.
+        # [[google_photos.photos.label_albums]]
+        #     key = "Red"
+        #     album = "Camflow: Favorites"
+
+        # Optional: Map metadata subjects/keywords to specific Albums.
+        # 
+        # [[google_photos.photos.subject_albums]]
+        #     key = "share-family"
+        #     album = "Camflow: Some album"
+
+    [google_photos.videos]
+        # The default album for uploaded videos.
+        # Camflow will create this album the first time it runs.
+        # It must be an album that camflow creates (Google Photos API rule).
+        default_album = "Camflow: Videos"
