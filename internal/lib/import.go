@@ -69,11 +69,11 @@ func Import(cfg config.CamflowConfig, sdcardDir string, keepSrc bool, now time.T
 	}
 
 	// Check that there is sufficient space to move the files.
-	// TODO: check whether VideosUploadQueueRoot is on the same filesystem as PhotosToProcessRoot
+	// TODO: check whether VideosUploadQueueRoot is on the same filesystem as PhotosProcessQueueRoot
 	// and check apppropriately.
 	// TODO: when we move from upload queue to uploaded, we should check that there is enough space?
 	// TODO: or just remove this, and let the OS handle it?
-	targetAvailable, err := getAvailableSpace(cfg.PhotosToProcessRoot)
+	targetAvailable, err := getAvailableSpace(cfg.PhotosProcessQueueRoot)
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("failed to get available space: %w", err)
 	}
@@ -82,7 +82,7 @@ func Import(cfg config.CamflowConfig, sdcardDir string, keepSrc bool, now time.T
 		const GiB = 1 << 30
 		return ImportResult{}, fmt.Errorf(
 			"not enough space in %s: need %d GiB more: %d GiB needed, %d GiB available",
-			cfg.PhotosToProcessRoot, totalSize/GiB, targetAvailable/GiB, (uint64(totalSize)-targetAvailable)/GiB)
+			cfg.PhotosProcessQueueRoot, totalSize/GiB, targetAvailable/GiB, (uint64(totalSize)-targetAvailable)/GiB)
 	}
 
 	// Move the files into the target dirs.
@@ -220,7 +220,7 @@ func moveFiles(cfg config.CamflowConfig, srcDir string, keepSrc bool, bar *progr
 		var itemType ItemType
 		switch filepath.Ext(dirEnt.Name()) {
 		case ".CR3", ".cr3", ".JPG", ".jpg":
-			targetRoot = cfg.PhotosToProcessRoot
+			targetRoot = cfg.PhotosProcessQueueRoot
 			itemType = ItemTypePhoto
 		case ".MP4", ".mp4":
 			targetRoot = cfg.VideosUploadQueueRoot

@@ -17,9 +17,9 @@ func newTestConfig(t *testing.T, photosDefaultAlbum, videosDefaultAlbum string) 
 
 	tempDir := t.TempDir()
 	c := config.CamflowConfig{
-		PhotosToProcessRoot:  filepath.Join(tempDir, "PhotosToProcessRoot"),
-		PhotosUploadQueueDir: filepath.Join(tempDir, "PhotosUploadQueueDir"),
-		PhotosUploadedRoot:   filepath.Join(tempDir, "PhotosUploadedRoot"),
+		PhotosProcessQueueRoot: filepath.Join(tempDir, "PhotosProcessQueueRoot"),
+		PhotosUploadQueueDir:  filepath.Join(tempDir, "PhotosUploadQueueDir"),
+		PhotosUploadedRoot:    filepath.Join(tempDir, "PhotosUploadedRoot"),
 
 		VideosUploadQueueRoot: filepath.Join(tempDir, "VideosUploadQueueRoot"),
 		VideosUploadedRoot:    filepath.Join(tempDir, "VideosUploadedRoot"),
@@ -40,16 +40,16 @@ func newTestConfig(t *testing.T, photosDefaultAlbum, videosDefaultAlbum string) 
 		},
 	}
 	c.LocalPhotos = config.LocalPhotosConfig{
-		ToProcessRoot:  c.PhotosToProcessRoot,
-		UploadQueueDir: c.PhotosUploadQueueDir,
-		UploadedRoot:   c.PhotosUploadedRoot,
+		ProcessQueueRoot: c.PhotosProcessQueueRoot,
+		UploadQueueDir:  c.PhotosUploadQueueDir,
+		UploadedRoot:    c.PhotosUploadedRoot,
 	}
 	c.LocalVideos = config.LocalVideosConfig{
 		UploadQueueRoot: c.VideosUploadQueueRoot,
 		UploadedRoot:    c.VideosUploadedRoot,
 	}
 	for _, dir := range []string{
-		c.PhotosToProcessRoot,
+		c.PhotosProcessQueueRoot,
 		c.PhotosUploadQueueDir,
 		c.PhotosUploadedRoot,
 		c.VideosUploadQueueRoot,

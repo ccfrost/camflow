@@ -15,7 +15,7 @@
 #
 # 1. Import destination: Where photos from the camera land for curation when importing from SD card.
 #    Structure: date-based subfolders (YYYY/MM/DD/).
-photos_to_process_root = "/Users/you/Google Drive/My Drive/media/photos/process_queue"
+photos_process_queue_root = "/Users/you/Google Drive/My Drive/media/photos/process_queue"
 #
 # 2. Upload source: Where you place curated+edited files ready for upload.
 #    Structure: Flat (all files directly in this folder).

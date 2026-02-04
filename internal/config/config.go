@@ -65,14 +65,14 @@ func (c *GPVideosConfig) GetSubjectAlbums() []KeyAlbum {
 // CamflowConfig defines the configuration for Camflow.
 // TODO: move flat fields into the new structs.
 type CamflowConfig struct {
-	PhotosToProcessRoot  string            `mapstructure:"photos_to_process_root"`
-	PhotosUploadQueueDir string            `mapstructure:"photos_upload_queue_dir"`
-	PhotosUploadedRoot   string            `mapstructure:"photos_uploaded_root"`
-	LocalPhotos          LocalPhotosConfig `mapstructure:"-"`
+	PhotosProcessQueueRoot string            `mapstructure:"photos_process_queue_root"`
+	PhotosUploadQueueDir   string            `mapstructure:"photos_upload_queue_dir"`
+	PhotosUploadedRoot     string            `mapstructure:"photos_uploaded_root"`
+	LocalPhotos            LocalPhotosConfig `mapstructure:"-"`
 
-	VideosUploadQueueRoot string            `mapstructure:"videos_upload_queue_root"`
-	VideosUploadedRoot    string            `mapstructure:"videos_uploaded_root"`
-	LocalVideos           LocalVideosConfig `mapstructure:"-"`
+	VideosUploadQueueRoot  string            `mapstructure:"videos_upload_queue_root"`
+	VideosUploadedRoot     string            `mapstructure:"videos_uploaded_root"`
+	LocalVideos            LocalVideosConfig `mapstructure:"-"`
 
 	GooglePhotos GooglePhotosConfig `mapstructure:"google_photos"`
 
@@ -80,9 +80,9 @@ type CamflowConfig struct {
 }
 
 type LocalPhotosConfig struct {
-	ToProcessRoot  string `mapstructure:"photos_to_process_root"`
-	UploadQueueDir string `mapstructure:"photos_upload_queue_dir"`
-	UploadedRoot   string `mapstructure:"photos_uploaded_root"`
+	ProcessQueueRoot string `mapstructure:"photos_process_queue_root"`
+	UploadQueueDir   string `mapstructure:"photos_upload_queue_dir"`
+	UploadedRoot     string `mapstructure:"photos_uploaded_root"`
 }
 
 func (c *LocalPhotosConfig) GetUploadQueueRoot() string {
@@ -121,13 +121,13 @@ func (c *GooglePhotosConfig) Validate() error {
 
 func (c *CamflowConfig) Validate() error {
 	// Check that at least a base set of fields have values.
-	if c.PhotosToProcessRoot == "" || c.PhotosUploadQueueDir == "" || c.PhotosUploadedRoot == "" {
+	if c.PhotosProcessQueueRoot == "" || c.PhotosUploadQueueDir == "" || c.PhotosUploadedRoot == "" {
 		return fmt.Errorf("missing photos field (%s)", c.path)
 	}
 	if c.VideosUploadQueueRoot == "" || c.VideosUploadedRoot == "" {
 		return fmt.Errorf("missing videos field (%s)", c.path)
 	}
-	if c.PhotosToProcessRoot != c.LocalPhotos.ToProcessRoot ||
+	if c.PhotosProcessQueueRoot != c.LocalPhotos.ProcessQueueRoot ||
 		c.PhotosUploadQueueDir != c.LocalPhotos.UploadQueueDir ||
 		c.PhotosUploadedRoot != c.LocalPhotos.UploadedRoot {
 		return fmt.Errorf("local_photos config does not match flat fields (%s)", c.path)
@@ -188,9 +188,9 @@ func LoadConfig(configPathFlag string) (CamflowConfig, error) {
 		return CamflowConfig{}, fmt.Errorf("error unmarshaling (%s): %w", path, err)
 	}
 	config.LocalPhotos = LocalPhotosConfig{
-		ToProcessRoot:  config.PhotosToProcessRoot,
-		UploadQueueDir: config.PhotosUploadQueueDir,
-		UploadedRoot:   config.PhotosUploadedRoot,
+		ProcessQueueRoot: config.PhotosProcessQueueRoot,
+		UploadQueueDir:  config.PhotosUploadQueueDir,
+		UploadedRoot:    config.PhotosUploadedRoot,
 	}
 	config.LocalVideos = LocalVideosConfig{
 		UploadQueueRoot: config.VideosUploadQueueRoot,

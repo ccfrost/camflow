@@ -116,27 +116,27 @@ func createDummyFile(t *testing.T, path string, content string, modTime time.Tim
 }
 
 // setupMoveFilesTest sets up directories and config for moveFiles tests.
-func setupMoveFilesTest(t *testing.T) (cfg config.CamflowConfig, srcRoot, photosToProcessRoot, videosUploadQueueRoot string, cleanup func()) {
+func setupMoveFilesTest(t *testing.T) (cfg config.CamflowConfig, srcRoot, photosProcessQueueRoot, videosUploadQueueRoot string, cleanup func()) {
 	t.Helper()
 	sdcardRoot := t.TempDir()
 	mediaRoot := t.TempDir()
 
 	srcRoot = filepath.Join(sdcardRoot, "DCIM")
-	photosToProcessRoot = filepath.Join(mediaRoot, "photos-to-process")
+	photosProcessQueueRoot = filepath.Join(mediaRoot, "photos-process-queue")
 	videosUploadQueueRoot = filepath.Join(mediaRoot, "videos-upload-queue")
 
 	// Create the base source DCIM directory
 	err := os.MkdirAll(srcRoot, 0755)
 	require.NoError(t, err)
 	// Create the base destination directories
-	err = os.MkdirAll(photosToProcessRoot, 0755)
+	err = os.MkdirAll(photosProcessQueueRoot, 0755)
 	require.NoError(t, err)
 	err = os.MkdirAll(videosUploadQueueRoot, 0755)
 	require.NoError(t, err)
 
 	cfg = config.CamflowConfig{
-		PhotosToProcessRoot:   photosToProcessRoot,
-		VideosUploadQueueRoot: videosUploadQueueRoot,
+		PhotosProcessQueueRoot: photosProcessQueueRoot,
+		VideosUploadQueueRoot:    videosUploadQueueRoot,
 		// Other config fields can be default/zero if not used by moveFiles directly
 	}
 
@@ -145,7 +145,7 @@ func setupMoveFilesTest(t *testing.T) (cfg config.CamflowConfig, srcRoot, photos
 		// os.RemoveAll(sdcardRoot) // Handled by t.TempDir()
 	}
 
-	return cfg, srcRoot, photosToProcessRoot, videosUploadQueueRoot, cleanup
+	return cfg, srcRoot, photosProcessQueueRoot, videosUploadQueueRoot, cleanup
 }
 
 // Helper struct for defining test file scenarios

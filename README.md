@@ -20,7 +20,7 @@ Cloud sync tools want to control your entire library. Camflow assumes you want c
 Camflow is designed for a "Curate & Edit" philosophy:
 
 1.  **Import**: Insert your SD card and run `camflow import`.
-    *   **Photos** are moved to your **Processing Queue** (`photos_to_process_root`).
+    *   **Photos** are moved to your **Processing Queue** (`photos_process_queue_root`).
     *   **Videos** are moved directly to your **Upload Queue** (`videos_upload_queue_root`).
 2.  **Process (Photos)**: Use your favorite editor to process your Processing Queue. Pick the good shots, edit, export the final images to the Photo **Upload Queue**, and move the originals to the processing archive.
 

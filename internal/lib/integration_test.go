@@ -32,8 +32,8 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 	dcimDir := filepath.Join(sdCardRoot, "DCIM")
 	require.NoError(t, os.MkdirAll(dcimDir, 0755))
 
-	// The newTestConfig helper already creates PhotosToProcessRoot and VideosUploadQueueRoot
-	photosToProcessRoot := cfg.PhotosToProcessRoot
+	// The newTestConfig helper already creates PhotosProcessQueueRoot and VideosUploadQueueRoot
+	photosProcessQueueRoot := cfg.PhotosProcessQueueRoot
 	videosUploadQueueRoot := cfg.VideosUploadQueueRoot
 	// VideosUploadedRoot is also created by newTestConfig, can be accessed via cfg.VideosUploadedRoot if needed for verification
 
@@ -127,7 +127,7 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 			var expectedPath string
 			if tf.fileType == "photo" {
 				// Photos go to date-based subdirectories
-				dateSubDir := filepath.Join(photosToProcessRoot,
+				dateSubDir := filepath.Join(photosProcessQueueRoot,
 					fmt.Sprintf("%d", year),
 					fmt.Sprintf("%02d", month),
 					fmt.Sprintf("%02d", day))
@@ -223,7 +223,7 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 		for _, tf := range testFiles {
 			if tf.fileType == "photo" {
 				year, month, day := tf.modTime.Date()
-				dateSubDir := filepath.Join(photosToProcessRoot,
+				dateSubDir := filepath.Join(photosProcessQueueRoot,
 					fmt.Sprintf("%d", year),
 					fmt.Sprintf("%02d", month),
 					fmt.Sprintf("%02d", day))
@@ -262,7 +262,7 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 		require.NoError(t, os.MkdirAll(dcimDir, 0755))
 
 		// Config fields are now set by newTestConfig
-		// photosToProcessRoot := cfg.PhotosToProcessRoot // Not directly used in this specific sub-test for video
+		// photosProcessQueueRoot := cfg.PhotosToProcessRoot // Not directly used in this specific sub-test for video
 		videosUploadQueueRoot := cfg.VideosUploadQueueRoot
 
 		// Create a test video file
@@ -351,7 +351,7 @@ func TestImportAndUploadVideosIntegration_KeepFlags(t *testing.T) {
 	require.NoError(t, os.MkdirAll(dcimDir, 0755))
 
 	// Config fields are now set by newTestConfig
-	// photosToProcessRoot := cfg.PhotosToProcessRoot // Not directly used here
+	// photosProcessQueueRoot := cfg.PhotosToProcessRoot // Not directly used here
 	videosUploadQueueRoot := cfg.VideosUploadQueueRoot
 
 	// Create a test video file
