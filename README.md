@@ -1,3 +1,5 @@
+![Camflow Logo](.github/assets/camflow-logo.png)
+
 # Camflow
 
 **The camera workflow tool for enthusiastic photographers.**
