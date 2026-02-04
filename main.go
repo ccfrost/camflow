@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/ccfrost/camflow/internal/config"
@@ -16,6 +19,12 @@ import (
 )
 
 const camflow = "camflow"
+
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
 
 func main() {
 	var configPath, cacheDir string
@@ -52,7 +61,49 @@ func main() {
 		rootCmd.PersistentFlags().StringVar(&cacheDir, "cache-dir", defaultCacheDir, "Dir to store cache files")
 	}
 
-	// TODO: add version command.
+	versionCmd := cobra.Command{
+		Use:   "version",
+		Short: "Print the version number of camflow",
+		Run: func(cmd *cobra.Command, args []string) {
+			// If any version info is missing, try to read it from the binary's build info.
+			if version == "dev" || commit == "none" {
+				if info, ok := debug.ReadBuildInfo(); ok {
+					if version == "dev" && info.Main.Version != "" && info.Main.Version != "(devel)" {
+						version = info.Main.Version
+					}
+
+					modified := false
+					for _, setting := range info.Settings {
+						switch setting.Key {
+						case "vcs.revision":
+							if commit == "none" {
+								commit = setting.Value
+							}
+						case "vcs.modified":
+							modified = (setting.Value == "true")
+						case "vcs.time":
+							if date == "unknown" {
+								date = setting.Value
+							}
+						}
+					}
+					if modified {
+						commit += " (dirty)"
+					}
+				}
+			}
+
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintf(w, "Client:\t%s\n", camflow)
+			fmt.Fprintf(w, "Version:\t%s\n", version)
+			fmt.Fprintf(w, "Go version:\t%s\n", runtime.Version())
+			fmt.Fprintf(w, "Git commit:\t%s\n", commit)
+			fmt.Fprintf(w, "Built:\t%s\n", date)
+			fmt.Fprintf(w, "OS/Arch:\t%s/%s\n", runtime.GOOS, runtime.GOARCH)
+			w.Flush()
+		},
+	}
+	rootCmd.AddCommand(&versionCmd)
 
 	importCmd := cobra.Command{
 		Use:   "import",

@@ -119,6 +119,13 @@ Run the automated uploader for your processed photos. This command:
 camflow upload-photos
 ```
 
+### 5. Check Version
+To check the version of the installed tool:
+
+```bash
+camflow version
+```
+
 ## Recommended Setup & Tips
 
 ### Cloud Storage for Archives
