@@ -25,8 +25,8 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 	photosDefaultAlbum := "Test Album Photos"
 	videosDefaultAlbum := "Test Album Videos"
 	cfg := newTestConfig(t, photosDefaultAlbum, videosDefaultAlbum) // Use helper from util_test.go
-	sdCardRoot := t.TempDir()                                          // Still need a separate SD card root
-	configDir := t.TempDir()                                           // For album cache, etc.
+	sdCardRoot := t.TempDir()                                       // Still need a separate SD card root
+	configDir := t.TempDir()                                        // For album cache, etc.
 
 	// DCIM directory needs to be under sdCardRoot
 	dcimDir := filepath.Join(sdCardRoot, "DCIM")
