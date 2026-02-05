@@ -1,4 +1,6 @@
-![Camflow Logo](.github/assets/camflow-logo.png)
+<p align="center">
+  <img src=".github/assets/camflow-logo.webp" alt="Camflow Logo" width="600">
+</p>
 
 # Camflow
 
