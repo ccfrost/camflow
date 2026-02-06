@@ -85,7 +85,7 @@ func scanUploadQueue(uploadQueueDir string) ([]itemFileInfo, int64, error) {
 
 // moveToUploaded moves a single media item from upload queue to the uploaded directory.
 // Returns the destination path.
-func moveToUploaded(localConfig LocalConfig, fileInfo itemFileInfo) (string, error) {
+func moveToUploaded(localConfig LocalConfig, fileInfo itemFileInfo, dryRun bool) (string, error) {
 	fileBasename := filepath.Base(fileInfo.path)
 
 	year, month, day, err := parseDatePrefix(fileBasename)
@@ -95,6 +95,22 @@ func moveToUploaded(localConfig LocalConfig, fileInfo itemFileInfo) (string, err
 	relPath := filepath.Join(year, month, day, fileBasename)
 	destPath := filepath.Join(localConfig.GetUploadedRoot(), relPath)
 	destDir := filepath.Dir(destPath)
+
+	if dryRun {
+		// Verify destination directory creation (simulate) and check for collisions.
+		// Note: We can't easily check if recursive mkdir fails without doing it or checking permissions carefully,
+		// but checking if destPath exists is good.
+		if _, statErr := os.Stat(destPath); statErr == nil {
+			return "", fmt.Errorf("failed to move %s: destination file %s already exists", fileInfo.path, destPath)
+		} else if !os.IsNotExist(statErr) {
+			return "", fmt.Errorf("failed to check destination %s: %w", destPath, statErr)
+		}
+
+		logger.Debug("Would move file",
+			slog.String("from", fileInfo.path),
+			slog.String("to", destPath))
+		return destPath, nil
+	}
 
 	logger.Debug("Moving file",
 		slog.String("from", fileInfo.path),
@@ -140,7 +156,7 @@ func moveToUploaded(localConfig LocalConfig, fileInfo itemFileInfo) (string, err
 // Media items are added to Google Photos album named DefaultAlbum.
 // Uploaded media items are moved from upload queue to uploaded dir; unless keepQueued is true, in which case they are copied (but not moved).
 // The function is idempotent - if interrupted, it can be recalled to resume.
-func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, localConfig LocalConfig, gpConfig GPConfig, itemTypePluralName string, gphotosClient GPhotosClient) error {
+func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, localConfig LocalConfig, gpConfig GPConfig, itemTypePluralName string, gphotosClient GPhotosClient, dryRun bool) error {
 	uploadQueueDir := localConfig.GetUploadQueueRoot()
 	if _, err := os.Stat(uploadQueueDir); os.IsNotExist(err) {
 		logger.Info("Upload queue directory does not exist, nothing to upload",
@@ -227,7 +243,7 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 	albumTitleToIdMap := make(map[string]string)
 	if len(albumTitlesSlice) > 0 {
 		var err error
-		albumIDs, err = albumCache.getOrFetchAndCreateAlbumIDs(ctx, gphotosClient.Albums(), albumTitlesSlice, limiter)
+		albumIDs, err = albumCache.getOrFetchAndCreateAlbumIDs(ctx, gphotosClient.Albums(), albumTitlesSlice, limiter, dryRun)
 		if err != nil {
 			return fmt.Errorf("failed to resolve or create album IDs for titles %v: %w", albumTitlesSlice, err)
 		}
@@ -242,7 +258,11 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 
 	// Upload media items and add them to the target albums.
 
-	bar := NewProgressBar(totalSize, "uploading")
+	desc := "uploading"
+	if dryRun {
+		desc = "simulating"
+	}
+	bar := NewProgressBar(totalSize, desc)
 
 	// TODO: consider batching adding media items to albums. How to make it idempotent in face of failure part way through?
 	for _, fileInfo := range itemsToUpload {
@@ -251,7 +271,7 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 		if defaultAlbum != "" {
 			targetAlbumTitles = append(targetAlbumTitles, defaultAlbum)
 		}
-		if err := uploadMediaItem(ctx, keepQueued, localConfig, gphotosClient, fileInfo, targetAlbumTitles, albumTitleToIdMap, bar, limiter); err != nil {
+		if err := uploadMediaItem(ctx, keepQueued, localConfig, gphotosClient, fileInfo, targetAlbumTitles, albumTitleToIdMap, bar, limiter, dryRun); err != nil {
 			return fmt.Errorf("failed to upload media item %s: %w", fileInfo.path, err)
 		}
 	}
@@ -259,7 +279,11 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 	_ = bar.Finish()
 	fmt.Println() // End the progress bar line.
 
-	logger.Debug(fmt.Sprint("Finished uploading ", itemTypePluralName))
+	if dryRun {
+		fmt.Printf("Would have uploaded %d %s\n", len(itemsToUpload), itemTypePluralName)
+	} else {
+		fmt.Printf("Finished uploading %d %s\n", len(itemsToUpload), itemTypePluralName)
+	}
 	return nil
 }
 
@@ -267,7 +291,7 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 // It updates "bar" with the bytes it has uploaded.
 // It deletes the file after uploading if "keepQueued" is false.
 // "targetAlbumIDs" are the ids for DefaultAlbums in the config.
-func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConfig, gphotosClient GPhotosClient, fileInfo itemFileInfo, targetAlbumTitles []string, albumTitleToIdMap map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter) error {
+func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConfig, gphotosClient GPhotosClient, fileInfo itemFileInfo, targetAlbumTitles []string, albumTitleToIdMap map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter, dryRun bool) error {
 	fileBasename := filepath.Base(fileInfo.path)
 
 	// Defer the progress bar update to ensure it happens once per file attempt.
@@ -278,54 +302,60 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 		return fmt.Errorf("rate limiter error before uploading %s: %w", fileBasename, err)
 	}
 
-	// TODO: consider parallelizing uploads.
-	// TODO: consider doing resumable uploads.
-	// TODO: consider updating progress bar with actual upload progress. (gphotos UploadFile calls NewUploadFromFile, which returns a file, so it is close.)
-	uploadToken, err := gphotosClient.Uploader().UploadFile(ctx, fileInfo.path)
-	if err != nil {
-		// TODO: only log error and skip? Want to make sure user notices.
-		// fmt.Printf("\nError uploading file %s: %v. Skipping.\n", fileBasename, err)
-		// return nil // Skip to the next item, progress bar will be updated by defer
-		return fmt.Errorf("failed to upload file %s: %w", fileBasename, err)
-	}
-
-	if err := limiter.Wait(ctx); err != nil {
-		return fmt.Errorf("rate limiter error before creating media item for %s: %w", fileBasename, err)
-	}
-	simpleMediaItem := media_items.SimpleMediaItem{
-		UploadToken: uploadToken,
-		Filename:    fileBasename,
-	}
-	// TODO: consider batching media item creation.
-	mediaItem, err := gphotosClient.MediaItems().Create(ctx, simpleMediaItem)
-	if err != nil {
-		return fmt.Errorf("failed to create media item for %s: uploadToken %s: %w", fileBasename, uploadToken, err)
-	}
-	logger.Debug("Successfully created media item",
-		slog.String("file", fileBasename),
-		slog.String("media_id", mediaItem.ID))
-
-	// TODO: consider batch adding items to albums.
-	for _, albumTitle := range targetAlbumTitles {
-		albumID, ok := albumTitleToIdMap[albumTitle]
-		if !ok {
-			return fmt.Errorf("album '%s' not found in album ID map", albumTitle)
+	if dryRun {
+		logger.Debug("Would upload file",
+			slog.String("file", fileBasename),
+			slog.Any("albums", targetAlbumTitles))
+	} else {
+		// TODO: consider parallelizing uploads.
+		// TODO: consider doing resumable uploads.
+		// TODO: consider updating progress bar with actual upload progress. (gphotos UploadFile calls NewUploadFromFile, which returns a file, so it is close.)
+		uploadToken, err := gphotosClient.Uploader().UploadFile(ctx, fileInfo.path)
+		if err != nil {
+			// TODO: only log error and skip? Want to make sure user notices.
+			// fmt.Printf("\nError uploading file %s: %v. Skipping.\n", fileBasename, err)
+			// return nil // Skip to the next item, progress bar will be updated by defer
+			return fmt.Errorf("failed to upload file %s: %w", fileBasename, err)
 		}
+
 		if err := limiter.Wait(ctx); err != nil {
-			return fmt.Errorf("rate limiter error before adding %s to album %s: %w", fileBasename, albumTitle, err)
+			return fmt.Errorf("rate limiter error before creating media item for %s: %w", fileBasename, err)
 		}
-		if err := gphotosClient.Albums().AddMediaItems(ctx, albumID, []string{mediaItem.ID}); err != nil {
-			return fmt.Errorf("error adding media item to album %s: %w", albumTitle, err)
+		simpleMediaItem := media_items.SimpleMediaItem{
+			UploadToken: uploadToken,
+			Filename:    fileBasename,
 		}
-		logger.Debug("Added media item to album",
-			slog.String("media_id", mediaItem.ID),
-			slog.String("album_title", albumTitle))
+		// TODO: consider batching media item creation.
+		mediaItem, err := gphotosClient.MediaItems().Create(ctx, simpleMediaItem)
+		if err != nil {
+			return fmt.Errorf("failed to create media item for %s: uploadToken %s: %w", fileBasename, uploadToken, err)
+		}
+		logger.Debug("Successfully created media item",
+			slog.String("file", fileBasename),
+			slog.String("media_id", mediaItem.ID))
 
+		// TODO: consider batch adding items to albums.
+		for _, albumTitle := range targetAlbumTitles {
+			albumID, ok := albumTitleToIdMap[albumTitle]
+			if !ok {
+				return fmt.Errorf("album '%s' not found in album ID map", albumTitle)
+			}
+			if err := limiter.Wait(ctx); err != nil {
+				return fmt.Errorf("rate limiter error before adding %s to album %s: %w", fileBasename, albumTitle, err)
+			}
+			if err := gphotosClient.Albums().AddMediaItems(ctx, albumID, []string{mediaItem.ID}); err != nil {
+				return fmt.Errorf("error adding media item to album %s: %w", albumTitle, err)
+			}
+			logger.Debug("Added media item to album",
+				slog.String("media_id", mediaItem.ID),
+				slog.String("album_title", albumTitle))
+
+		}
 	}
 
 	// Only move when keepQueued is false; uploading with keepQueued=true does not copy to uploaded.
 	if !keepQueued {
-		if _, err := moveToUploaded(localConfig, fileInfo); err != nil {
+		if _, err := moveToUploaded(localConfig, fileInfo, dryRun); err != nil {
 			return err
 		}
 	} else {

@@ -66,7 +66,7 @@ func TestUploadVideos_TargetRootDirNotConfigured(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockGPhotosClient := NewMockGPhotosClient(ctrl) // Changed from localMocks.NewMockGPhotosClient
 
-	err := UploadVideos(context.Background(), cfg, t.TempDir(), false, mockGPhotosClient)
+	err := UploadVideos(context.Background(), cfg, t.TempDir(), false, mockGPhotosClient, false)
 	require.Error(t, err, "Expected an error when uploadQueue dir is not configured, got nil")
 	assert.Contains(t, err.Error(), "missing videos field", "Expected error message about uploadQueue dir not configured, got: %v", err)
 }
@@ -77,7 +77,7 @@ func TestUploadVideos_TargetRootDirDoesNotExist(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockGPhotosClient := NewMockGPhotosClient(ctrl) // Changed from localMocks.NewMockGPhotosClient
 
-	err := UploadVideos(context.Background(), cfg, t.TempDir(), false, mockGPhotosClient)
+	err := UploadVideos(context.Background(), cfg, t.TempDir(), false, mockGPhotosClient, false)
 	assert.NoError(t, err, "Expected no error when uploadQueue dir does not exist, got: %v", err)
 }
 
@@ -86,7 +86,7 @@ func TestUploadVideos_EmptyTargetRootDir(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockGPhotosClient := NewMockGPhotosClient(ctrl) // Changed from localMocks.NewMockGPhotosClient
 
-	err := UploadVideos(context.Background(), cfg, t.TempDir(), false, mockGPhotosClient)
+	err := UploadVideos(context.Background(), cfg, t.TempDir(), false, mockGPhotosClient, false)
 	assert.NoError(t, err, "Expected no error for empty uploadQueue dir, got: %v", err)
 }
 
@@ -121,7 +121,7 @@ func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles(t *testing.T) {
 			Return(&media_items.MediaItem{ID: mediaItemID, Filename: baseName}, nil)
 	}
 
-	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient)
+	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient, false /* dryRun */)
 	require.NoError(t, err, "UploadVideos failed: %v", err)
 
 	// Verify files are moved from uploadQueue and exist in VideosUploadedRoot
@@ -167,7 +167,7 @@ func TestUploadVideos_FilesToUpload_NoAlbums_KeepFiles(t *testing.T) {
 	mockMediaItemsSvc.EXPECT().Create(gomock.Any(), media_items.SimpleMediaItem{UploadToken: uploadToken, Filename: videoFile}).
 		Return(&media_items.MediaItem{ID: mediaItemID, Filename: videoFile}, nil)
 
-	err := UploadVideos(ctx, cfg, tempConfigDir, true /* keepQueued */, mockGPhotosClient)
+	err := UploadVideos(ctx, cfg, tempConfigDir, true /* keepQueued */, mockGPhotosClient, false)
 	require.NoError(t, err, "UploadVideos failed: %v", err)
 
 	_, statErr := os.Stat(filepath.Join(cfg.VideosUploadQueueRoot, videoFile))
@@ -220,7 +220,7 @@ func TestUploadVideos_FilesToUpload_WithAlbums_CreatesAndAddsToAlbum(t *testing.
 	mockAlbumsSvc.EXPECT().AddMediaItems(gomock.Any(), createdAlbumID, []string{mediaItemID}).
 		Return(nil) // Successful addition
 
-	err = UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient)
+	err = UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient, false)
 	require.NoError(t, err, "UploadVideos failed: %v", err)
 
 	// Verify file is moved from uploadQueue
@@ -254,7 +254,7 @@ func TestUploadVideos_ErrorLoadAlbumCache(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	mockGPhotosClient := NewMockGPhotosClient(ctrl) // Changed from localMocks.NewMockGPhotosClient
 
-	uploadErr := UploadVideos(ctx, cfg, tempConfigDir, false, mockGPhotosClient)
+	uploadErr := UploadVideos(ctx, cfg, tempConfigDir, false, mockGPhotosClient, false)
 	require.Error(t, uploadErr, "UploadVideos expected to fail due to malformed album cache, but succeeded")
 	assert.Contains(t, uploadErr.Error(), "failed to load album cache", "Expected error about loading album cache, got: %v", uploadErr)
 }
@@ -276,7 +276,7 @@ func TestUploadVideos_ErrorGetOrCreateAlbumIDs(t *testing.T) {
 	// List returns a slice directly, not an iterator.
 	mockAlbumsSvc.EXPECT().List(gomock.Any()).Return(nil, errors.New(expectedErrStr))
 
-	err := UploadVideos(ctx, cfg, tempConfigDir, false, mockGPhotosClient)
+	err := UploadVideos(ctx, cfg, tempConfigDir, false, mockGPhotosClient, false)
 	require.Error(t, err, "UploadVideos expected to fail due to error in getOrFetchAndCreateAlbumIDs, but succeeded")
 	assert.Contains(t, err.Error(), expectedErrStr, "Expected error '%s', got: %v", expectedErrStr, err)
 }
@@ -298,7 +298,7 @@ func TestUploadVideos_ErrorUploadFile(t *testing.T) {
 	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), filepath.Join(cfg.VideosUploadQueueRoot, videoFileName)).
 		Return("", errors.New(expectedErrStr))
 
-	err := UploadVideos(ctx, cfg, tempConfigDir, false, mockGPhotosClient)
+	err := UploadVideos(ctx, cfg, tempConfigDir, false, mockGPhotosClient, false)
 	require.Error(t, err, "UploadVideos expected to fail due to UploadFile error, but succeeded")
 	assert.Contains(t, err.Error(), "failed to upload file", "Error message mismatch")
 	assert.Contains(t, err.Error(), videoFileName, "Error message should contain filename")
@@ -331,7 +331,7 @@ func TestUploadVideos_ErrorCreateMediaItem(t *testing.T) {
 	mockMediaItemsSvc.EXPECT().Create(gomock.Any(), media_items.SimpleMediaItem{UploadToken: uploadToken, Filename: videoFileName}).
 		Return(nil, errors.New(expectedErrStr))
 
-	err := UploadVideos(ctx, cfg, tempConfigDir, false, mockGPhotosClient)
+	err := UploadVideos(ctx, cfg, tempConfigDir, false, mockGPhotosClient, false)
 	// UploadVideos should now return an error when CreateMediaItem fails.
 	require.Error(t, err, "Expected UploadVideos to fail due to CreateMediaItem error, but it succeeded")
 	assert.Contains(t, err.Error(), expectedErrStr, "Error message should include the CreateMediaItem failure")
@@ -381,7 +381,7 @@ func TestUploadVideos_ErrorAddMediaToAlbum_FileKept_WhenAlbumExists(t *testing.T
 	mockAlbumsSvc.EXPECT().AddMediaItems(gomock.Any(), existingAlbumID, []string{mediaItemID}).
 		Return(errors.New(expectedAddError))
 
-	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient)
+	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient, false)
 	require.Error(t, err, "UploadVideos should have returned an error")
 	assert.Contains(t, err.Error(), expectedAddError, "Error message should contain the original error")
 
@@ -423,7 +423,7 @@ func TestUploadVideos_ContextCancellationDuringLimiterWait(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		errUpload = UploadVideos(ctx, cfg, tempConfigDir, false, mockGPhotosClient)
+		errUpload = UploadVideos(ctx, cfg, tempConfigDir, false, mockGPhotosClient, false)
 	}()
 
 	time.Sleep(20 * time.Millisecond) // Short delay to allow UploadVideos to start
@@ -482,7 +482,7 @@ func TestUploadVideos_FilesToUpload_WithAlbums_AlbumExists(t *testing.T) {
 	mockAlbumsSvc.EXPECT().AddMediaItems(gomock.Any(), existingAlbumID, []string{mediaItemID}).
 		Return(nil) // Successful addition
 
-	err = UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient)
+	err = UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient, false)
 	require.NoError(t, err, "UploadVideos failed: %v", err)
 
 	// Verify file is moved from uploadQueue
@@ -536,7 +536,7 @@ func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles_WithCleanup(t *testing.T)
 			Return(&media_items.MediaItem{ID: mediaItemID, Filename: baseName}, nil)
 	}
 
-	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient)
+	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient, false /* dryRun */)
 	require.NoError(t, err, "UploadVideos failed: %v", err)
 
 	// Verify files are moved from uploadQueue and exist in VideosUploadedRoot
@@ -596,7 +596,7 @@ func TestUploadVideos_FilesToUpload_WithAlbums_CleanupOnSuccess(t *testing.T) {
 		Return(&media_items.MediaItem{ID: mediaItemID, Filename: videoFileName}, nil)
 	mockAlbumsSvc.EXPECT().AddMediaItems(gomock.Any(), existingAlbumID, []string{mediaItemID}).Return(nil)
 
-	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient)
+	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient, false /* dryRun */)
 	require.NoError(t, err, "UploadVideos failed: %v", err)
 
 	// Verify file is moved
@@ -637,7 +637,7 @@ func TestUploadVideos_ErrorUploadFile_NoCleanup(t *testing.T) {
 	mockUploaderSvc.EXPECT().UploadFile(gomock.Any(), videoFilePath).
 		Return("", errors.New(expectedErrStr))
 
-	err := UploadVideos(ctx, cfg, tempConfigDir, false, mockGPhotosClient)
+	err := UploadVideos(ctx, cfg, tempConfigDir, false, mockGPhotosClient, false)
 	require.Error(t, err, "UploadVideos expected to fail due to UploadFile error, but succeeded")
 
 	// Verify file is still in uploadQueue (not moved)
@@ -691,7 +691,7 @@ func TestUploadVideos_ErrorAddMediaToAlbum_NoCleanup(t *testing.T) {
 	mockAlbumsSvc.EXPECT().AddMediaItems(gomock.Any(), existingAlbumID, []string{mediaItemID}).
 		Return(errors.New(expectedAddError))
 
-	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient)
+	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient, false /* dryRun */)
 	require.Error(t, err, "UploadVideos should have returned an error")
 	assert.Contains(t, err.Error(), expectedAddError, "Error message should contain the original error")
 
@@ -727,7 +727,7 @@ func TestUploadVideos_keepQueued_NoCleanup(t *testing.T) {
 	mockMediaItemsSvc.EXPECT().Create(gomock.Any(), media_items.SimpleMediaItem{UploadToken: uploadToken, Filename: videoFileName}).
 		Return(&media_items.MediaItem{ID: mediaItemID, Filename: videoFileName}, nil)
 
-	err := UploadVideos(ctx, cfg, tempConfigDir, true /* keepQueued */, mockGPhotosClient)
+	err := UploadVideos(ctx, cfg, tempConfigDir, true /* keepQueued */, mockGPhotosClient, false /* dryRun */)
 	require.NoError(t, err, "UploadVideos failed: %v", err)
 
 	// Verify file is kept in uploadQueue
@@ -776,7 +776,7 @@ func TestUploadVideos_FilesToUpload_CleanupFailsButUploadSucceeds(t *testing.T) 
 	mockMediaItemsSvc.EXPECT().Create(gomock.Any(), media_items.SimpleMediaItem{UploadToken: uploadToken2, Filename: "2024-06-01-sibling.mp4"}).
 		Return(&media_items.MediaItem{ID: mediaItemID2, Filename: "2024-06-01-sibling.mp4"}, nil)
 
-	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient)
+	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient, false)
 	require.NoError(t, err, "UploadVideos should succeed even if cleanup partially fails")
 
 	// Verify both files are moved successfully
@@ -842,7 +842,7 @@ func TestUploadVideos_MixedSuccessAndFailure_PartialCleanup(t *testing.T) {
 
 	// No mock for third video because it won't be processed due to early exit
 
-	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient)
+	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient, false)
 	require.Error(t, err, "UploadVideos should fail due to failed upload")
 
 	// Verify first video was successfully moved
@@ -893,7 +893,7 @@ func TestUploadVideos_CrossFilesystem_NoAlbums_CopyAndDelete(t *testing.T) {
 	mockMediaItemsSvc.EXPECT().Create(gomock.Any(), media_items.SimpleMediaItem{UploadToken: uploadToken, Filename: videoFileName}).
 		Return(&media_items.MediaItem{ID: mediaItemID, Filename: videoFileName}, nil)
 
-	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient)
+	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient, false)
 	require.NoError(t, err, "UploadVideos should work with cross-filesystem copy+delete")
 
 	// Verify file is moved from uploadQueue using copy+delete
@@ -958,7 +958,7 @@ func TestUploadVideos_CrossFilesystem_WithAlbums_CopyAndDelete(t *testing.T) {
 		Return(&media_items.MediaItem{ID: mediaItemID, Filename: videoFileName}, nil)
 	mockAlbumsSvc.EXPECT().AddMediaItems(gomock.Any(), existingAlbumID, []string{mediaItemID}).Return(nil)
 
-	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient)
+	err := UploadVideos(ctx, cfg, tempConfigDir, false /* keepQueued */, mockGPhotosClient, false /* dryRun */)
 	require.NoError(t, err, "UploadVideos with albums should work with cross-filesystem copy+delete")
 
 	// Verify file is moved using copy+delete
@@ -1012,7 +1012,7 @@ func TestUploadVideos_CrossFilesystem_KeepFiles_CopyOnly(t *testing.T) {
 	mockMediaItemsSvc.EXPECT().Create(gomock.Any(), media_items.SimpleMediaItem{UploadToken: uploadToken, Filename: videoFileName}).
 		Return(&media_items.MediaItem{ID: mediaItemID, Filename: videoFileName}, nil)
 
-	err := UploadVideos(ctx, cfg, tempConfigDir, true /* keepQueued */, mockGPhotosClient)
+	err := UploadVideos(ctx, cfg, tempConfigDir, true /* keepQueued */, mockGPhotosClient, false /* dryRun */)
 	require.NoError(t, err, "UploadVideos with keepQueued should work with cross-filesystem behavior")
 
 	// With keepQueued=true, file should remain in uploadQueue and NOT be moved/copied

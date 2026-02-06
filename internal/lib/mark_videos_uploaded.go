@@ -13,7 +13,7 @@ import (
 // MarkVideosUploaded moves videos from the video upload queue to the uploaded directory.
 // Unlike UploadVideos, this does not upload to Google Photos - it only organizes files locally.
 // Videos are moved from upload queue to uploaded dir.
-func MarkVideosUploaded(ctx context.Context, cfg config.CamflowConfig) error {
+func MarkVideosUploaded(ctx context.Context, cfg config.CamflowConfig, dryRun bool) error {
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
@@ -44,7 +44,7 @@ func MarkVideosUploaded(ctx context.Context, cfg config.CamflowConfig) error {
 	bar := NewProgressBar(totalSize, "moving")
 
 	for _, fileInfo := range itemsToMove {
-		if _, err := moveToUploaded(&cfg.LocalVideos, fileInfo); err != nil {
+		if _, err := moveToUploaded(&cfg.LocalVideos, fileInfo, dryRun); err != nil {
 			return fmt.Errorf("failed to move media item %s: %w", fileInfo.path, err)
 		}
 		bar.Add64(fileInfo.size)

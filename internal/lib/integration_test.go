@@ -91,7 +91,7 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 
 	t.Run("Step1_ImportFiles", func(t *testing.T) {
 		// Run the import command - pass the SD card root, not the DCIM dir
-		importResult, err := Import(cfg, sdCardRoot, false, time.Now()) // keepSrc = false
+		importResult, err := Import(cfg, sdCardRoot, false, time.Now(), false) // keepSrc = false
 		require.NoError(t, err, "Import command should succeed")
 
 		// Verify import results
@@ -210,7 +210,7 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 		}
 
 		// Run upload-videos command
-		err := UploadVideos(ctx, cfg, configDir, false, mockGPhotosClient) // keepTargetRoot = false
+		err := UploadVideos(ctx, cfg, configDir, false, mockGPhotosClient, false) // keepTargetRoot = false
 		require.NoError(t, err, "UploadVideos command should succeed")
 
 		// Verify videos were deleted from orig (keepTargetRoot = false)
@@ -275,7 +275,7 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 		// Import the video
 		// The Import command needs all photo paths in cfg to be valid for its own validation,
 		// even if we are only testing video upload failure. newTestConfig handles this.
-		_, err := Import(cfg, sdCardRoot, false, time.Now())
+		_, err := Import(cfg, sdCardRoot, false, time.Now(), false)
 		require.NoError(t, err)
 
 		// Setup mocks for upload failure
@@ -305,7 +305,7 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 			Return("", assert.AnError)
 
 		// Run upload-videos command (should fail)
-		err = UploadVideos(ctx, cfg, configDir, false, mockGPhotosClient)
+		err = UploadVideos(ctx, cfg, configDir, false, mockGPhotosClient, false)
 		assert.Error(t, err, "UploadVideos should fail when Google Photos API fails")
 
 		// Verify video file is still in upload queue dir (not deleted due to upload failure)
@@ -363,7 +363,7 @@ func TestImportAndUploadVideosIntegration_KeepFlags(t *testing.T) {
 
 	// Import with keepSrc = true
 	// The Import command needs all photo paths in cfg to be valid.
-	_, err := Import(cfg, sdCardRoot, true, time.Now())
+	_, err := Import(cfg, sdCardRoot, true, time.Now(), false)
 	require.NoError(t, err)
 
 	// Verify source file still exists
@@ -400,7 +400,7 @@ func TestImportAndUploadVideosIntegration_KeepFlags(t *testing.T) {
 		Return(nil)
 
 	// Upload with keepTargetRoot = true
-	err = UploadVideos(ctx, cfg, configDir, true, mockGPhotosClient)
+	err = UploadVideos(ctx, cfg, configDir, true, mockGPhotosClient, false)
 	require.NoError(t, err)
 
 	// Verify video still exists in orig

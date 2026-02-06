@@ -53,7 +53,7 @@ type ImportResult struct {
 
 // Import moves the DCIM/ files to the photo to process dir and the upload queue video dir.
 // It returns the relative target directory for the photos and any error.
-func Import(cfg config.CamflowConfig, sdcardDir string, keepSrc bool, now time.Time) (ImportResult, error) {
+func Import(cfg config.CamflowConfig, sdcardDir string, keepSrc bool, now time.Time, dryRun bool) (ImportResult, error) {
 	if err := cfg.Validate(); err != nil {
 		return ImportResult{}, fmt.Errorf("invalid config: %w", err)
 	}
@@ -86,8 +86,12 @@ func Import(cfg config.CamflowConfig, sdcardDir string, keepSrc bool, now time.T
 	}
 
 	// Move the files into the target dirs.
-	bar := NewProgressBar(totalSize, "moving")
-	importRes, err := moveFiles(cfg, srcDir, keepSrc, bar)
+	desc := "moving"
+	if dryRun {
+		desc = "simulating"
+	}
+	bar := NewProgressBar(totalSize, desc)
+	importRes, err := moveFiles(cfg, srcDir, keepSrc, bar, dryRun)
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("failed to move files: %w", err)
 	}
@@ -97,12 +101,14 @@ func Import(cfg config.CamflowConfig, sdcardDir string, keepSrc bool, now time.T
 	fmt.Println() // End the progress bar line.
 
 	// Check Image Stabilization for CR3 files
-	ctx := context.Background()
-	if err := CheckISEnabled(ctx, importRes.ImportedFiles); err != nil {
-		return ImportResult{}, fmt.Errorf("failed to check Image Stabilization: %w", err)
+	if !dryRun {
+		ctx := context.Background()
+		if err := CheckISEnabled(ctx, importRes.ImportedFiles); err != nil {
+			return ImportResult{}, fmt.Errorf("failed to check Image Stabilization: %w", err)
+		}
 	}
 
-	if !keepSrc {
+	if !keepSrc && !dryRun {
 		// Delete any leaf dirs that we moved files out of and are now empty, so that the
 		// camera will restart the names of dirs that it writes files into.
 		if err := deleteEmptyDirs(files); err != nil {
@@ -113,14 +119,18 @@ func Import(cfg config.CamflowConfig, sdcardDir string, keepSrc bool, now time.T
 	// Eject the sdcard, because there is nothing else to do with it.
 	// Only attempt to eject if this appears to be a real mounted volume under /Volumes/
 	if strings.HasPrefix(sdcardDir, "/Volumes/") {
-		fmt.Printf("Ejecting sdcard... ")
-		os.Stdout.Sync()
-		cmd := exec.Command("diskutil", "eject", sdcardDir)
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			return ImportResult{}, fmt.Errorf("failed to eject disk at %s: %s, error: %w", sdcardDir, string(output), err)
+		if dryRun {
+			fmt.Printf("Would eject sdcard %s\n", sdcardDir)
+		} else {
+			fmt.Printf("Ejecting sdcard... ")
+			os.Stdout.Sync()
+			cmd := exec.Command("diskutil", "eject", sdcardDir)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				return ImportResult{}, fmt.Errorf("failed to eject disk at %s: %s, error: %w", sdcardDir, string(output), err)
+			}
+			fmt.Printf("done\n")
 		}
-		fmt.Printf("done\n")
 	} else {
 		fmt.Printf("Skipping disk ejection for non-volume path: %s\n", sdcardDir)
 	}
@@ -183,7 +193,7 @@ func getAvailableSpace(dir string) (uint64, error) {
 
 // moveFiles moves files from srcDir into the photo/video dirs for the date of each file.
 // It preserves the modification times.
-func moveFiles(cfg config.CamflowConfig, srcDir string, keepSrc bool, bar *progressbar.ProgressBar) (ImportResult, error) {
+func moveFiles(cfg config.CamflowConfig, srcDir string, keepSrc bool, bar *progressbar.ProgressBar, dryRun bool) (ImportResult, error) {
 	// itemTypeString returns the string representation of ItemType for better debugging.
 	itemTypeString := func(it ItemType) string {
 		switch it {
@@ -261,8 +271,19 @@ func moveFiles(cfg config.CamflowConfig, srcDir string, keepSrc bool, bar *progr
 		// Note: this assumes that there are no duplicate camera file names created on the same day.
 		// That could happen, eg if the camera's counter is reset or if enough photos are taken in that day,
 		// but it is unlikely enough that we ignore it for now.
-		if err := copyFile(path, targetPath, info.Size(), info.ModTime(), bar); err != nil {
-			return err
+		if dryRun {
+			// In dry run, we don't actually move or delete files.
+			// However, we still collect the imported file info to return correct stats.
+		} else {
+			if err := copyFile(path, targetPath, info.Size(), info.ModTime(), bar); err != nil {
+				return err
+			}
+
+			if !keepSrc {
+				if err := os.Remove(path); err != nil {
+					return fmt.Errorf("failed to delete source file %s: %w", path, err)
+				}
+			}
 		}
 
 		// Collect imported file information
@@ -272,12 +293,6 @@ func moveFiles(cfg config.CamflowConfig, srcDir string, keepSrc bool, bar *progr
 			ModTime:  info.ModTime(),
 			ItemType: itemType,
 		})
-
-		if !keepSrc {
-			if err := os.Remove(path); err != nil {
-				return fmt.Errorf("failed to delete source file %s: %w", path, err)
-			}
-		}
 
 		return nil
 	})

@@ -207,7 +207,7 @@ func TestMoveFiles(t *testing.T) {
 		}
 
 		// Run moveFiles
-		result, err := moveFiles(cfg, srcDir, false, bar) // keepSrc = false
+		result, err := moveFiles(cfg, srcDir, false, bar, false) // keepSrc = false, dryRun = false
 		require.NoError(t, err)
 
 		// Verification: Check targets and source deletion
@@ -293,7 +293,7 @@ func TestMoveFiles(t *testing.T) {
 		}
 
 		// Run moveFiles
-		result, err := moveFiles(cfg, srcDir, true, bar) // keepSrc = true
+		result, err := moveFiles(cfg, srcDir, true, bar, false) // keepSrc = true, dryRun = false
 		require.NoError(t, err)
 
 		// Verification: Check targets and source *retention*
@@ -360,7 +360,7 @@ func TestMoveFiles(t *testing.T) {
 		defer cleanup()
 
 		// Run moveFiles on an empty directory
-		result, err := moveFiles(cfg, srcDir, false, bar)
+		result, err := moveFiles(cfg, srcDir, false, bar, false)
 		require.NoError(t, err)
 
 		// Verify ImportResult is empty
@@ -383,7 +383,7 @@ func TestMoveFiles(t *testing.T) {
 		defer os.Chmod(photoTargetRoot, 0755)
 
 		// Run moveFiles - expect failure during copyFile's MkdirAll or Create
-		result, err := moveFiles(cfg, srcDir, false, bar)
+		result, err := moveFiles(cfg, srcDir, false, bar, false)
 		require.Error(t, err, "moveFiles should fail when destination is not writable")
 
 		// Check the error message indicates a permission or creation issue

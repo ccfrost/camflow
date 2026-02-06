@@ -73,6 +73,7 @@ func (c *albumCache) getOrFetchAndCreateAlbumIDs(
 	albumsService AppAlbumsService, // Changed to AppAlbumsService
 	titles []string,
 	limiter *rate.Limiter,
+	dryRun bool,
 ) ([]string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -120,6 +121,13 @@ func (c *albumCache) getOrFetchAndCreateAlbumIDs(
 
 	// 3. Create albums that are still in titlesToProcessMap (i.e., not cached, not found online)
 	for titleToCreate, originalIndex := range titlesToProcessMap {
+		if dryRun {
+			fmt.Printf("Would create album '%s'\n", titleToCreate)
+			finalIDs[originalIndex] = fmt.Sprintf("dry-run-id-%s", titleToCreate)
+			processedCount++
+			continue
+		}
+
 		fmt.Printf("Album '%s' not found in cache or online. Creating...\n", titleToCreate)
 		if err := limiter.Wait(ctx); err != nil {
 			return nil, fmt.Errorf("rate limiter error before creating album '%s': %w", titleToCreate, err)

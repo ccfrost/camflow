@@ -28,6 +28,7 @@ var (
 
 func main() {
 	var configPath, cacheDir string
+	var dryRun bool
 	var cfg config.CamflowConfig
 
 	rootCmd := cobra.Command{
@@ -59,6 +60,8 @@ func main() {
 			os.Exit(1)
 		}
 		rootCmd.PersistentFlags().StringVar(&cacheDir, "cache-dir", defaultCacheDir, "Dir to store cache files")
+
+		rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "Perform a dry run without modifying any files")
 	}
 
 	versionCmd := cobra.Command{
@@ -127,7 +130,7 @@ func main() {
 				os.Exit(1)
 			}
 
-			res, err := lib.Import(cfg, srcDir, keep, time.Now())
+			res, err := lib.Import(cfg, srcDir, keep, time.Now(), dryRun)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
@@ -138,12 +141,16 @@ func main() {
 			if len(res.SrcEntries) > 0 {
 				optColon = ":"
 			}
-			fmt.Printf("Imported from %d dir%s%s\n", len(res.SrcEntries), pluralSuffix(len(res.SrcEntries)), optColon)
+			actionVerb := "Imported"
+			if dryRun {
+				actionVerb = "Would have imported"
+			}
+			fmt.Printf("%s from %d dir%s%s\n", actionVerb, len(res.SrcEntries), pluralSuffix(len(res.SrcEntries)), optColon)
 			if len(res.SrcEntries) != 0 {
 				for _, entry := range res.SrcEntries {
 					fmt.Printf("\t%s: %d photo%s, %d video%s\n", entry.RelativeDir, entry.PhotoCount, pluralSuffix(entry.PhotoCount), entry.VideoCount, pluralSuffix(entry.VideoCount))
 				}
-				fmt.Printf("Imported photos into %d dir%s:\n", len(res.DstEntries), pluralSuffix(len(res.DstEntries)))
+				fmt.Printf("%s photos into %d dir%s:\n", actionVerb, len(res.DstEntries), pluralSuffix(len(res.DstEntries)))
 				for _, entry := range res.DstEntries {
 					fmt.Printf("\t%s: %d photo%s\n", entry.RelativeDir, entry.PhotoCount, pluralSuffix(entry.PhotoCount))
 				}
@@ -180,7 +187,7 @@ Successfully uploaded photos are deleted from upload queue unless --keep is spec
 			}
 			wrappedGphotosClient := lib.NewGPhotosClientWrapper(gphotosClient)
 
-			if err := lib.UploadPhotos(ctx, cfg, cacheDir, keep, wrappedGphotosClient); err != nil {
+			if err := lib.UploadPhotos(ctx, cfg, cacheDir, keep, wrappedGphotosClient, dryRun); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}
@@ -215,7 +222,7 @@ Successfully uploaded videos are deleted from upload queue unless --keep is spec
 			}
 			wrappedGphotosClient := lib.NewGPhotosClientWrapper(gphotosClient)
 
-			if err := lib.UploadVideos(ctx, cfg, cacheDir, keep, wrappedGphotosClient); err != nil {
+			if err := lib.UploadVideos(ctx, cfg, cacheDir, keep, wrappedGphotosClient, dryRun); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}
@@ -232,22 +239,24 @@ This is a workaround for video uploads not preserving the video's timezone.`,
 		Args: cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			// Confirm with user to protect against accidental invocation.
-			reader := bufio.NewReader(os.Stdin)
-			fmt.Print("Confirm: move all videos in upload queue to the uploaded directory? [y/N]: ")
-			response, err := reader.ReadString('\n')
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "error: failed to read confirmation:", err)
-				os.Exit(1)
-			}
+			if !dryRun {
+				reader := bufio.NewReader(os.Stdin)
+				fmt.Print("Confirm: move all videos in upload queue to the uploaded directory? [y/N]: ")
+				response, err := reader.ReadString('\n')
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "error: failed to read confirmation:", err)
+					os.Exit(1)
+				}
 
-			response = strings.TrimSpace(strings.ToLower(response))
-			if response != "y" && response != "yes" {
-				fmt.Println("Aborted")
-				return
+				response = strings.TrimSpace(strings.ToLower(response))
+				if response != "y" && response != "yes" {
+					fmt.Println("Aborted")
+					return
+				}
 			}
 
 			ctx := context.Background()
-			if err := lib.MarkVideosUploaded(ctx, cfg); err != nil {
+			if err := lib.MarkVideosUploaded(ctx, cfg, dryRun); err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}
