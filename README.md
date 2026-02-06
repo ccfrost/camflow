@@ -6,7 +6,7 @@
 
 **The camera workflow tool for enthusiastic photographers.**
 
-Camflow automates the tedious file management parts of photo and video processing --- importing from SD cards, organizing folders by date, tracking which files have and haven't been processed, and uploading to Google Photos --- while giving you total freedom to use the editing tools you love (e.g., Lightroom, Capture One, Photo Mechanic).
+Camflow automates the tedious file management parts of photo and video processing — importing from SD cards, organizing folders by date, tracking which files have and haven't been processed, and uploading to Google Photos — while giving you total freedom to use the editing tools you love (e.g., Lightroom, Capture One, Photo Mechanic).
 
 ## Why Camflow?
 
