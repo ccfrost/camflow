@@ -34,10 +34,11 @@ Camflow is designed for a "Curate & Edit" philosophy:
 
 Before installing, be aware that Camflow requires a one-time setup of Google API credentials.
 
-1.  **Go**: Ensure you have [Go](https://go.dev/dl/) installed (1.21+).
+1.  **Go**: Ensure you have [Go](https://go.dev/dl/) installed (1.21+). (On macOS, you can install [brew](https://brew.sh/) and run `brew install golang`.)
 2.  **Google Cloud Project**: To upload to your personal Google Photos account, you must create a project and generate OAuth 2.0 credentials (`client_id` and `client_secret`).
     > **Guide:** Follow this tutorial to obtain your credentials:
     > [https://gilesknap.github.io/gphotos-sync/main/tutorials/oauth2.html](https://gilesknap.github.io/gphotos-sync/main/tutorials/oauth2.html)
+3. **exiftool**: Ensure you have [exiftool](https://exiftool.org/) installed. (On macOS, you can run `brew install exiftool`.)
 
 ## Installation
 Currently, Camflow must be built from source.
