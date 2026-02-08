@@ -117,7 +117,8 @@ func Import(cfg config.CamflowConfig, sdcardDir string, keepSrc bool, now time.T
 	}
 
 	// Eject the sdcard, because there is nothing else to do with it.
-	// Only attempt to eject if this appears to be a real mounted volume under /Volumes/
+	// Only attempt to eject if this appears to be a real mounted volume under /Volumes/.
+	// TODO: support Linux (eg, udisksctl unmount -b /dev/sdX1, so look up block device for sdcardDir, and check that it is a removable drive?).
 	if strings.HasPrefix(sdcardDir, "/Volumes/") {
 		if dryRun {
 			fmt.Printf("Would eject sdcard %s\n", sdcardDir)
