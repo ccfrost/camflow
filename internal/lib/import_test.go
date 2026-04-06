@@ -1,6 +1,8 @@
 package lib
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -464,4 +466,91 @@ func TestDeleteEmptyDirs(t *testing.T) {
 	assert.NoError(t, err, "Expected non-empty directory to exist: %s", dirs[2])
 	_, err = os.Stat(dirs[3])
 	assert.NoError(t, err, "Expected non-empty directory to exist: %s", dirs[3])
+}
+
+func TestFilterCR3Files(t *testing.T) {
+	modTime := time.Date(2024, 5, 1, 10, 0, 0, 0, time.UTC)
+	files := []ImportedFile{
+		{DstPath: "/photos/2024/01/01/IMG_0001.CR3", ModTime: modTime, ItemType: ItemTypePhoto},
+		{DstPath: "/photos/2024/01/01/IMG_0002.JPG", ModTime: modTime, ItemType: ItemTypePhoto},
+		{DstPath: "/photos/2024/01/01/IMG_0003.cr3", ModTime: modTime, ItemType: ItemTypePhoto},
+		{DstPath: "/videos/VID_0001.MP4", ModTime: modTime, ItemType: ItemTypeVideo},
+		{DstPath: "/videos/VID_0002.mp4", ModTime: modTime, ItemType: ItemTypeVideo},
+		{DstPath: "/photos/2024/01/01/IMG_0004.jpg", ModTime: modTime, ItemType: ItemTypePhoto},
+	}
+
+	cr3Files := filterCR3Files(files)
+
+	assert.Len(t, cr3Files, 2)
+	assert.Equal(t, "/photos/2024/01/01/IMG_0001.CR3", cr3Files[0].DstPath)
+	assert.Equal(t, "/photos/2024/01/01/IMG_0003.cr3", cr3Files[1].DstPath)
+}
+
+func TestCheckISEnabled_NoCR3Files(t *testing.T) {
+	now := time.Now()
+	files := []ImportedFile{
+		{DstPath: "/photos/IMG_0001.JPG", ModTime: now, ItemType: ItemTypePhoto},
+		{DstPath: "/videos/VID_0001.MP4", ModTime: now, ItemType: ItemTypeVideo},
+	}
+
+	// Should return nil without invoking exiftool
+	err := CheckISEnabled(context.Background(), files)
+	assert.NoError(t, err)
+}
+
+func TestCheckISEnabled_EmptyFiles(t *testing.T) {
+	err := CheckISEnabled(context.Background(), nil)
+	assert.NoError(t, err)
+}
+
+func TestPrintISWarningIfNeeded(t *testing.T) {
+	t.Run("AllISOn", func(t *testing.T) {
+		var buf bytes.Buffer
+		results := []ImageStabilizationResult{
+			{FilePath: "/photos/IMG_0001.CR3", HasIS: true},
+			{FilePath: "/photos/IMG_0002.CR3", HasIS: true},
+		}
+
+		printISWarningIfNeeded(&buf, results, "/photos/IMG_0001.CR3")
+		assert.Empty(t, buf.String())
+	})
+
+	t.Run("SomeISOff_MostRecentOn", func(t *testing.T) {
+		var buf bytes.Buffer
+		results := []ImageStabilizationResult{
+			{FilePath: "/photos/IMG_0001.CR3", HasIS: true},
+			{FilePath: "/photos/IMG_0002.CR3", HasIS: false},
+			{FilePath: "/photos/IMG_0003.CR3", HasIS: false},
+		}
+
+		printISWarningIfNeeded(&buf, results, "/photos/IMG_0001.CR3")
+		output := buf.String()
+		assert.Contains(t, output, "Image Stabilization Warning")
+		assert.Contains(t, output, "2 of 3 Canon CR3 files had Image Stabilization turned OFF")
+		assert.Contains(t, output, "IMG_0001.CR3) has IS ON - looks like you've fixed it!")
+	})
+
+	t.Run("SomeISOff_MostRecentOff", func(t *testing.T) {
+		var buf bytes.Buffer
+		results := []ImageStabilizationResult{
+			{FilePath: "/photos/IMG_0001.CR3", HasIS: false},
+			{FilePath: "/photos/IMG_0002.CR3", HasIS: true},
+		}
+
+		printISWarningIfNeeded(&buf, results, "/photos/IMG_0001.CR3")
+		output := buf.String()
+		assert.Contains(t, output, "IMG_0001.CR3) still has IS OFF")
+	})
+
+	t.Run("AllErrors", func(t *testing.T) {
+		var buf bytes.Buffer
+		results := []ImageStabilizationResult{
+			{FilePath: "/photos/IMG_0001.CR3", Error: fmt.Errorf("parse error")},
+		}
+
+		printISWarningIfNeeded(&buf, results, "/photos/IMG_0001.CR3")
+		output := buf.String()
+		assert.Contains(t, output, "Failed to check Image Stabilization for 1 of 1 CR3 files")
+		assert.NotContains(t, output, "Image Stabilization Warning")
+	})
 }

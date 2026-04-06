@@ -14,3 +14,13 @@ func NewProgressBar(size int64, description string) *progressbar.ProgressBar {
 		progressbar.OptionShowElapsedTimeOnFinish(),
 	)
 }
+
+func NewCountProgressBar(total int, description string) *progressbar.ProgressBar {
+	return progressbar.NewOptions(total,
+		progressbar.OptionSetDescription(description+":"),
+		progressbar.OptionSetWidth(20), // Fit in an 80-column terminal.
+		progressbar.OptionShowCount(),
+		progressbar.OptionSetPredictTime(true),
+		progressbar.OptionShowElapsedTimeOnFinish(),
+	)
+}

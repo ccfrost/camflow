@@ -3,10 +3,12 @@ package lib
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/ccfrost/camflow/internal/config"
 	"github.com/schollz/progressbar/v3"
+	"golang.org/x/sync/errgroup"
 )
 
 // ItemType represents the type of media item being processed.
@@ -384,9 +387,7 @@ func filterCR3Files(importedFiles []ImportedFile) []ImportedFile {
 
 // CheckISEnabled checks Image Stabilization status for imported CR3 files and prints warnings
 func CheckISEnabled(ctx context.Context, importedFiles []ImportedFile) error {
-	const exifBatchSize = 100
-
-	fmt.Printf("Running IS check... ")
+	const batchSize = 20
 
 	// Filter for CR3 files
 	cr3Files := filterCR3Files(importedFiles)
@@ -399,36 +400,56 @@ func CheckISEnabled(ctx context.Context, importedFiles []ImportedFile) error {
 		return cr3Files[i].ModTime.After(cr3Files[j].ModTime)
 	})
 
-	// Process in batches
-	var allResults []ImageStabilizationResult
-	for i := 0; i < len(cr3Files); i += exifBatchSize {
-		end := i + exifBatchSize
+	// Build batches of file paths
+	var batches [][]string
+	for i := 0; i < len(cr3Files); i += batchSize {
+		end := i + batchSize
 		if end > len(cr3Files) {
 			end = len(cr3Files)
 		}
-
-		batch := cr3Files[i:end]
-		batchPaths := make([]string, len(batch))
-		for j, f := range batch {
-			batchPaths[j] = f.DstPath
+		batch := make([]string, end-i)
+		for j, f := range cr3Files[i:end] {
+			batch[j] = f.DstPath
 		}
-
-		results, err := checkImageStabilizationBatch(ctx, batchPaths)
-		if err != nil {
-			return fmt.Errorf("failed to check IS for batch starting at %d: %w", i, err)
-		}
-		allResults = append(allResults, results...)
+		batches = append(batches, batch)
 	}
 
-	fmt.Println("done")
+	bar := NewCountProgressBar(len(cr3Files), "IS check")
+	defer bar.Finish()
+
+	// Process batches in parallel
+	batchResults := make([][]ImageStabilizationResult, len(batches))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(runtime.NumCPU())
+
+	for i, batch := range batches {
+		g.Go(func() error {
+			results, err := checkImageStabilizationBatch(gctx, batch)
+			if err != nil {
+				return fmt.Errorf("failed to check IS for batch %d: %w", i, err)
+			}
+			batchResults[i] = results
+			bar.Add(len(batch))
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return err
+	}
+	// Flatten results
+	var allResults []ImageStabilizationResult
+	for _, br := range batchResults {
+		allResults = append(allResults, br...)
+	}
 
 	// Analyze results and print warning if needed
-	printISWarningIfNeeded(allResults, cr3Files[0].DstPath) // Most recent file
+	printISWarningIfNeeded(os.Stdout, allResults, cr3Files[0].DstPath) // Most recent file
 	return nil
 }
 
 // printISWarningIfNeeded formats and prints the IS warning
-func printISWarningIfNeeded(results []ImageStabilizationResult, mostRecentPath string) {
+func printISWarningIfNeeded(w io.Writer, results []ImageStabilizationResult, mostRecentPath string) {
 	disabledCount := 0
 	errorCount := 0
 	successfulChecks := 0
@@ -446,7 +467,7 @@ func printISWarningIfNeeded(results []ImageStabilizationResult, mostRecentPath s
 
 	// Log errors if any occurred
 	if errorCount > 0 {
-		fmt.Printf("Warning: Failed to check Image Stabilization for %d of %d CR3 files\n",
+		fmt.Fprintf(w, "Warning: Failed to check Image Stabilization for %d of %d CR3 files\n",
 			errorCount, len(results))
 	}
 
@@ -469,20 +490,20 @@ func printISWarningIfNeeded(results []ImageStabilizationResult, mostRecentPath s
 	}
 
 	// Print IS warning with formatting
-	fmt.Printf("⚠️  Image Stabilization Warning:\n")
-	fmt.Printf("   %d of %d Canon CR3 files had Image Stabilization turned OFF\n",
+	fmt.Fprintf(w, "⚠️  Image Stabilization Warning:\n")
+	fmt.Fprintf(w, "   %d of %d Canon CR3 files had Image Stabilization turned OFF\n",
 		disabledCount, successfulChecks)
 
 	if mostRecentCheckSuccessful {
 		if mostRecentHasIS {
-			fmt.Printf("   ✓ Most recent photo (%s) has IS ON - looks like you've fixed it!\n",
+			fmt.Fprintf(w, "   ✓ Most recent photo (%s) has IS ON - looks like you've fixed it!\n",
 				filepath.Base(mostRecentPath))
 		} else {
-			fmt.Printf("   ✗ Most recent photo (%s) still has IS OFF\n",
+			fmt.Fprintf(w, "   ✗ Most recent photo (%s) still has IS OFF\n",
 				filepath.Base(mostRecentPath))
 		}
 	} else {
-		fmt.Printf("   ? Most recent photo (%s) could not be checked for IS status\n",
+		fmt.Fprintf(w, "   ? Most recent photo (%s) could not be checked for IS status\n",
 			filepath.Base(mostRecentPath))
 	}
 }
