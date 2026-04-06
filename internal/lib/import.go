@@ -56,7 +56,7 @@ type ImportResult struct {
 
 // Import moves the DCIM/ files to the photo to process dir and the upload queue video dir.
 // It returns the relative target directory for the photos and any error.
-func Import(cfg config.CamflowConfig, sdcardDir string, keepSrc bool, now time.Time, dryRun bool) (ImportResult, error) {
+func Import(cfg config.CamflowConfig, sdcardDir string, keepSrc bool, now time.Time, dryRun bool) (result ImportResult, retErr error) {
 	if err := cfg.Validate(); err != nil {
 		return ImportResult{}, fmt.Errorf("invalid config: %w", err)
 	}
@@ -94,14 +94,17 @@ func Import(cfg config.CamflowConfig, sdcardDir string, keepSrc bool, now time.T
 		desc = "simulating"
 	}
 	bar := NewProgressBar(totalSize, desc)
+	defer func() {
+		if retErr != nil && bar != nil {
+			_ = bar.Exit()
+		}
+	}()
 	importRes, err := moveFiles(cfg, srcDir, keepSrc, bar, dryRun)
 	if err != nil {
 		return ImportResult{}, fmt.Errorf("failed to move files: %w", err)
 	}
-	if err := bar.Close(); err != nil {
-		fmt.Printf("warning: failed to close progress bar\n")
-	}
-	fmt.Println() // End the progress bar line.
+	_ = bar.Finish()
+	bar = nil
 
 	// Check Image Stabilization for CR3 files
 	if !dryRun {
@@ -386,7 +389,7 @@ func filterCR3Files(importedFiles []ImportedFile) []ImportedFile {
 }
 
 // CheckISEnabled checks Image Stabilization status for imported CR3 files and prints warnings
-func CheckISEnabled(ctx context.Context, importedFiles []ImportedFile) error {
+func CheckISEnabled(ctx context.Context, importedFiles []ImportedFile) (retErr error) {
 	const batchSize = 20
 
 	// Filter for CR3 files
@@ -415,7 +418,11 @@ func CheckISEnabled(ctx context.Context, importedFiles []ImportedFile) error {
 	}
 
 	bar := NewCountProgressBar(len(cr3Files), "IS check")
-	defer bar.Finish()
+	defer func() {
+		if retErr != nil && bar != nil {
+			_ = bar.Exit()
+		}
+	}()
 
 	// Process batches in parallel
 	batchResults := make([][]ImageStabilizationResult, len(batches))
@@ -437,6 +444,8 @@ func CheckISEnabled(ctx context.Context, importedFiles []ImportedFile) error {
 	if err := g.Wait(); err != nil {
 		return err
 	}
+	_ = bar.Finish()
+	bar = nil
 	// Flatten results
 	var allResults []ImageStabilizationResult
 	for _, br := range batchResults {

@@ -156,7 +156,7 @@ func moveToUploaded(localConfig LocalConfig, fileInfo itemFileInfo, dryRun bool)
 // Media items are added to Google Photos album named DefaultAlbum.
 // Uploaded media items are moved from upload queue to uploaded dir; unless keepQueued is true, in which case they are copied (but not moved).
 // The function is idempotent - if interrupted, it can be recalled to resume.
-func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, localConfig LocalConfig, gpConfig GPConfig, itemTypePluralName string, gphotosClient GPhotosClient, dryRun bool) error {
+func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, localConfig LocalConfig, gpConfig GPConfig, itemTypePluralName string, gphotosClient GPhotosClient, dryRun bool) (retErr error) {
 	uploadQueueDir := localConfig.GetUploadQueueRoot()
 	if _, err := os.Stat(uploadQueueDir); os.IsNotExist(err) {
 		logger.Info("Upload queue directory does not exist, nothing to upload",
@@ -263,6 +263,11 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 		desc = "simulating"
 	}
 	bar := NewProgressBar(totalSize, desc)
+	defer func() {
+		if retErr != nil && bar != nil {
+			_ = bar.Exit()
+		}
+	}()
 
 	// TODO: consider batching adding media items to albums. How to make it idempotent in face of failure part way through?
 	for _, fileInfo := range itemsToUpload {
@@ -275,9 +280,8 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 			return fmt.Errorf("failed to upload media item %s: %w", fileInfo.path, err)
 		}
 	}
-
 	_ = bar.Finish()
-	fmt.Println() // End the progress bar line.
+	bar = nil
 
 	if dryRun {
 		fmt.Printf("Would have uploaded %d %s\n", len(itemsToUpload), itemTypePluralName)

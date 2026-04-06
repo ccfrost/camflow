@@ -1,6 +1,10 @@
 package lib
 
-import "github.com/schollz/progressbar/v3"
+import (
+	"fmt"
+
+	"github.com/schollz/progressbar/v3"
+)
 
 func NewProgressBar(size int64, description string) *progressbar.ProgressBar {
 	return progressbar.NewOptions64(size,
@@ -12,6 +16,7 @@ func NewProgressBar(size int64, description string) *progressbar.ProgressBar {
 		progressbar.OptionSetPredictTime(true),
 		progressbar.OptionShowTotalBytes(true),
 		progressbar.OptionShowElapsedTimeOnFinish(),
+		progressbar.OptionOnCompletion(func() { fmt.Println() }),
 	)
 }
 
@@ -22,5 +27,6 @@ func NewCountProgressBar(total int, description string) *progressbar.ProgressBar
 		progressbar.OptionShowCount(),
 		progressbar.OptionSetPredictTime(true),
 		progressbar.OptionShowElapsedTimeOnFinish(),
+		progressbar.OptionOnCompletion(func() { fmt.Println() }),
 	)
 }
