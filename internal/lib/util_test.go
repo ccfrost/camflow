@@ -1,6 +1,7 @@
 package lib
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,6 +12,30 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// disableVideoTimezone stubs out the exiftool-backed video timezone behavior so tests that
+// create fake-content video files don't shell out to exiftool. getVideoTimezoneExifFn
+// returns one valid explicit-tz result per requested path, and prepareVideoForUploadFn is a
+// no-op that returns the original path. Both are restored via t.Cleanup. Call it at the top
+// of every test that creates a .mp4/.mov/.MP4 file.
+func disableVideoTimezone(t *testing.T) {
+	t.Helper()
+	origGet, origPrep := getVideoTimezoneExifFn, prepareVideoForUploadFn
+	getVideoTimezoneExifFn = func(_ context.Context, paths []string) ([]videoTimezoneExif, error) {
+		out := make([]videoTimezoneExif, len(paths))
+		for i, p := range paths {
+			out[i] = videoTimezoneExif{Path: p, CreationDate: "2024:01:28 10:00:00-08:00"}
+		}
+		return out, nil
+	}
+	prepareVideoForUploadFn = func(_ context.Context, p string) (string, func(), error) {
+		return p, func() {}, nil
+	}
+	t.Cleanup(func() {
+		getVideoTimezoneExifFn = origGet
+		prepareVideoForUploadFn = origPrep
+	})
+}
 
 func newTestConfig(t *testing.T, photosDefaultAlbum, videosDefaultAlbum string) config.CamflowConfig {
 	t.Helper()

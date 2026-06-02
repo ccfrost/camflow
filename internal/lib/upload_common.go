@@ -83,6 +83,79 @@ func scanUploadQueue(uploadQueueDir string) ([]itemFileInfo, int64, error) {
 	return items, totalSize, nil
 }
 
+// cleanupOrphanedVideoTimezoneTempFiles removes leftover per-run temp dirs (upload-*) under
+// cacheRoot. Each such dir is an orphan from a run that crashed before its own cleanup ran.
+// A missing cacheRoot is treated as a no-op (not an error). Under dryRun it logs what it
+// would remove and deletes nothing. A removal failure is returned as an error, since the
+// same permission problem would block creating new temps.
+//
+// Assumes no concurrent upload-videos runs: it deletes every upload-* dir, so a second
+// concurrent run's in-flight temp would be removed out from under it.
+func cleanupOrphanedVideoTimezoneTempFiles(cacheRoot string, dryRun bool) error {
+	entries, err := os.ReadDir(cacheRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to read video tz temp root %s: %w", cacheRoot, err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "upload-") {
+			continue
+		}
+		dir := filepath.Join(cacheRoot, entry.Name())
+		if dryRun {
+			logger.Info("Would remove orphaned temp dir", slog.String("dir", dir))
+			continue
+		}
+		logger.Info("Removing orphaned temp dir", slog.String("dir", dir))
+		if err := os.RemoveAll(dir); err != nil {
+			return fmt.Errorf("failed to remove orphaned temp dir %s: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+// precheckVideoTimezones reads the timezone metadata for all queued videos in one exiftool
+// batch and returns an error if any video cannot be prepared safely. A video is prepareable
+// if it already has an explicit-timezone creation date, or if it has both Canon timezone
+// fields to derive one from. It requires exactly one exiftool result per path (error on a
+// missing, duplicate, or unexpected result).
+func precheckVideoTimezones(ctx context.Context, items []itemFileInfo) error {
+	paths := make([]string, 0, len(items))
+	for _, item := range items {
+		paths = append(paths, item.path)
+	}
+	results, err := getVideoTimezoneExifFn(ctx, paths)
+	if err != nil {
+		return fmt.Errorf("failed to read video timezone metadata: %w", err)
+	}
+
+	byPath := make(map[string]videoTimezoneExif, len(results))
+	for _, r := range results {
+		clean := filepath.Clean(r.Path)
+		if _, dup := byPath[clean]; dup {
+			return fmt.Errorf("duplicate exiftool result for %s", r.Path)
+		}
+		byPath[clean] = r
+	}
+	if len(byPath) != len(paths) {
+		return fmt.Errorf("expected %d video metadata results, got %d", len(paths), len(byPath))
+	}
+
+	for _, path := range paths {
+		r, ok := byPath[filepath.Clean(path)]
+		if !ok {
+			return fmt.Errorf("no exiftool result for %s", path)
+		}
+		hasCanon := r.DateTimeOriginal != "" && r.OffsetTimeOriginal != ""
+		if !hasExplicitTimezone(r.CreationDate) && !hasCanon {
+			return fmt.Errorf("video %s cannot be prepared: no explicit-timezone creation date and missing Canon DateTimeOriginal/OffsetTimeOriginal", path)
+		}
+	}
+	return nil
+}
+
 // moveToUploaded moves a single media item from upload queue to the uploaded directory.
 // Returns the destination path.
 func moveToUploaded(localConfig LocalConfig, fileInfo itemFileInfo, dryRun bool) (string, error) {
@@ -157,6 +230,18 @@ func moveToUploaded(localConfig LocalConfig, fileInfo itemFileInfo, dryRun bool)
 // Uploaded media items are moved from upload queue to uploaded dir; unless keepQueued is true, in which case they are copied (but not moved).
 // The function is idempotent - if interrupted, it can be recalled to resume.
 func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, localConfig LocalConfig, gpConfig GPConfig, itemTypePluralName string, gphotosClient GPhotosClient, dryRun bool) (retErr error) {
+	// For videos, reclaim crash-orphaned temp dirs in the OS cache dir before anything else —
+	// they live outside the queue, so this must run even when the queue dir is gone.
+	if itemTypePluralName == "videos" {
+		cacheRoot, err := videoTimezoneTempRoot()
+		if err != nil {
+			return err
+		}
+		if err := cleanupOrphanedVideoTimezoneTempFiles(cacheRoot, dryRun); err != nil {
+			return err
+		}
+	}
+
 	uploadQueueDir := localConfig.GetUploadQueueRoot()
 	if _, err := os.Stat(uploadQueueDir); os.IsNotExist(err) {
 		logger.Info("Upload queue directory does not exist, nothing to upload",
@@ -182,6 +267,15 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 	logger.Info("Found files to upload",
 		slog.Int("count", len(itemsToUpload)),
 		slog.Float64("total_size_gb", math.Ceil(float64(totalSize)/1024/1024/1024)))
+
+	// Batch precheck for videos: fail fast (before uploading anything) if any video cannot be
+	// prepared safely — i.e. it lacks an explicit-timezone creation date AND lacks Canon's
+	// DateTimeOriginal+OffsetTimeOriginal to derive one from.
+	if itemTypePluralName == "videos" {
+		if err := precheckVideoTimezones(ctx, itemsToUpload); err != nil {
+			return err
+		}
+	}
 
 	if gpConfig.GetDefaultAlbum() == "" {
 		logger.Warn("No default albums specified in config, files may only be uploaded to the library")
@@ -310,11 +404,29 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 		logger.Debug("Would upload file",
 			slog.String("file", fileBasename),
 			slog.Any("albums", targetAlbumTitles))
+		if isVideoFile(fileInfo.path) {
+			logger.Debug("Would add Apple creation date to",
+				slog.String("file", fileBasename))
+		}
 	} else {
+		// For videos, upload from a tagged temp copy (with the Apple creationdate atom) so
+		// the queued original — the only surviving copy after the SD card is wiped — is never
+		// mutated. The temp's basename equals the original, so Google sees an identical name.
+		uploadPath := fileInfo.path
+		if isVideoFile(fileInfo.path) {
+			var cleanup func()
+			var err error
+			uploadPath, cleanup, err = prepareVideoForUploadFn(ctx, fileInfo.path)
+			if err != nil {
+				return fmt.Errorf("failed to prepare video %s for upload: %w", fileBasename, err)
+			}
+			defer cleanup()
+		}
+
 		// TODO: consider parallelizing uploads.
 		// TODO: consider doing resumable uploads.
 		// TODO: consider updating progress bar with actual upload progress. (gphotos UploadFile calls NewUploadFromFile, which returns a file, so it is close.)
-		uploadToken, err := gphotosClient.Uploader().UploadFile(ctx, fileInfo.path)
+		uploadToken, err := gphotosClient.Uploader().UploadFile(ctx, uploadPath)
 		if err != nil {
 			// TODO: only log error and skip? Want to make sure user notices.
 			// fmt.Printf("\nError uploading file %s: %v. Skipping.\n", fileBasename, err)

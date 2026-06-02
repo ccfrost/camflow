@@ -151,6 +151,7 @@ func TestImportAndUploadVideosIntegration(t *testing.T) {
 	})
 
 	t.Run("Step2_UploadVideos", func(t *testing.T) {
+		disableVideoTimezone(t)
 		// Setup Google Photos API mocks
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
@@ -250,6 +251,7 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 	})
 
 	t.Run("UploadError_GooglePhotosAPIFailure", func(t *testing.T) {
+		disableVideoTimezone(t)
 		// Setup test directories with a video file
 		photosDefaultAlbum := "Test Album Photos"
 		videosDefaultAlbum := "Test Album Videos"
@@ -337,6 +339,7 @@ func TestImportAndUploadVideosIntegration_ErrorScenarios(t *testing.T) {
 
 // TestImportAndUploadVideosIntegration_KeepFlags tests the workflow with keep flags enabled
 func TestImportAndUploadVideosIntegration_KeepFlags(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx := context.Background()
 
 	// Setup test directories and cfg using the helper

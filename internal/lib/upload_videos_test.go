@@ -91,6 +91,7 @@ func TestUploadVideos_EmptyTargetRootDir(t *testing.T) {
 }
 
 func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx := context.Background()
 
 	cfg := newTestConfig(t, "", "") // No default albums
@@ -145,6 +146,7 @@ func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles(t *testing.T) {
 }
 
 func TestUploadVideos_FilesToUpload_NoAlbums_KeepFiles(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx := context.Background()
 
 	cfg := newTestConfig(t, "", "") // No default albums
@@ -177,6 +179,7 @@ func TestUploadVideos_FilesToUpload_NoAlbums_KeepFiles(t *testing.T) {
 // TestUploadVideos_FilesToUpload_WithAlbums_CreatesAndAddsToAlbum tests uploading a video,
 // creating a new album when it doesn't exist, adding the video to it, and moving the local file.
 func TestUploadVideos_FilesToUpload_WithAlbums_CreatesAndAddsToAlbum(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx := context.Background()
 
 	albumTitle := "NewAlbumToCreate"
@@ -236,6 +239,7 @@ func TestUploadVideos_FilesToUpload_WithAlbums_CreatesAndAddsToAlbum(t *testing.
 }
 
 func TestUploadVideos_ErrorLoadAlbumCache(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx := context.Background()
 
 	cfg := newTestConfig(t, "", "Album1") // Video default album
@@ -260,6 +264,7 @@ func TestUploadVideos_ErrorLoadAlbumCache(t *testing.T) {
 }
 
 func TestUploadVideos_ErrorGetOrCreateAlbumIDs(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx := context.Background()
 	albumTitle := "AlbumThatCausesError"
 	cfg := newTestConfig(t, "", albumTitle) // Video default album
@@ -282,6 +287,7 @@ func TestUploadVideos_ErrorGetOrCreateAlbumIDs(t *testing.T) {
 }
 
 func TestUploadVideos_ErrorUploadFile(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx := context.Background()
 	cfg := newTestConfig(t, "", "") // No default albums
 	videoFileName := "2024-01-28-video1.mp4"
@@ -309,6 +315,7 @@ func TestUploadVideos_ErrorUploadFile(t *testing.T) {
 }
 
 func TestUploadVideos_ErrorCreateMediaItem(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx := context.Background()
 	cfg := newTestConfig(t, "", "") // No default albums
 	videoFileName := "2024-01-28-video1.mp4"
@@ -341,6 +348,7 @@ func TestUploadVideos_ErrorCreateMediaItem(t *testing.T) {
 }
 
 func TestUploadVideos_ErrorAddMediaToAlbum_FileKept_WhenAlbumExists(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx := context.Background()
 
 	albumTitle := "ExistingAlbum"
@@ -391,6 +399,7 @@ func TestUploadVideos_ErrorAddMediaToAlbum_FileKept_WhenAlbumExists(t *testing.T
 }
 
 func TestUploadVideos_ContextCancellationDuringLimiterWait(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	cfg := newTestConfig(t, "", "") // No default albums
@@ -442,6 +451,7 @@ func TestUploadVideos_ContextCancellationDuringLimiterWait(t *testing.T) {
 // TestUploadVideos_FilesToUpload_WithAlbums_AlbumExists tests uploading a video,
 // using an existing album, adding the video to it, and moving the local file.
 func TestUploadVideos_FilesToUpload_WithAlbums_AlbumExists(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx := context.Background()
 
 	albumTitle := "MyExistingAlbum"
@@ -500,6 +510,7 @@ func TestUploadVideos_FilesToUpload_WithAlbums_AlbumExists(t *testing.T) {
 // --- Updated Existing Tests to Account for Cleanup ---
 
 func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles_WithCleanup(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx := context.Background()
 
 	cfg := newTestConfig(t, "", "") // No default albums
@@ -560,6 +571,7 @@ func TestUploadVideos_FilesToUpload_NoAlbums_MoveFiles_WithCleanup(t *testing.T)
 }
 
 func TestUploadVideos_FilesToUpload_WithAlbums_CleanupOnSuccess(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx := context.Background()
 
 	albumTitle := "TestAlbum"
@@ -615,6 +627,7 @@ func TestUploadVideos_FilesToUpload_WithAlbums_CleanupOnSuccess(t *testing.T) {
 }
 
 func TestUploadVideos_ErrorUploadFile_NoCleanup(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx := context.Background()
 	cfg := newTestConfig(t, "", "") // No default albums
 
@@ -651,6 +664,7 @@ func TestUploadVideos_ErrorUploadFile_NoCleanup(t *testing.T) {
 }
 
 func TestUploadVideos_ErrorAddMediaToAlbum_NoCleanup(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx := context.Background()
 
 	albumTitle := "FailingAlbum"
@@ -701,6 +715,7 @@ func TestUploadVideos_ErrorAddMediaToAlbum_NoCleanup(t *testing.T) {
 }
 
 func TestUploadVideos_keepQueued_NoCleanup(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx := context.Background()
 	cfg := newTestConfig(t, "", "") // No default albums
 
@@ -741,6 +756,7 @@ func TestUploadVideos_keepQueued_NoCleanup(t *testing.T) {
 }
 
 func TestUploadVideos_FilesToUpload_CleanupFailsButUploadSucceeds(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx := context.Background()
 	cfg := newTestConfig(t, "", "") // No default albums
 
@@ -805,6 +821,7 @@ func TestUploadVideos_FilesToUpload_CleanupFailsButUploadSucceeds(t *testing.T) 
 // --- Test for mixed scenarios ---
 
 func TestUploadVideos_MixedSuccessAndFailure_PartialCleanup(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx := context.Background()
 	cfg := newTestConfig(t, "", "") // No default albums
 
@@ -864,6 +881,7 @@ func TestUploadVideos_MixedSuccessAndFailure_PartialCleanup(t *testing.T) {
 // --- Cross-Filesystem Tests (using IsSameFileSystemForTests_ForceFalse) ---
 
 func TestUploadVideos_CrossFilesystem_NoAlbums_CopyAndDelete(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx := context.Background()
 
 	cfg := newTestConfig(t, "", "") // No default albums
@@ -917,6 +935,7 @@ func TestUploadVideos_CrossFilesystem_NoAlbums_CopyAndDelete(t *testing.T) {
 }
 
 func TestUploadVideos_CrossFilesystem_WithAlbums_CopyAndDelete(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx := context.Background()
 
 	albumTitle := "Test Album Cross FS"
@@ -983,6 +1002,7 @@ func TestUploadVideos_CrossFilesystem_WithAlbums_CopyAndDelete(t *testing.T) {
 }
 
 func TestUploadVideos_CrossFilesystem_KeepFiles_CopyOnly(t *testing.T) {
+	disableVideoTimezone(t)
 	ctx := context.Background()
 
 	cfg := newTestConfig(t, "", "") // No default albums

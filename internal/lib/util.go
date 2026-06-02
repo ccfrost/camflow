@@ -5,10 +5,37 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/schollz/progressbar/v3"
 )
+
+// isVideoFile reports whether path has a recognized video extension
+// (case-insensitive).
+func isVideoFile(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".mp4", ".mov", ".m4v":
+		return true
+	}
+	return false
+}
+
+// videoTimezoneTempRoot returns os.UserCacheDir()/camflow/video-tz-tmp, creating it
+// (0700) if needed. It deliberately lives outside the upload queue so that cloud-sync
+// clients (Google Drive / Dropbox / iCloud) and Lightroom watch-folders never see the
+// per-upload temp dirs created beneath it.
+func videoTimezoneTempRoot() (string, error) {
+	cacheDir, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve user cache dir: %w", err)
+	}
+	root := filepath.Join(cacheDir, "camflow", "video-tz-tmp")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		return "", fmt.Errorf("failed to create video tz temp root %s: %w", root, err)
+	}
+	return root, nil
+}
 
 // TODO: delete
 /*
