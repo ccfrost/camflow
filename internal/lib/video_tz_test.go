@@ -193,22 +193,78 @@ func TestPrecheckVideoTimezones(t *testing.T) {
 	})
 }
 
-func TestPrepareVideoForUpload_DirectUploadWhenMatches(t *testing.T) {
+func TestPrepareVideoForUpload_DirectUploadWhenNonCanonExplicitTz(t *testing.T) {
+	// No Canon fields, but an explicit-timezone atom (iPhone / non-Canon, whose mvhd Apple
+	// already writes in local time) → upload the original directly, no rewrite.
 	stubVideoTimezoneExif(t, func(_ context.Context, paths []string) ([]videoTimezoneExif, error) {
 		return []videoTimezoneExif{{
-			Path:               paths[0],
-			DateTimeOriginal:   "2026:04:03 16:37:51",
-			OffsetTimeOriginal: "-08:00",
-			CreationDate:       "2026:04:03 16:37:51-08:00",
+			Path:         paths[0],
+			CreationDate: "2026:04:03 16:37:51-08:00",
 		}}, nil
 	})
 
-	path := "/queue/2026-04-03-IMG_3805.MP4"
+	path := "/queue/IMG_iphone.MOV"
 	uploadPath, cleanup, err := prepareVideoForUpload(context.Background(), path)
 	require.NoError(t, err)
-	assert.Equal(t, path, uploadPath, "matching atom should upload the original directly")
+	assert.Equal(t, path, uploadPath, "non-Canon explicit-tz atom should upload the original directly")
 	require.NotNil(t, cleanup)
 	cleanup() // must be a safe no-op
+}
+
+func TestPrepareVideoForUpload_CanonAlwaysRewrites(t *testing.T) {
+	// Even when the atom already matches Canon, a Canon file must still be remuxed: Canon's
+	// MP4 ('mp42') container is mis-parsed by Google regardless of the atom. So the original
+	// must NOT be uploaded directly.
+	stubVideoTimezoneExif(t, func(_ context.Context, paths []string) ([]videoTimezoneExif, error) {
+		return []videoTimezoneExif{{
+			Path:                paths[0],
+			DateTimeOriginal:    "2026:04:03 16:37:51",
+			OffsetTimeOriginal:  "-08:00",
+			CreationDate:        "2026:04:03 16:37:51-08:00", // already-correct atom
+			QuickTimeCreateDate: "2026:04:04 00:37:52",       // but still an mp42 container
+		}}, nil
+	})
+
+	// The real ffmpeg remux of this fake mp4 will fail; we assert only that the remux branch
+	// was taken (uploadPath differs from the original), as in the disagree test.
+	path := filepath.Join(t.TempDir(), "2026-04-03-IMG_3805.MP4")
+	require.NoError(t, os.WriteFile(path, []byte("not a real mp4"), 0644))
+
+	uploadPath, cleanup, _ := prepareVideoForUpload(context.Background(), path)
+	if cleanup != nil {
+		defer cleanup()
+	}
+	assert.NotEqual(t, path, uploadPath, "Canon file must be remuxed, not uploaded directly")
+}
+
+func TestCanonUTCInstant(t *testing.T) {
+	utc, ok := canonUTCInstant("2026:04:03 16:37:51", "-08:00")
+	require.True(t, ok)
+	assert.Equal(t, "2026:04:04 00:37:51", utc) // 16:37:51 -08:00 -> next-day 00:37:51 UTC
+
+	utc, ok = canonUTCInstant("2026:06:06 07:55:00", "-08:00")
+	require.True(t, ok)
+	assert.Equal(t, "2026:06:06 15:55:00", utc)
+
+	// Colon-less offset is accepted (normalized before parsing).
+	utc, ok = canonUTCInstant("2026:04:03 16:37:51", "-0800")
+	require.True(t, ok)
+	assert.Equal(t, "2026:04:04 00:37:51", utc)
+
+	// Missing/garbled offset cannot be converted.
+	_, ok = canonUTCInstant("2026:04:03 16:37:51", "")
+	assert.False(t, ok)
+}
+
+func TestSameWallClock(t *testing.T) {
+	assert.True(t, sameWallClock("2026:04:03 16:37:51", "2026:04:03 16:37:51"))
+	// Sub-seconds are dropped before comparing.
+	assert.True(t, sameWallClock("2026:04:03 16:37:51.70", "2026:04:03 16:37:51"))
+	// Canon's UTC mvhd must NOT count as the local wall-clock.
+	assert.False(t, sameWallClock("2026:04:04 00:37:52", "2026:04:03 16:37:51"))
+	// Unparseable input never matches.
+	assert.False(t, sameWallClock("", "2026:04:03 16:37:51"))
+	assert.False(t, sameWallClock("2026:04:03 16:37:51-08:00", "2026:04:03 16:37:51"))
 }
 
 func TestPrepareVideoForUpload_DisagreeWarnsAndRewrites(t *testing.T) {
@@ -224,10 +280,10 @@ func TestPrepareVideoForUpload_DisagreeWarnsAndRewrites(t *testing.T) {
 		}}, nil
 	})
 
-	// We assert only that the rewrite branch was taken: a warning is logged and the original
-	// is NOT returned for direct upload. Whether the real exiftool rewrite ultimately succeeds
-	// (returning a temp path) or fails (returning "") is exercised by the sandbox harness, not
-	// here — either way uploadPath differs from the original.
+	// We assert only that the remux branch was taken: a warning is logged and the original is
+	// NOT returned for direct upload. Whether the real remux ultimately succeeds (returning a
+	// temp .mov path) or fails (returning "") is exercised by the sandbox harness, not here —
+	// either way uploadPath differs from the original.
 	path := filepath.Join(t.TempDir(), "2026-04-03-IMG_3805.MP4")
 	require.NoError(t, os.WriteFile(path, []byte("not a real mp4"), 0644))
 
@@ -247,7 +303,9 @@ func TestUploadVideos_PreparedTempPath_CleanupOnSuccess(t *testing.T) {
 	basename := "2026-04-03-IMG_3805.MP4"
 	createTestFiles(t, cfg.VideosUploadQueueRoot, map[string]string{basename: "content"})
 	originalPath := filepath.Join(cfg.VideosUploadQueueRoot, basename)
-	tempPath := filepath.Join(t.TempDir(), "upload-xyz", basename)
+	// The remux renames the upload to <stem>.mov; Google sees that name.
+	movBasename := "2026-04-03-IMG_3805.mov"
+	tempPath := filepath.Join(t.TempDir(), "upload-xyz", movBasename)
 
 	// Precheck passes; prepare returns a distinct temp path + a cleanup sentinel.
 	stubVideoTimezoneExif(t, func(_ context.Context, paths []string) ([]videoTimezoneExif, error) {
@@ -276,9 +334,9 @@ func TestUploadVideos_PreparedTempPath_CleanupOnSuccess(t *testing.T) {
 			capturedUploadPath = p
 			return "token", nil
 		})
-	// Filename stays the original basename, even though we upload the temp.
-	mockMediaItems.EXPECT().Create(gomock.Any(), media_items.SimpleMediaItem{UploadToken: "token", Filename: basename}).
-		Return(&media_items.MediaItem{ID: "id", Filename: basename}, nil)
+	// Filename follows the uploaded (temp .mov) basename, not the original .MP4.
+	mockMediaItems.EXPECT().Create(gomock.Any(), media_items.SimpleMediaItem{UploadToken: "token", Filename: movBasename}).
+		Return(&media_items.MediaItem{ID: "id", Filename: movBasename}, nil)
 
 	require.NoError(t, UploadVideos(ctx, cfg, t.TempDir(), false, mockClient, false))
 

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -143,6 +144,7 @@ func precheckVideoTimezones(ctx context.Context, items []itemFileInfo) error {
 		return fmt.Errorf("expected %d video metadata results, got %d", len(paths), len(byPath))
 	}
 
+	canonCount := 0
 	for _, path := range paths {
 		r, ok := byPath[filepath.Clean(path)]
 		if !ok {
@@ -151,6 +153,16 @@ func precheckVideoTimezones(ctx context.Context, items []itemFileInfo) error {
 		hasCanon := r.DateTimeOriginal != "" && r.OffsetTimeOriginal != ""
 		if !hasExplicitTimezone(r.CreationDate) && !hasCanon {
 			return fmt.Errorf("video %s cannot be prepared: no explicit-timezone creation date and missing Canon DateTimeOriginal/OffsetTimeOriginal", path)
+		}
+		if hasCanon {
+			canonCount++
+		}
+	}
+	// Canon videos are remuxed to QuickTime .mov via ffmpeg before upload (see
+	// remuxAndTagCanonVideo); fail fast here rather than mid-batch if it is missing.
+	if canonCount > 0 {
+		if _, err := exec.LookPath("ffmpeg"); err != nil {
+			return fmt.Errorf("ffmpeg not found in PATH (required to fix timezones on %d Canon video(s)): %w", canonCount, err)
 		}
 	}
 	return nil
@@ -414,9 +426,11 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 				slog.String("file", fileBasename))
 		}
 	} else {
-		// For videos, upload from a tagged temp copy (with the Apple creationdate atom) so
-		// the queued original — the only surviving copy after the SD card is wiped — is never
-		// mutated. The temp's basename equals the original, so Google sees an identical name.
+		// For videos, upload from a prepared temp copy so the queued original — the only
+		// surviving copy after the SD card is wiped — is never mutated. Canon videos are
+		// remuxed to a QuickTime .mov (the container Google needs to honor the timezone), so
+		// the upload path's basename may change extension to .mov; non-Canon videos upload
+		// their original unchanged.
 		uploadPath := fileInfo.path
 		if isVideoFile(fileInfo.path) {
 			var cleanup func()
@@ -427,6 +441,9 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 			}
 			defer cleanup()
 		}
+		// Google sees the prepared file's name (e.g. <stem>.mov for a remuxed Canon video),
+		// both in the raw upload header and in SimpleMediaItem.Filename below.
+		uploadBasename := filepath.Base(uploadPath)
 
 		// TODO: consider parallelizing uploads.
 		// TODO: consider doing resumable uploads.
@@ -446,7 +463,7 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 		}
 		simpleMediaItem := media_items.SimpleMediaItem{
 			UploadToken: uploadToken,
-			Filename:    fileBasename,
+			Filename:    uploadBasename,
 		}
 		// TODO: consider batching media item creation.
 		mediaItem, err := gphotosClient.MediaItems().Create(ctx, simpleMediaItem)

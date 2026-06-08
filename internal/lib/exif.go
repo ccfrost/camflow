@@ -181,10 +181,11 @@ func parseImageStabilizationValue(value string) (bool, error) {
 
 // videoTimezoneExif holds the timezone-relevant metadata for a single video file.
 type videoTimezoneExif struct {
-	Path               string // exiftool SourceFile, mirrors ExifData.Path
-	DateTimeOriginal   string // Canon DateTimeOriginal, e.g. "2026:04:03 16:37:51"
-	OffsetTimeOriginal string // Canon OffsetTimeOriginal, e.g. "-08:00"
-	CreationDate       string // com.apple.quicktime.creationdate (Keys:CreationDate)
+	Path                string // exiftool SourceFile, mirrors ExifData.Path
+	DateTimeOriginal    string // Canon DateTimeOriginal, e.g. "2026:04:03 16:37:51"
+	OffsetTimeOriginal  string // Canon OffsetTimeOriginal, e.g. "-08:00"
+	CreationDate        string // com.apple.quicktime.creationdate (Keys:CreationDate)
+	QuickTimeCreateDate string // mvhd QuickTime:CreateDate, e.g. "2026:04:04 00:37:52" (UTC on Canon)
 }
 
 // getVideoTimezoneExifFn and prepareVideoForUploadFn are package-level indirections so
@@ -206,7 +207,11 @@ func getVideoTimezoneExif(ctx context.Context, paths []string) ([]videoTimezoneE
 		return nil, fmt.Errorf("exiftool not found in PATH: %w", err)
 	}
 
-	args := []string{"-j", "-DateTimeOriginal", "-OffsetTimeOriginal", "-Keys:CreationDate"}
+	// QuickTimeUTC=0 pins the QuickTime date reads to the literal stored value rather than
+	// UTC-converting them, mirroring the write in remuxAndTagCanonVideo. Without this, a
+	// configured QuickTimeUTC=1 would skew QuickTime:CreateDate on read and make the post-remux
+	// mvhd verify spuriously fail on every Canon video.
+	args := []string{"-api", "QuickTimeUTC=0", "-j", "-DateTimeOriginal", "-OffsetTimeOriginal", "-Keys:CreationDate", "-QuickTime:CreateDate"}
 	args = append(args, paths...)
 
 	cmd := exec.CommandContext(ctx, exiftoolPath, args...)
@@ -223,6 +228,7 @@ func getVideoTimezoneExif(ctx context.Context, paths []string) ([]videoTimezoneE
 		DateTimeOriginal   string `json:"DateTimeOriginal,omitempty"`
 		OffsetTimeOriginal string `json:"OffsetTimeOriginal,omitempty"`
 		CreationDate       string `json:"CreationDate,omitempty"`
+		CreateDate         string `json:"CreateDate,omitempty"` // QuickTime:CreateDate (mvhd)
 	}
 	if err := json.Unmarshal(output, &results); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal exiftool output: %w", err)
@@ -231,10 +237,11 @@ func getVideoTimezoneExif(ctx context.Context, paths []string) ([]videoTimezoneE
 	exifData := make([]videoTimezoneExif, 0, len(results))
 	for _, r := range results {
 		exifData = append(exifData, videoTimezoneExif{
-			Path:               r.SourceFile,
-			DateTimeOriginal:   r.DateTimeOriginal,
-			OffsetTimeOriginal: r.OffsetTimeOriginal,
-			CreationDate:       r.CreationDate,
+			Path:                r.SourceFile,
+			DateTimeOriginal:    r.DateTimeOriginal,
+			OffsetTimeOriginal:  r.OffsetTimeOriginal,
+			CreationDate:        r.CreationDate,
+			QuickTimeCreateDate: r.CreateDate,
 		})
 	}
 
@@ -301,15 +308,23 @@ func creationDateMatchesCanon(creationDate, dto, oto string) bool {
 }
 
 // prepareVideoForUpload returns the path to upload for a single video, plus a cleanup
-// function the caller must defer. When the file already carries a correct Apple
-// creationdate atom it returns the original path with a no-op cleanup; otherwise it writes
-// a tagged copy to a fresh per-run temp dir under the OS cache dir and returns that copy
-// with a cleanup that removes the temp dir.
+// function the caller must defer. For Canon videos it remuxes a QuickTime .mov copy (see
+// remuxAndTagCanonVideo) into a fresh per-run temp dir under the OS cache dir and returns
+// that copy with a cleanup that removes the temp dir; for non-Canon videos that already
+// carry an explicit-timezone atom (iPhone .mov, already a QuickTime container) it returns
+// the original path with a no-op cleanup.
+//
+// Why Canon always needs the remux: Google Photos only honors the com.apple.quicktime.
+// creationdate atom's offset when the file is a QuickTime-brand ('qt') container. Canon
+// writes an MP4-brand ('mp42') container, for which Google mis-parses the atom — taking its
+// local wall-clock as UTC and re-applying the offset, so the displayed time lands off by the
+// offset. No metadata edit (atom, mvhd, EXIF) changes that; only the container does. See
+// remuxAndTagCanonVideo and sandbox/gphotos-tz-test/notes.md.
 //
 // Self-containment trade-off: the timezone header is read three times across an upload (the
-// batch precheck, here, and the post-rewrite verify); this keeps each step independently
+// batch precheck, here, and the post-remux verify); this keeps each step independently
 // correct rather than threading state through. Note that when getVideoTimezoneExifFn is
-// stubbed in tests the verify read is not exercised — the real verify is covered by the
+// stubbed in tests the remux/verify is not exercised — the real path is covered by the
 // sandbox harness.
 func prepareVideoForUpload(ctx context.Context, path string) (uploadPath string, cleanup func(), err error) {
 	noop := func() {}
@@ -325,39 +340,58 @@ func prepareVideoForUpload(ctx context.Context, path string) (uploadPath string,
 
 	hasCanon := r.DateTimeOriginal != "" && r.OffsetTimeOriginal != ""
 	if hasCanon {
-		switch {
-		case hasExplicitTimezone(r.CreationDate) && creationDateMatchesCanon(r.CreationDate, r.DateTimeOriginal, r.OffsetTimeOriginal):
-			// 2a: existing atom already matches Canon — upload the original untouched.
-			return path, noop, nil
-		case hasExplicitTimezone(r.CreationDate):
-			// 2b: a timezone-bearing atom disagrees with Canon (likely the original bug).
-			logger.Warn("Existing video creation date disagrees with Canon timezone; rewriting from Canon",
+		// Warn if a pre-existing timezone-bearing atom disagrees with Canon (likely a file
+		// left over from an earlier buggy attempt); we remux and re-tag from Canon regardless.
+		if hasExplicitTimezone(r.CreationDate) && !creationDateMatchesCanon(r.CreationDate, r.DateTimeOriginal, r.OffsetTimeOriginal) {
+			logger.Warn("Existing video creation date disagrees with Canon timezone; re-tagging from Canon",
 				slog.String("file", path),
 				slog.String("existing_creation_date", r.CreationDate),
 				slog.String("canon", r.DateTimeOriginal+r.OffsetTimeOriginal))
-		default:
-			// 2c: no usable atom — rewrite from Canon.
 		}
-		return rewriteVideoCreationDate(ctx, path, r.DateTimeOriginal, r.OffsetTimeOriginal)
+		return remuxAndTagCanonVideo(ctx, path, r.DateTimeOriginal, r.OffsetTimeOriginal)
 	}
 
-	// No Canon fields. Trust an existing explicit-tz atom (iPhone / non-Canon already
-	// carrying the Apple atom); otherwise we cannot prepare the file safely. The batch
-	// precheck rejects this case before we get here.
+	// No Canon fields. Trust an existing explicit-tz atom (iPhone / non-Canon already carrying
+	// the Apple atom in a QuickTime container); otherwise we cannot prepare the file safely.
+	// The batch precheck rejects the latter case before we get here.
 	if hasExplicitTimezone(r.CreationDate) {
 		return path, noop, nil
 	}
 	return "", noop, fmt.Errorf("video %s has no Canon timezone fields and no explicit-timezone creation date", path)
 }
 
-// rewriteVideoCreationDate produces a tagged copy of path in a fresh per-run temp dir under
-// the OS cache dir, with the Apple creationdate atom derived from Canon's
-// DateTimeOriginal+OffsetTimeOriginal. The temp keeps the original basename so Google sees
-// a byte-identical filename. The caller passes the already-read Canon fields (dto, oto) so
-// the post-write verify can confirm the atom encodes exactly that wall-clock+offset. On any
-// failure it removes the per-run temp dir.
-func rewriteVideoCreationDate(ctx context.Context, path, dto, oto string) (uploadPath string, cleanup func(), err error) {
+// remuxAndTagCanonVideo produces an upload-ready copy of a Canon video in a fresh per-run
+// temp dir under the OS cache dir, applying the timezone fix Google Photos actually honors.
+//
+// The fix is the CONTAINER, not metadata. Google decides whether the com.apple.quicktime.
+// creationdate atom's wall-clock is local or UTC from the file's ftyp brand: a QuickTime
+// ('qt') brand is trusted and the offset applied; an MP4 ('mp42') brand — what Canon writes —
+// is mis-parsed (the atom's local time is taken as UTC and the offset re-applied), landing the
+// displayed time off by the offset. Adding the atom, rewriting mvhd, or stripping EXIF do NOT
+// change this; only the container does. Verified in sandbox/gphotos-tz-test: identical Canon
+// content settles to the true instant as a .mov ('qt') and to local-as-Z as a .MP4 ('mp42').
+//
+// So we losslessly remux the Canon MP4 to a QuickTime .mov ('qt' brand) with ffmpeg -c copy
+// (no re-encode), then add the creationdate atom (local wall-clock + offset) and restore the
+// mvhd create/modify dates that ffmpeg zeroes (to the true UTC instant). The temp is named
+// <stem>.mov; the caller presents that .mov name to Google. The queued original — the only
+// surviving copy after the SD card is wiped — is never touched. On any failure the per-run
+// temp dir is removed.
+func remuxAndTagCanonVideo(ctx context.Context, path, dto, oto string) (uploadPath string, cleanup func(), err error) {
 	noop := func() {}
+
+	ffmpegPath, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		return "", noop, fmt.Errorf("ffmpeg not found in PATH (needed to remux %s): %w", path, err)
+	}
+	exiftoolPath, err := exec.LookPath("exiftool")
+	if err != nil {
+		return "", noop, fmt.Errorf("exiftool not found in PATH: %w", err)
+	}
+	utc, ok := canonUTCInstant(dto, oto)
+	if !ok {
+		return "", noop, fmt.Errorf("could not compute UTC instant for %s from %q + %q", path, dto, oto)
+	}
 
 	root, err := videoTimezoneTempRoot()
 	if err != nil {
@@ -367,34 +401,53 @@ func rewriteVideoCreationDate(ctx context.Context, path, dto, oto string) (uploa
 	if err != nil {
 		return "", noop, fmt.Errorf("failed to create temp dir for %s: %w", path, err)
 	}
-	temp := filepath.Join(tempDir, filepath.Base(path))
+	base := filepath.Base(path)
+	temp := filepath.Join(tempDir, strings.TrimSuffix(base, filepath.Ext(base))+".mov")
 
-	exiftoolPath, err := exec.LookPath("exiftool")
-	if err != nil {
-		os.RemoveAll(tempDir)
-		return "", noop, fmt.Errorf("exiftool not found in PATH: %w", err)
-	}
-	// Single pass: read DateTimeOriginal+OffsetTimeOriginal from the source and write a
-	// tagged copy to temp. exiftool's own working temp lives inside tempDir (same fs as
-	// temp), so nothing renames across the device boundary; only the source read crosses it.
-	cmd := exec.CommandContext(ctx, exiftoolPath,
-		"-Keys:CreationDate<${DateTimeOriginal}${OffsetTimeOriginal}", "-o", temp, path)
-	if out, runErr := cmd.CombinedOutput(); runErr != nil {
+	// Lossless remux MP4 -> QuickTime .mov ('qt' brand). -map 0 keeps every stream; -c copy
+	// rewraps without re-encoding (near-instant, no quality loss).
+	remux := exec.CommandContext(ctx, ffmpegPath, "-nostdin", "-y", "-loglevel", "error",
+		"-i", path, "-map", "0", "-c", "copy", temp)
+	if out, runErr := remux.CombinedOutput(); runErr != nil {
 		os.RemoveAll(tempDir)
 		if ctx.Err() != nil {
 			return "", noop, ctx.Err()
 		}
-		return "", noop, fmt.Errorf("failed to write creation date for %s: %w: %s", path, runErr, strings.TrimSpace(string(out)))
+		return "", noop, fmt.Errorf("failed to remux %s to .mov: %w: %s", path, runErr, strings.TrimSpace(string(out)))
 	}
 
-	// Verify the rewrite produced an atom encoding exactly Canon's wall-clock+offset. This is
-	// stricter than checking for "some" explicit timezone: it also catches a doubled or
-	// garbled offset (e.g. if DateTimeOriginal had carried its own offset), which would fail
-	// normalization and so not match.
+	// Add the Apple creationdate atom (local wall-clock + offset) and restore the mvhd dates to
+	// the true UTC instant (ffmpeg zeroes them). QuickTimeUTC=0 makes exiftool store these
+	// literally instead of applying its own UTC conversion.
+	tag := exec.CommandContext(ctx, exiftoolPath, "-api", "QuickTimeUTC=0", "-overwrite_original",
+		"-Keys:CreationDate="+dto+oto,
+		"-QuickTime:CreateDate="+utc,
+		"-QuickTime:ModifyDate="+utc,
+		temp)
+	if out, runErr := tag.CombinedOutput(); runErr != nil {
+		os.RemoveAll(tempDir)
+		if ctx.Err() != nil {
+			return "", noop, ctx.Err()
+		}
+		return "", noop, fmt.Errorf("failed to tag %s: %w: %s", path, runErr, strings.TrimSpace(string(out)))
+	}
+
+	// Verify the result is exactly what Google needs: a QuickTime-brand container (the whole
+	// point of the remux), the atom encoding exactly Canon's wall-clock+offset, and mvhd holding
+	// the true UTC instant.
+	brand, err := videoMajorBrand(ctx, temp)
+	if err != nil {
+		os.RemoveAll(tempDir)
+		return "", noop, fmt.Errorf("failed to read major brand for %s: %w", path, err)
+	}
+	if !strings.Contains(brand, "QuickTime") {
+		os.RemoveAll(tempDir)
+		return "", noop, fmt.Errorf("remux of %s did not produce a QuickTime container (brand %q)", path, brand)
+	}
 	verify, err := getVideoTimezoneExifFn(ctx, []string{temp})
 	if err != nil {
 		os.RemoveAll(tempDir)
-		return "", noop, fmt.Errorf("failed to verify creation date for %s: %w", path, err)
+		return "", noop, fmt.Errorf("failed to verify %s: %w", path, err)
 	}
 	vr, err := singleExifResult(verify, temp)
 	if err != nil {
@@ -403,10 +456,63 @@ func rewriteVideoCreationDate(ctx context.Context, path, dto, oto string) (uploa
 	}
 	if !creationDateMatchesCanon(vr.CreationDate, dto, oto) {
 		os.RemoveAll(tempDir)
-		return "", noop, fmt.Errorf("creation date rewrite for %s did not match Canon timezone (got %q, want %q)", path, vr.CreationDate, dto+oto)
+		return "", noop, fmt.Errorf("creationdate tag for %s did not match Canon timezone (got %q, want %q)", path, vr.CreationDate, dto+oto)
+	}
+	if !sameWallClock(vr.QuickTimeCreateDate, utc) {
+		os.RemoveAll(tempDir)
+		return "", noop, fmt.Errorf("mvhd for %s was not set to the UTC instant (got %q, want %q)", path, vr.QuickTimeCreateDate, utc)
 	}
 
 	return temp, func() { os.RemoveAll(tempDir) }, nil
+}
+
+// canonUTCInstant converts Canon's local DateTimeOriginal + OffsetTimeOriginal to the UTC
+// instant as an offset-less exiftool timestamp (e.g. "2026:04:04 00:37:51"), used to restore
+// the mvhd create/modify dates that ffmpeg zeroes during the remux.
+func canonUTCInstant(dto, oto string) (string, bool) {
+	norm, ok := normalizeTimestampWithOffset(dto + oto)
+	if !ok {
+		return "", false
+	}
+	t, err := time.Parse("2006:01:02 15:04:05-07:00", norm)
+	if err != nil {
+		return "", false
+	}
+	return t.UTC().Format("2006:01:02 15:04:05"), true
+}
+
+// videoMajorBrand returns the file's ftyp MajorBrand as exiftool's descriptive string (e.g.
+// "Apple QuickTime (.MOV/QT)" or "MP4 v2 [ISO 14496-14]"), used to confirm the remux produced
+// a QuickTime container.
+func videoMajorBrand(ctx context.Context, path string) (string, error) {
+	exiftoolPath, err := exec.LookPath("exiftool")
+	if err != nil {
+		return "", fmt.Errorf("exiftool not found in PATH: %w", err)
+	}
+	out, err := exec.CommandContext(ctx, exiftoolPath, "-s", "-s", "-s", "-MajorBrand", path).Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", fmt.Errorf("failed to read major brand: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// sameWallClock reports whether two exiftool timestamps without timezone (e.g.
+// "2026:04:03 16:37:51") denote the same date-time at second precision. Sub-seconds are
+// dropped, mirroring normalizeTimestampWithOffset. A value that fails to parse never matches.
+func sameWallClock(a, b string) bool {
+	const layout = "2006:01:02 15:04:05.999999999"
+	pa, err := time.Parse(layout, strings.TrimSpace(a))
+	if err != nil {
+		return false
+	}
+	pb, err := time.Parse(layout, strings.TrimSpace(b))
+	if err != nil {
+		return false
+	}
+	return pa.Format("2006:01:02 15:04:05") == pb.Format("2006:01:02 15:04:05")
 }
 
 // singleExifResult requires exactly one result whose path matches want (compared with

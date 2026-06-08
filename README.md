@@ -39,6 +39,7 @@ Before installing, be aware that Camflow requires a one-time setup of Google API
     > **Guide:** Follow this tutorial to obtain your credentials:
     > [https://gilesknap.github.io/gphotos-sync/main/tutorials/oauth2.html](https://gilesknap.github.io/gphotos-sync/main/tutorials/oauth2.html)
 3. **exiftool**: Ensure you have [exiftool](https://exiftool.org/) installed. (On macOS, you can run `brew install exiftool`.)
+4. **ffmpeg**: Ensure you have [ffmpeg](https://ffmpeg.org/) installed. (On macOS, you can run `brew install ffmpeg`.) Camflow uses it to losslessly remux Canon videos to a QuickTime container before upload, which is what makes Google Photos display them in the correct capture timezone.
 
 ## Installation
 Currently, Camflow must be built from source.
