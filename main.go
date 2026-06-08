@@ -180,6 +180,8 @@ Successfully uploaded photos are deleted from upload queue unless --keep is spec
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}
+			// Count upload request bodies toward the progress bar as they stream to the wire.
+			gphotosHttpClient.Transport = lib.NewUploadProgressTransport(gphotosHttpClient.Transport)
 			gphotosClient, err := gphotos.NewClient(gphotosHttpClient)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)
@@ -215,6 +217,8 @@ Successfully uploaded videos are deleted from upload queue unless --keep is spec
 				fmt.Fprintln(os.Stderr, "error:", err)
 				os.Exit(1)
 			}
+			// Count upload request bodies toward the progress bar as they stream to the wire.
+			gphotosHttpClient.Transport = lib.NewUploadProgressTransport(gphotosHttpClient.Transport)
 			gphotosClient, err := gphotos.NewClient(gphotosHttpClient)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "error:", err)

@@ -357,6 +357,7 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 		desc = "simulating"
 	}
 	bar := NewProgressBar(totalSize, desc)
+	_ = bar.RenderBlank() // Paint the empty bar immediately, before the first upload starts.
 	defer func() {
 		if retErr != nil && bar != nil {
 			_ = bar.Exit()
@@ -392,8 +393,12 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConfig, gphotosClient GPhotosClient, fileInfo itemFileInfo, targetAlbumTitles []string, albumTitleToIdMap map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter, dryRun bool) error {
 	fileBasename := filepath.Base(fileInfo.path)
 
-	// Defer the progress bar update to ensure it happens once per file attempt.
-	defer bar.Add64(fileInfo.size)
+	// Track this file's upload progress. The upload transport credits body bytes to fp as
+	// they stream to the wire (see upload_progress.go); finish credits any remainder so the
+	// file contributes exactly its size to the bar. This also covers dry-run and the
+	// non-upload steps, where no body bytes are observed and finish adds the whole size.
+	fp := &fileProgress{bar: bar, size: fileInfo.size}
+	defer fp.finish()
 
 	// Wait before uploading file
 	if err := limiter.Wait(ctx); err != nil {
@@ -425,8 +430,10 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 
 		// TODO: consider parallelizing uploads.
 		// TODO: consider doing resumable uploads.
-		// TODO: consider updating progress bar with actual upload progress. (gphotos UploadFile calls NewUploadFromFile, which returns a file, so it is close.)
-		uploadToken, err := gphotosClient.Uploader().UploadFile(ctx, uploadPath)
+		// Carry fp in the context so the upload transport credits this file's body bytes to
+		// the progress bar as they stream. Only the upload request carries fp; the media-item
+		// and album calls below use the plain ctx and are not counted.
+		uploadToken, err := gphotosClient.Uploader().UploadFile(contextWithFileProgress(ctx, fp), uploadPath)
 		if err != nil {
 			// TODO: only log error and skip? Want to make sure user notices.
 			// fmt.Printf("\nError uploading file %s: %v. Skipping.\n", fileBasename, err)

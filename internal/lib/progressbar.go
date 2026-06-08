@@ -2,6 +2,7 @@ package lib
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/schollz/progressbar/v3"
 )
@@ -16,6 +17,9 @@ func NewProgressBar(size int64, description string) *progressbar.ProgressBar {
 		progressbar.OptionSetPredictTime(true),
 		progressbar.OptionShowTotalBytes(true),
 		progressbar.OptionShowElapsedTimeOnFinish(),
+		// Rate-limit redraws: within-file progress credits bytes on every ~32 KiB socket
+		// read, which would otherwise repaint far too often (and spam redirected stderr).
+		progressbar.OptionThrottle(100*time.Millisecond),
 		progressbar.OptionOnCompletion(func() { fmt.Println() }),
 	)
 }
