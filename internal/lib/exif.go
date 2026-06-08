@@ -242,11 +242,11 @@ func getVideoTimezoneExif(ctx context.Context, paths []string) ([]videoTimezoneE
 }
 
 // explicitTimezoneRe matches a trailing explicit timezone on an exiftool timestamp:
-// either "Z" or a numeric offset like "-08:00" / "+02:00".
-var explicitTimezoneRe = regexp.MustCompile(`(Z|[+-]\d{2}:\d{2})$`)
+// either "Z" or a numeric offset like "-08:00", "+02:00", or the colon-less "-0800".
+var explicitTimezoneRe = regexp.MustCompile(`(Z|[+-]\d{2}:?\d{2})$`)
 
 // hasExplicitTimezone reports whether value ends in an explicit timezone (Z or a numeric
-// offset). Empty or offset-less timestamps return false.
+// offset, with or without a colon). Empty or offset-less timestamps return false.
 func hasExplicitTimezone(value string) bool {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -268,8 +268,13 @@ func normalizeTimestampWithOffset(value string) (string, bool) {
 	}
 	base := strings.TrimSpace(value[:loc[0]])
 	offset := value[loc[0]:]
-	if offset == "Z" {
+	switch {
+	case offset == "Z":
 		offset = "+00:00"
+	case !strings.Contains(offset, ":"):
+		// Canonicalize a colon-less offset (e.g. "-0800") to "-08:00" so equality holds
+		// against colon-bearing offsets.
+		offset = offset[:3] + ":" + offset[3:]
 	}
 	t, err := time.Parse("2006:01:02 15:04:05.999999999", base)
 	if err != nil {
@@ -333,7 +338,7 @@ func prepareVideoForUpload(ctx context.Context, path string) (uploadPath string,
 		default:
 			// 2c: no usable atom — rewrite from Canon.
 		}
-		return rewriteVideoCreationDate(ctx, path)
+		return rewriteVideoCreationDate(ctx, path, r.DateTimeOriginal, r.OffsetTimeOriginal)
 	}
 
 	// No Canon fields. Trust an existing explicit-tz atom (iPhone / non-Canon already
@@ -348,8 +353,10 @@ func prepareVideoForUpload(ctx context.Context, path string) (uploadPath string,
 // rewriteVideoCreationDate produces a tagged copy of path in a fresh per-run temp dir under
 // the OS cache dir, with the Apple creationdate atom derived from Canon's
 // DateTimeOriginal+OffsetTimeOriginal. The temp keeps the original basename so Google sees
-// a byte-identical filename. On any failure it removes the per-run temp dir.
-func rewriteVideoCreationDate(ctx context.Context, path string) (uploadPath string, cleanup func(), err error) {
+// a byte-identical filename. The caller passes the already-read Canon fields (dto, oto) so
+// the post-write verify can confirm the atom encodes exactly that wall-clock+offset. On any
+// failure it removes the per-run temp dir.
+func rewriteVideoCreationDate(ctx context.Context, path, dto, oto string) (uploadPath string, cleanup func(), err error) {
 	noop := func() {}
 
 	root, err := videoTimezoneTempRoot()
@@ -380,7 +387,10 @@ func rewriteVideoCreationDate(ctx context.Context, path string) (uploadPath stri
 		return "", noop, fmt.Errorf("failed to write creation date for %s: %w: %s", path, runErr, strings.TrimSpace(string(out)))
 	}
 
-	// Verify the rewrite produced an explicit-timezone atom.
+	// Verify the rewrite produced an atom encoding exactly Canon's wall-clock+offset. This is
+	// stricter than checking for "some" explicit timezone: it also catches a doubled or
+	// garbled offset (e.g. if DateTimeOriginal had carried its own offset), which would fail
+	// normalization and so not match.
 	verify, err := getVideoTimezoneExifFn(ctx, []string{temp})
 	if err != nil {
 		os.RemoveAll(tempDir)
@@ -391,9 +401,9 @@ func rewriteVideoCreationDate(ctx context.Context, path string) (uploadPath stri
 		os.RemoveAll(tempDir)
 		return "", noop, err
 	}
-	if !hasExplicitTimezone(vr.CreationDate) {
+	if !creationDateMatchesCanon(vr.CreationDate, dto, oto) {
 		os.RemoveAll(tempDir)
-		return "", noop, fmt.Errorf("creation date rewrite for %s did not produce an explicit timezone (got %q)", path, vr.CreationDate)
+		return "", noop, fmt.Errorf("creation date rewrite for %s did not match Canon timezone (got %q, want %q)", path, vr.CreationDate, dto+oto)
 	}
 
 	return temp, func() { os.RemoveAll(tempDir) }, nil

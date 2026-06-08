@@ -410,7 +410,7 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 			slog.String("file", fileBasename),
 			slog.Any("albums", targetAlbumTitles))
 		if isVideoFile(fileInfo.path) {
-			logger.Debug("Would add Apple creation date to",
+			logger.Debug("May add Apple creation date timezone to (if not already correct)",
 				slog.String("file", fileBasename))
 		}
 	} else {

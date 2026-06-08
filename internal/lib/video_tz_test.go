@@ -64,6 +64,8 @@ func TestHasExplicitTimezone(t *testing.T) {
 	}{
 		{"2026:04:03 16:37:51-08:00", true},
 		{"2026:04:03 16:37:51+02:00", true},
+		{"2026:04:03 16:37:51-0800", true},
+		{"2026:04:03 00:37:51+0000", true},
 		{"2026:04:03 00:37:51Z", true},
 		{"2026:04:03 16:37:51", false},
 		{"", false},
@@ -90,6 +92,10 @@ func TestCreationDateMatchesCanon(t *testing.T) {
 	// CreationDate without explicit offset → no match.
 	assert.False(t, creationDateMatchesCanon(
 		"2026:04:03 16:37:51", "2026:04:03 16:37:51", "-08:00"))
+
+	// Colon-less CreationDate offset is canonicalized, so it matches a colon-bearing canon.
+	assert.True(t, creationDateMatchesCanon(
+		"2026:04:03 16:37:51-0800", "2026:04:03 16:37:51", "-08:00"))
 
 	// Sub-seconds on the CreationDate are ignored: same wall-clock + offset → match,
 	// rather than a spurious mismatch that would trigger an unnecessary rewrite.
