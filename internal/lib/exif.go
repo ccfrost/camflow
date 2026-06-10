@@ -319,7 +319,7 @@ func creationDateMatchesCanon(creationDate, dto, oto string) bool {
 // writes an MP4-brand ('mp42') container, for which Google mis-parses the atom — taking its
 // local wall-clock as UTC and re-applying the offset, so the displayed time lands off by the
 // offset. No metadata edit (atom, mvhd, EXIF) changes that; only the container does. See
-// remuxAndTagCanonVideo and sandbox/gphotos-tz-test/notes.md.
+// remuxAndTagCanonVideo and docs/google-photos-video-timezone.md.
 //
 // Self-containment trade-off: the timezone header is read three times across an upload (the
 // batch precheck, here, and the post-remux verify); this keeps each step independently
@@ -368,8 +368,9 @@ func prepareVideoForUpload(ctx context.Context, path string) (uploadPath string,
 // ('qt') brand is trusted and the offset applied; an MP4 ('mp42') brand — what Canon writes —
 // is mis-parsed (the atom's local time is taken as UTC and the offset re-applied), landing the
 // displayed time off by the offset. Adding the atom, rewriting mvhd, or stripping EXIF do NOT
-// change this; only the container does. Verified in sandbox/gphotos-tz-test: identical Canon
-// content settles to the true instant as a .mov ('qt') and to local-as-Z as a .MP4 ('mp42').
+// change this; only the container does. Verified end-to-end (identical Canon content settles
+// to the true instant as a .mov ('qt') and to local-as-Z as a .MP4 ('mp42')); see
+// docs/google-photos-video-timezone.md.
 //
 // So we losslessly remux the Canon MP4 to a QuickTime .mov ('qt' brand) with ffmpeg -c copy
 // (no re-encode), then add the creationdate atom (local wall-clock + offset) and restore the
