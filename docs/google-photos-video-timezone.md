@@ -12,10 +12,11 @@ timezone / off by hours / previous day, `mediaMetadata.creationTime`, MP4 vs MOV
 
 ## TL;DR
 
-- **Cause:** Google honors a video's timezone offset only when the file's container
-  is **QuickTime** (`ftyp` major brand `qt`). For an **MP4** brand (`mp42`) — what
-  Canon and many cameras write — it mis-parses the timestamp and the displayed time
-  lands off by the offset. **It's the container, not the metadata.**
+- **Cause:** Google honors a video's timezone offset only when it's delivered as a
+  **QuickTime `.mov`** (`ftyp` brand `qt`), not an **MP4** (`mp42`) — what Canon and
+  many cameras write. With an MP4 it mis-parses the timestamp and the displayed time
+  lands off by the offset. **It's the container, not the metadata** (exactly which
+  container signal — brand, extension, or upload MIME — isn't isolated; see below).
 - **Fix:** losslessly **remux MP4 → MOV** (`ffmpeg -c copy`, no re-encode) and add a
   `com.apple.quicktime.creationdate` atom carrying the offset. Nothing you do at the
   metadata layer alone works.
@@ -99,6 +100,22 @@ exiftool -api QuickTimeUTC=0 -overwrite_original \
 The offset values come from the camera's own EXIF (`DateTimeOriginal` +
 `OffsetTimeOriginal`); the UTC instant is just `DateTimeOriginal` converted by the
 offset. Upload the `.mov`. Google now displays the correct local time.
+
+### Which signal is it exactly?
+
+The fix works, and metadata is definitely *not* the lever (every metadata-only
+attempt failed). But the working file differs from the broken one in **three** ways
+that always move together when you remux:
+
+- the **`ftyp` container brand** (`qt` vs `mp42`),
+- the **filename extension** (`.mov` vs `.MP4`), and
+- the **upload `Content-Type`** (`video/quicktime` vs `video/mp4`).
+
+We did **not** isolate which of the three Google actually keys on — "container brand"
+is the most likely but unconfirmed. To disambiguate, upload a `qt`-brand file *named*
+`.MP4` with a `video/mp4` MIME and check the settled value. For the fix it doesn't
+matter (a real `.mov` makes all three correct at once), but if you report this
+upstream, don't over-claim it's specifically the brand.
 
 ## How to verify — and the trap that fools everyone
 

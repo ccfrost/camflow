@@ -406,7 +406,10 @@ func remuxAndTagCanonVideo(ctx context.Context, path, dto, oto string) (uploadPa
 	temp := filepath.Join(tempDir, strings.TrimSuffix(base, filepath.Ext(base))+".mov")
 
 	// Lossless remux MP4 -> QuickTime .mov ('qt' brand). -map 0 keeps every stream; -c copy
-	// rewraps without re-encoding (near-instant, no quality loss).
+	// rewraps without re-encoding (near-instant, no quality loss). This assumes every source
+	// stream is .mov-muxable: if a camera ever writes a stream the QuickTime muxer rejects,
+	// ffmpeg errors here and the upload fails fast (verified clean on Canon R6 Mark II —
+	// video + audio + timed-metadata track all copy without issue).
 	remux := exec.CommandContext(ctx, ffmpegPath, "-nostdin", "-y", "-loglevel", "error",
 		"-i", path, "-map", "0", "-c", "copy", temp)
 	if out, runErr := remux.CombinedOutput(); runErr != nil {
