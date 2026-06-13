@@ -377,23 +377,32 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 	}()
 
 	// TODO: consider batching adding media items to albums. How to make it idempotent in face of failure part way through?
+	skipped := 0
 	for _, fileInfo := range itemsToUpload {
 		additionalAlbumTitles := additionalAlbumsPathToTitlesMap[fileInfo.path]
 		targetAlbumTitles := append(make([]string, 0, len(additionalAlbumTitles)+1), additionalAlbumTitles...)
 		if defaultAlbum != "" {
 			targetAlbumTitles = append(targetAlbumTitles, defaultAlbum)
 		}
-		if err := uploadMediaItem(ctx, keepQueued, localConfig, gphotosClient, fileInfo, targetAlbumTitles, albumTitleToIdMap, bar, limiter, dryRun); err != nil {
+		wasSkipped, err := uploadMediaItem(ctx, keepQueued, localConfig, gphotosClient, fileInfo, targetAlbumTitles, albumTitleToIdMap, bar, limiter, dryRun)
+		if err != nil {
 			return fmt.Errorf("failed to upload media item %s: %w", fileInfo.path, err)
+		}
+		if wasSkipped {
+			skipped++
 		}
 	}
 	_ = bar.Finish()
 	bar = nil
 
-	if dryRun {
+	uploaded := len(itemsToUpload) - skipped
+	switch {
+	case dryRun:
 		fmt.Printf("Would have uploaded %d %s\n", len(itemsToUpload), itemTypePluralName)
-	} else {
-		fmt.Printf("Finished uploading %d %s\n", len(itemsToUpload), itemTypePluralName)
+	case skipped > 0:
+		fmt.Printf("Finished uploading %d %s (%d skipped, left in queue)\n", uploaded, itemTypePluralName, skipped)
+	default:
+		fmt.Printf("Finished uploading %d %s\n", uploaded, itemTypePluralName)
 	}
 	return nil
 }
@@ -402,7 +411,9 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 // It updates "bar" with the bytes it has uploaded.
 // It deletes the file after uploading if "keepQueued" is false.
 // "targetAlbumIDs" are the ids for DefaultAlbums in the config.
-func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConfig, gphotosClient GPhotosClient, fileInfo itemFileInfo, targetAlbumTitles []string, albumTitleToIdMap map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter, dryRun bool) error {
+// It returns skipped=true when the item was intentionally left unuploaded and in the queue
+// (currently only a recoverable video-prepare failure); the caller surfaces that in its summary.
+func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConfig, gphotosClient GPhotosClient, fileInfo itemFileInfo, targetAlbumTitles []string, albumTitleToIdMap map[string]string, bar *progressbar.ProgressBar, limiter *rate.Limiter, dryRun bool) (skipped bool, err error) {
 	fileBasename := filepath.Base(fileInfo.path)
 
 	// Track this file's upload progress. The upload transport credits body bytes to fp as
@@ -414,7 +425,7 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 
 	// Wait before uploading file
 	if err := limiter.Wait(ctx); err != nil {
-		return fmt.Errorf("rate limiter error before uploading %s: %w", fileBasename, err)
+		return false, fmt.Errorf("rate limiter error before uploading %s: %w", fileBasename, err)
 	}
 
 	if dryRun {
@@ -422,7 +433,7 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 			slog.String("file", fileBasename),
 			slog.Any("albums", targetAlbumTitles))
 		if isVideoFile(fileInfo.path) {
-			logger.Debug("May add Apple creation date timezone to (if not already correct)",
+			logger.Debug("Would prepare video timezone before upload (Canon videos are remuxed to a QuickTime .mov)",
 				slog.String("file", fileBasename))
 		}
 	} else {
@@ -437,7 +448,17 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 			var err error
 			uploadPath, cleanup, err = prepareVideoForUploadFn(ctx, fileInfo.path)
 			if err != nil {
-				return fmt.Errorf("failed to prepare video %s for upload: %w", fileBasename, err)
+				// A prepare failure (e.g. a remux ffmpeg cannot rewrap) must not abort the whole
+				// batch. Skip this one video — leaving the original queued so a later run retries
+				// it — and move on. Context cancellation is the exception: propagate it so Ctrl-C
+				// stops the run instead of churning through the rest of the queue.
+				if ctx.Err() != nil {
+					return false, fmt.Errorf("failed to prepare video %s for upload: %w", fileBasename, err)
+				}
+				logger.Error("Failed to prepare video for upload; skipping (left in queue for a later run)",
+					slog.String("file", fileBasename),
+					slog.Any("error", err))
+				return true, nil
 			}
 			defer cleanup()
 		}
@@ -455,11 +476,11 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 			// TODO: only log error and skip? Want to make sure user notices.
 			// fmt.Printf("\nError uploading file %s: %v. Skipping.\n", fileBasename, err)
 			// return nil // Skip to the next item, progress bar will be updated by defer
-			return fmt.Errorf("failed to upload file %s: %w", fileBasename, err)
+			return false, fmt.Errorf("failed to upload file %s: %w", fileBasename, err)
 		}
 
 		if err := limiter.Wait(ctx); err != nil {
-			return fmt.Errorf("rate limiter error before creating media item for %s: %w", fileBasename, err)
+			return false, fmt.Errorf("rate limiter error before creating media item for %s: %w", fileBasename, err)
 		}
 		simpleMediaItem := media_items.SimpleMediaItem{
 			UploadToken: uploadToken,
@@ -468,7 +489,7 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 		// TODO: consider batching media item creation.
 		mediaItem, err := gphotosClient.MediaItems().Create(ctx, simpleMediaItem)
 		if err != nil {
-			return fmt.Errorf("failed to create media item for %s: uploadToken %s: %w", fileBasename, uploadToken, err)
+			return false, fmt.Errorf("failed to create media item for %s: uploadToken %s: %w", fileBasename, uploadToken, err)
 		}
 		logger.Debug("Successfully created media item",
 			slog.String("file", fileBasename),
@@ -478,13 +499,13 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 		for _, albumTitle := range targetAlbumTitles {
 			albumID, ok := albumTitleToIdMap[albumTitle]
 			if !ok {
-				return fmt.Errorf("album '%s' not found in album ID map", albumTitle)
+				return false, fmt.Errorf("album '%s' not found in album ID map", albumTitle)
 			}
 			if err := limiter.Wait(ctx); err != nil {
-				return fmt.Errorf("rate limiter error before adding %s to album %s: %w", fileBasename, albumTitle, err)
+				return false, fmt.Errorf("rate limiter error before adding %s to album %s: %w", fileBasename, albumTitle, err)
 			}
 			if err := gphotosClient.Albums().AddMediaItems(ctx, albumID, []string{mediaItem.ID}); err != nil {
-				return fmt.Errorf("error adding media item to album %s: %w", albumTitle, err)
+				return false, fmt.Errorf("error adding media item to album %s: %w", albumTitle, err)
 			}
 			logger.Debug("Added media item to album",
 				slog.String("media_id", mediaItem.ID),
@@ -496,14 +517,14 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 	// Only move when keepQueued is false; uploading with keepQueued=true does not copy to uploaded.
 	if !keepQueued {
 		if _, err := moveToUploaded(localConfig, fileInfo, dryRun); err != nil {
-			return err
+			return false, err
 		}
 	} else {
 		logger.Debug("Keeping file in upload queue directory as per keepQueued flag",
 			slog.String("file", fileInfo.path))
 	}
 
-	return nil
+	return false, nil
 }
 
 // parseDatePrefix parses a basename "s" that is in the standard format of "YYYY-MM-DD-<rest-of-name>"

@@ -186,6 +186,17 @@ type videoTimezoneExif struct {
 	OffsetTimeOriginal  string // Canon OffsetTimeOriginal, e.g. "-08:00"
 	CreationDate        string // com.apple.quicktime.creationdate (Keys:CreationDate)
 	QuickTimeCreateDate string // mvhd QuickTime:CreateDate, e.g. "2026:04:04 00:37:52" (UTC on Canon)
+	QuickTimeModifyDate string // mvhd QuickTime:ModifyDate, e.g. "2026:04:04 00:37:52" (UTC on Canon)
+}
+
+// lookExiftool resolves the exiftool binary in PATH, returning a consistent error when it is
+// missing. Several call sites (metadata read, remux/tag, brand check) need it independently.
+func lookExiftool() (string, error) {
+	exiftoolPath, err := exec.LookPath("exiftool")
+	if err != nil {
+		return "", fmt.Errorf("exiftool not found in PATH: %w", err)
+	}
+	return exiftoolPath, nil
 }
 
 // getVideoTimezoneExifFn and prepareVideoForUploadFn are package-level indirections so
@@ -202,16 +213,16 @@ func getVideoTimezoneExif(ctx context.Context, paths []string) ([]videoTimezoneE
 		return nil, nil
 	}
 
-	exiftoolPath, err := exec.LookPath("exiftool")
+	exiftoolPath, err := lookExiftool()
 	if err != nil {
-		return nil, fmt.Errorf("exiftool not found in PATH: %w", err)
+		return nil, err
 	}
 
 	// QuickTimeUTC=0 pins the QuickTime date reads to the literal stored value rather than
 	// UTC-converting them, mirroring the write in remuxAndTagCanonVideo. Without this, a
-	// configured QuickTimeUTC=1 would skew QuickTime:CreateDate on read and make the post-remux
-	// mvhd verify spuriously fail on every Canon video.
-	args := []string{"-api", "QuickTimeUTC=0", "-j", "-DateTimeOriginal", "-OffsetTimeOriginal", "-Keys:CreationDate", "-QuickTime:CreateDate"}
+	// configured QuickTimeUTC=1 would skew QuickTime:CreateDate/ModifyDate on read and make the
+	// post-remux mvhd verify spuriously fail on every Canon video.
+	args := []string{"-api", "QuickTimeUTC=0", "-j", "-DateTimeOriginal", "-OffsetTimeOriginal", "-Keys:CreationDate", "-QuickTime:CreateDate", "-QuickTime:ModifyDate"}
 	args = append(args, paths...)
 
 	cmd := exec.CommandContext(ctx, exiftoolPath, args...)
@@ -229,6 +240,7 @@ func getVideoTimezoneExif(ctx context.Context, paths []string) ([]videoTimezoneE
 		OffsetTimeOriginal string `json:"OffsetTimeOriginal,omitempty"`
 		CreationDate       string `json:"CreationDate,omitempty"`
 		CreateDate         string `json:"CreateDate,omitempty"` // QuickTime:CreateDate (mvhd)
+		ModifyDate         string `json:"ModifyDate,omitempty"` // QuickTime:ModifyDate (mvhd)
 	}
 	if err := json.Unmarshal(output, &results); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal exiftool output: %w", err)
@@ -242,6 +254,7 @@ func getVideoTimezoneExif(ctx context.Context, paths []string) ([]videoTimezoneE
 			OffsetTimeOriginal:  r.OffsetTimeOriginal,
 			CreationDate:        r.CreationDate,
 			QuickTimeCreateDate: r.CreateDate,
+			QuickTimeModifyDate: r.ModifyDate,
 		})
 	}
 
@@ -385,9 +398,9 @@ func remuxAndTagCanonVideo(ctx context.Context, path, dto, oto string) (uploadPa
 	if err != nil {
 		return "", noop, fmt.Errorf("ffmpeg not found in PATH (needed to remux %s): %w", path, err)
 	}
-	exiftoolPath, err := exec.LookPath("exiftool")
+	exiftoolPath, err := lookExiftool()
 	if err != nil {
-		return "", noop, fmt.Errorf("exiftool not found in PATH: %w", err)
+		return "", noop, err
 	}
 	utc, ok := canonUTCInstant(dto, oto)
 	if !ok {
@@ -402,6 +415,14 @@ func remuxAndTagCanonVideo(ctx context.Context, path, dto, oto string) (uploadPa
 	if err != nil {
 		return "", noop, fmt.Errorf("failed to create temp dir for %s: %w", path, err)
 	}
+	// Remove the per-run temp dir on every failure path; the single success path flips
+	// keepTempDir so the caller's returned cleanup owns it instead.
+	keepTempDir := false
+	defer func() {
+		if !keepTempDir {
+			os.RemoveAll(tempDir)
+		}
+	}()
 	base := filepath.Base(path)
 	temp := filepath.Join(tempDir, strings.TrimSuffix(base, filepath.Ext(base))+".mov")
 
@@ -413,7 +434,6 @@ func remuxAndTagCanonVideo(ctx context.Context, path, dto, oto string) (uploadPa
 	remux := exec.CommandContext(ctx, ffmpegPath, "-nostdin", "-y", "-loglevel", "error",
 		"-i", path, "-map", "0", "-c", "copy", temp)
 	if out, runErr := remux.CombinedOutput(); runErr != nil {
-		os.RemoveAll(tempDir)
 		if ctx.Err() != nil {
 			return "", noop, ctx.Err()
 		}
@@ -429,7 +449,6 @@ func remuxAndTagCanonVideo(ctx context.Context, path, dto, oto string) (uploadPa
 		"-QuickTime:ModifyDate="+utc,
 		temp)
 	if out, runErr := tag.CombinedOutput(); runErr != nil {
-		os.RemoveAll(tempDir)
 		if ctx.Err() != nil {
 			return "", noop, ctx.Err()
 		}
@@ -437,36 +456,34 @@ func remuxAndTagCanonVideo(ctx context.Context, path, dto, oto string) (uploadPa
 	}
 
 	// Verify the result is exactly what Google needs: a QuickTime-brand container (the whole
-	// point of the remux), the atom encoding exactly Canon's wall-clock+offset, and mvhd holding
-	// the true UTC instant.
+	// point of the remux), the atom encoding exactly Canon's wall-clock+offset, and the mvhd
+	// create AND modify dates holding the true UTC instant.
 	brand, err := videoMajorBrand(ctx, temp)
 	if err != nil {
-		os.RemoveAll(tempDir)
 		return "", noop, fmt.Errorf("failed to read major brand for %s: %w", path, err)
 	}
-	if !strings.Contains(brand, "QuickTime") {
-		os.RemoveAll(tempDir)
-		return "", noop, fmt.Errorf("remux of %s did not produce a QuickTime container (brand %q)", path, brand)
+	if brand != quickTimeMajorBrand {
+		return "", noop, fmt.Errorf("remux of %s did not produce a QuickTime container (brand %q, want %q)", path, brand, quickTimeMajorBrand)
 	}
 	verify, err := getVideoTimezoneExifFn(ctx, []string{temp})
 	if err != nil {
-		os.RemoveAll(tempDir)
 		return "", noop, fmt.Errorf("failed to verify %s: %w", path, err)
 	}
 	vr, err := singleExifResult(verify, temp)
 	if err != nil {
-		os.RemoveAll(tempDir)
 		return "", noop, err
 	}
 	if !creationDateMatchesCanon(vr.CreationDate, dto, oto) {
-		os.RemoveAll(tempDir)
 		return "", noop, fmt.Errorf("creationdate tag for %s did not match Canon timezone (got %q, want %q)", path, vr.CreationDate, dto+oto)
 	}
 	if !sameWallClock(vr.QuickTimeCreateDate, utc) {
-		os.RemoveAll(tempDir)
-		return "", noop, fmt.Errorf("mvhd for %s was not set to the UTC instant (got %q, want %q)", path, vr.QuickTimeCreateDate, utc)
+		return "", noop, fmt.Errorf("mvhd CreateDate for %s was not set to the UTC instant (got %q, want %q)", path, vr.QuickTimeCreateDate, utc)
+	}
+	if !sameWallClock(vr.QuickTimeModifyDate, utc) {
+		return "", noop, fmt.Errorf("mvhd ModifyDate for %s was not set to the UTC instant (got %q, want %q)", path, vr.QuickTimeModifyDate, utc)
 	}
 
+	keepTempDir = true
 	return temp, func() { os.RemoveAll(tempDir) }, nil
 }
 
@@ -485,20 +502,31 @@ func canonUTCInstant(dto, oto string) (string, bool) {
 	return t.UTC().Format("2006:01:02 15:04:05"), true
 }
 
-// videoMajorBrand returns the file's ftyp MajorBrand as exiftool's descriptive string (e.g.
-// "Apple QuickTime (.MOV/QT)" or "MP4 v2 [ISO 14496-14]"), used to confirm the remux produced
-// a QuickTime container.
+// quickTimeMajorBrand is the raw ftyp MajorBrand a QuickTime ('qt') container carries (the
+// stored value is "qt  " with trailing spaces; videoMajorBrand trims it). This is the brand
+// Google Photos requires to honor the creationdate atom's offset; see remuxAndTagCanonVideo.
+const quickTimeMajorBrand = "qt"
+
+// videoMajorBrand returns the file's raw ftyp MajorBrand (e.g. "qt" for QuickTime, "mp42" for
+// Canon's MP4), used to confirm the remux produced a QuickTime container. It reads the raw
+// 4-char code (-MajorBrand#) rather than exiftool's descriptive PrintConv string so the check
+// does not depend on human-readable wording that can shift across exiftool versions.
 func videoMajorBrand(ctx context.Context, path string) (string, error) {
-	exiftoolPath, err := exec.LookPath("exiftool")
+	exiftoolPath, err := lookExiftool()
 	if err != nil {
-		return "", fmt.Errorf("exiftool not found in PATH: %w", err)
+		return "", err
 	}
-	out, err := exec.CommandContext(ctx, exiftoolPath, "-s", "-s", "-s", "-MajorBrand", path).Output()
+	// Read the value from stdout only (a stderr buffer keeps exiftool warnings from corrupting
+	// it) while still surfacing stderr in the error message on failure.
+	cmd := exec.CommandContext(ctx, exiftoolPath, "-s", "-s", "-s", "-MajorBrand#", path)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
-		return "", fmt.Errorf("failed to read major brand: %w", err)
+		return "", fmt.Errorf("failed to read major brand: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSpace(string(out)), nil
 }

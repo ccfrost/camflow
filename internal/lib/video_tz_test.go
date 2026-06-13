@@ -417,6 +417,64 @@ func TestUploadVideos_PreparedTempPath_CleanupOnAddToAlbumError(t *testing.T) {
 	assert.True(t, cleanupCalled, "cleanup must run even when adding to album fails")
 }
 
+func TestUploadVideos_PrepareError_SkipsAndContinues(t *testing.T) {
+	// A prepare failure on one video (e.g. a remux ffmpeg cannot rewrap) must skip just that
+	// file — leaving it queued for a later run — and let the batch continue, not abort.
+	ctx := context.Background()
+	cfg := newTestConfig(t, "", "")
+	badBase := "2026-04-03-IMG_0001.MP4"
+	goodBase := "2026-04-03-IMG_0002.MP4"
+	createTestFiles(t, cfg.VideosUploadQueueRoot, map[string]string{badBase: "content", goodBase: "content"})
+	badPath := filepath.Join(cfg.VideosUploadQueueRoot, badBase)
+	goodMov := "2026-04-03-IMG_0002.mov"
+	goodTemp := filepath.Join(t.TempDir(), "upload-good", goodMov)
+
+	stubVideoTimezoneExif(t, func(_ context.Context, paths []string) ([]videoTimezoneExif, error) {
+		out := make([]videoTimezoneExif, len(paths))
+		for i, p := range paths {
+			out[i] = videoTimezoneExif{Path: p, CreationDate: "2026:04:03 16:37:51-08:00"}
+		}
+		return out, nil
+	})
+	goodCleanup := false
+	stubPrepareVideoForUpload(t, func(_ context.Context, p string) (string, func(), error) {
+		if filepath.Base(p) == badBase {
+			return "", func() {}, errors.New("remux failed")
+		}
+		return goodTemp, func() { goodCleanup = true }, nil
+	})
+
+	ctrl := gomock.NewController(t)
+	mockClient := NewMockGPhotosClient(ctrl)
+	mockUploader := NewMockMediaUploader(ctrl)
+	mockMediaItems := NewMockAppMediaItemsService(ctrl)
+	mockClient.EXPECT().Uploader().Return(mockUploader).AnyTimes()
+	mockClient.EXPECT().MediaItems().Return(mockMediaItems).AnyTimes()
+
+	// Only the good file reaches upload; the skipped one never calls UploadFile/Create.
+	var uploaded []string
+	mockUploader.EXPECT().UploadFile(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, p string) (string, error) {
+			uploaded = append(uploaded, p)
+			return "token", nil
+		})
+	mockMediaItems.EXPECT().Create(gomock.Any(), media_items.SimpleMediaItem{UploadToken: "token", Filename: goodMov}).
+		Return(&media_items.MediaItem{ID: "id", Filename: goodMov}, nil)
+
+	require.NoError(t, UploadVideos(ctx, cfg, t.TempDir(), false, mockClient, false),
+		"a prepare failure on one video must not fail the batch")
+
+	assert.Equal(t, []string{goodTemp}, uploaded, "only the good video is uploaded")
+	assert.True(t, goodCleanup, "good video cleanup runs")
+
+	_, statErr := os.Stat(badPath)
+	assert.NoError(t, statErr, "skipped video must remain in the queue for a later run")
+	year, month, day, err := parseDatePrefix(goodBase)
+	require.NoError(t, err)
+	_, statErr = os.Stat(filepath.Join(cfg.VideosUploadedRoot, year, month, day, goodBase))
+	assert.NoError(t, statErr, "uploaded video should land in uploaded/")
+}
+
 func TestUploadVideos_DryRun_DeletesNoTempsAndLogs(t *testing.T) {
 	ctx := context.Background()
 	cfg := newTestConfig(t, "", "")
