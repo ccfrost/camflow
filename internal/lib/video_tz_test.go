@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -163,13 +164,14 @@ func TestPrecheckVideoTimezones(t *testing.T) {
 		assert.NoError(t, precheckVideoTimezones(context.Background(), items("/q/a.mp4")))
 	})
 
-	t.Run("no explicit tz and missing Canon fails", func(t *testing.T) {
+	t.Run("no explicit tz and missing Canon is allowed (skipped per-item later)", func(t *testing.T) {
 		stubVideoTimezoneExif(t, func(_ context.Context, paths []string) ([]videoTimezoneExif, error) {
 			return []videoTimezoneExif{{Path: paths[0], CreationDate: "2026:04:03 16:37:51"}}, nil
 		})
-		err := precheckVideoTimezones(context.Background(), items("/q/a.mp4"))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "cannot be prepared")
+		// The precheck no longer rejects an un-prepareable video; it is skipped per-item at upload
+		// time (prepareVideoForUpload errors, uploadMediaItem leaves it queued), so one such file
+		// does not abort the batch.
+		assert.NoError(t, precheckVideoTimezones(context.Background(), items("/q/a.mp4")))
 	})
 
 	t.Run("duplicate result fails", func(t *testing.T) {
@@ -265,6 +267,54 @@ func TestSameWallClock(t *testing.T) {
 	// Unparseable input never matches.
 	assert.False(t, sameWallClock("", "2026:04:03 16:37:51"))
 	assert.False(t, sameWallClock("2026:04:03 16:37:51-08:00", "2026:04:03 16:37:51"))
+}
+
+// TestRemuxAndTagCanonVideo_HappyPath exercises the real ffmpeg remux + exiftool tag + verify
+// (no stubs) on a generated video, locking in the exiftool arg strings and the mvhd restore. It
+// skips when ffmpeg/exiftool are unavailable so the unit suite still runs without them.
+func TestRemuxAndTagCanonVideo_HappyPath(t *testing.T) {
+	for _, tool := range []string{"ffmpeg", "exiftool"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s not found in PATH; skipping happy-path remux test", tool)
+		}
+	}
+
+	// A tiny real MP4, encoded with the always-built-in mpeg4 codec (no libx264 / no audio needed).
+	src := filepath.Join(t.TempDir(), "2026-04-03-IMG_TEST.MP4")
+	gen := exec.Command("ffmpeg", "-nostdin", "-y", "-loglevel", "error",
+		"-f", "lavfi", "-i", "testsrc=duration=1:size=128x128:rate=10",
+		"-c:v", "mpeg4", "-pix_fmt", "yuv420p", "-an", src)
+	if out, err := gen.CombinedOutput(); err != nil {
+		t.Fatalf("failed to generate test mp4: %v\n%s", err, out)
+	}
+
+	const dto, oto = "2026:04:03 16:37:51", "-08:00"
+	uploadPath, cleanup, err := remuxAndTagCanonVideo(context.Background(), src, dto, oto)
+	require.NoError(t, err)
+	require.NotNil(t, cleanup)
+	defer cleanup()
+
+	// The remux output is a QuickTime .mov ('qt' brand) — the whole point of the fix.
+	assert.Equal(t, ".mov", filepath.Ext(uploadPath))
+	brand, err := videoMajorBrand(context.Background(), uploadPath)
+	require.NoError(t, err)
+	assert.Equal(t, quickTimeMajorBrand, brand)
+
+	// The creationdate atom carries Canon's wall-clock+offset; mvhd create/modify hold the UTC instant.
+	res, err := getVideoTimezoneExif(context.Background(), []string{uploadPath})
+	require.NoError(t, err)
+	r, err := singleExifResult(res, uploadPath)
+	require.NoError(t, err)
+	assert.Truef(t, creationDateMatchesCanon(r.CreationDate, dto, oto),
+		"creationdate %q should match Canon %s%s", r.CreationDate, dto, oto)
+	utc, ok := canonUTCInstant(dto, oto)
+	require.True(t, ok)
+	assert.Truef(t, sameWallClock(r.QuickTimeCreateDate, utc), "mvhd CreateDate %q should be UTC %q", r.QuickTimeCreateDate, utc)
+	assert.Truef(t, sameWallClock(r.QuickTimeModifyDate, utc), "mvhd ModifyDate %q should be UTC %q", r.QuickTimeModifyDate, utc)
+
+	// cleanup removes the per-run temp dir.
+	cleanup()
+	assertDirNotExists(t, filepath.Dir(uploadPath), "cleanup should remove the temp dir")
 }
 
 func TestPrepareVideoForUpload_DisagreeWarnsAndRewrites(t *testing.T) {

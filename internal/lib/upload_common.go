@@ -117,11 +117,13 @@ func cleanupOrphanedVideoTimezoneTempFiles(cacheRoot string, dryRun bool) error 
 	return nil
 }
 
-// precheckVideoTimezones reads the timezone metadata for all queued videos in one exiftool
-// batch and returns an error if any video cannot be prepared safely. A video is prepareable
-// if it already has an explicit-timezone creation date, or if it has both Canon timezone
-// fields to derive one from. It requires exactly one exiftool result per path (error on a
-// missing, duplicate, or unexpected result).
+// precheckVideoTimezones runs one exiftool batch over all queued videos to validate, before any
+// upload, that exiftool returned exactly one result per path (error on a missing, duplicate, or
+// unexpected result) and — when any Canon video is present — that ffmpeg is on PATH to remux it.
+// A video that cannot be prepared (no explicit-timezone creation date and no Canon
+// DateTimeOriginal+OffsetTimeOriginal) is NOT rejected here: it is skipped per-item at upload time
+// (prepareVideoForUpload errors, uploadMediaItem leaves it queued), so one such video does not
+// abort the whole batch.
 func precheckVideoTimezones(ctx context.Context, items []itemFileInfo) error {
 	paths := make([]string, 0, len(items))
 	for _, item := range items {
@@ -150,11 +152,10 @@ func precheckVideoTimezones(ctx context.Context, items []itemFileInfo) error {
 		if !ok {
 			return fmt.Errorf("no exiftool result for %s", path)
 		}
-		hasCanon := r.DateTimeOriginal != "" && r.OffsetTimeOriginal != ""
-		if !hasExplicitTimezone(r.CreationDate) && !hasCanon {
-			return fmt.Errorf("video %s cannot be prepared: no explicit-timezone creation date and missing Canon DateTimeOriginal/OffsetTimeOriginal", path)
-		}
-		if hasCanon {
+		// Only Canon videos (both DateTimeOriginal and OffsetTimeOriginal present) get remuxed, so
+		// only they require ffmpeg. A video with neither Canon fields nor an explicit-timezone atom
+		// is left to the per-item skip at upload time, not rejected here.
+		if r.DateTimeOriginal != "" && r.OffsetTimeOriginal != "" {
 			canonCount++
 		}
 	}
@@ -242,9 +243,11 @@ func moveToUploaded(localConfig LocalConfig, fileInfo itemFileInfo, dryRun bool)
 // Uploaded media items are moved from upload queue to uploaded dir; unless keepQueued is true, in which case they are copied (but not moved).
 // The function is idempotent - if interrupted, it can be recalled to resume.
 func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, localConfig LocalConfig, gpConfig GPConfig, itemTypePluralName string, gphotosClient GPhotosClient, dryRun bool) (retErr error) {
+	isVideos := itemTypePluralName == "videos"
+
 	// For videos, reclaim crash-orphaned temp dirs in the OS cache dir before anything else —
 	// they live outside the queue, so this must run even when the queue dir is gone.
-	if itemTypePluralName == "videos" {
+	if isVideos {
 		cacheRoot, err := videoTimezoneTempRoot()
 		if err != nil {
 			return err
@@ -280,10 +283,9 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 		slog.Int("count", len(itemsToUpload)),
 		slog.Float64("total_size_gb", math.Ceil(float64(totalSize)/1024/1024/1024)))
 
-	// Batch precheck for videos: fail fast (before uploading anything) if any video cannot be
-	// prepared safely — i.e. it lacks an explicit-timezone creation date AND lacks Canon's
-	// DateTimeOriginal+OffsetTimeOriginal to derive one from.
-	if itemTypePluralName == "videos" {
+	// Batch precheck for videos: validate exiftool results and ffmpeg availability before any
+	// upload. Videos that can't be prepared are skipped per-item later, not rejected here.
+	if isVideos {
 		if err := precheckVideoTimezones(ctx, itemsToUpload); err != nil {
 			return err
 		}

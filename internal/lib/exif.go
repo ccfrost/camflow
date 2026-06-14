@@ -365,8 +365,8 @@ func prepareVideoForUpload(ctx context.Context, path string) (uploadPath string,
 	}
 
 	// No Canon fields. Trust an existing explicit-tz atom (iPhone / non-Canon already carrying
-	// the Apple atom in a QuickTime container); otherwise we cannot prepare the file safely.
-	// The batch precheck rejects the latter case before we get here.
+	// the Apple atom in a QuickTime container); otherwise we cannot prepare the file safely and
+	// return an error, which uploadMediaItem turns into a per-item skip (the file stays queued).
 	if hasExplicitTimezone(r.CreationDate) {
 		return path, noop, nil
 	}
