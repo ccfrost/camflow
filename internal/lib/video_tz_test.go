@@ -214,9 +214,9 @@ func TestPrepareVideoForUpload_DirectUploadWhenNonCanonExplicitTz(t *testing.T) 
 }
 
 func TestPrepareVideoForUpload_CanonAlwaysRewrites(t *testing.T) {
-	// Even when the atom already matches Canon, a Canon file must still be remuxed: Canon's
-	// MP4 ('mp42') container is mis-parsed by Google regardless of the atom. So the original
-	// must NOT be uploaded directly.
+	// Even when the atom already matches Canon, a Canon file must still get a .mov copy: a .MP4
+	// filename is mis-parsed by Google regardless of the atom. So the original must NOT be
+	// uploaded directly.
 	stubVideoTimezoneExif(t, func(_ context.Context, paths []string) ([]videoTimezoneExif, error) {
 		return []videoTimezoneExif{{
 			Path:                paths[0],
@@ -227,8 +227,8 @@ func TestPrepareVideoForUpload_CanonAlwaysRewrites(t *testing.T) {
 		}}, nil
 	})
 
-	// The real ffmpeg remux of this fake mp4 will fail; we assert only that the remux branch
-	// was taken (uploadPath differs from the original), as in the disagree test.
+	// exiftool tagging this fake mp4 will fail; we assert only that the copy-and-tag branch was
+	// taken (uploadPath differs from the original), as in the disagree test.
 	path := filepath.Join(t.TempDir(), "2026-04-03-IMG_3805.MP4")
 	require.NoError(t, os.WriteFile(path, []byte("not a real mp4"), 0644))
 
@@ -236,7 +236,7 @@ func TestPrepareVideoForUpload_CanonAlwaysRewrites(t *testing.T) {
 	if cleanup != nil {
 		defer cleanup()
 	}
-	assert.NotEqual(t, path, uploadPath, "Canon file must be remuxed, not uploaded directly")
+	assert.NotEqual(t, path, uploadPath, "Canon file must get a .mov copy, not be uploaded directly")
 }
 
 func TestCanonUTCInstant(t *testing.T) {
@@ -269,13 +269,14 @@ func TestSameWallClock(t *testing.T) {
 	assert.False(t, sameWallClock("2026:04:03 16:37:51-08:00", "2026:04:03 16:37:51"))
 }
 
-// TestRemuxAndTagCanonVideo_HappyPath exercises the real ffmpeg remux + exiftool tag + verify
-// (no stubs) on a generated video, locking in the exiftool arg strings and the mvhd restore. It
-// skips when ffmpeg/exiftool are unavailable so the unit suite still runs without them.
-func TestRemuxAndTagCanonVideo_HappyPath(t *testing.T) {
+// TestCopyAndTagCanonVideo_HappyPath exercises the real copy + exiftool tag + verify (no stubs)
+// on a generated video, locking in the exiftool arg strings and the mvhd set. It skips when
+// ffmpeg/exiftool are unavailable (ffmpeg only generates the fixture; the function itself no
+// longer needs it) so the unit suite still runs without them.
+func TestCopyAndTagCanonVideo_HappyPath(t *testing.T) {
 	for _, tool := range []string{"ffmpeg", "exiftool"} {
 		if _, err := exec.LookPath(tool); err != nil {
-			t.Skipf("%s not found in PATH; skipping happy-path remux test", tool)
+			t.Skipf("%s not found in PATH; skipping happy-path copy-and-tag test", tool)
 		}
 	}
 
@@ -289,16 +290,13 @@ func TestRemuxAndTagCanonVideo_HappyPath(t *testing.T) {
 	}
 
 	const dto, oto = "2026:04:03 16:37:51", "-08:00"
-	uploadPath, cleanup, err := remuxAndTagCanonVideo(context.Background(), src, dto, oto)
+	uploadPath, cleanup, err := copyAndTagCanonVideo(context.Background(), src, dto, oto)
 	require.NoError(t, err)
 	require.NotNil(t, cleanup)
 	defer cleanup()
 
-	// The remux output is a QuickTime .mov ('qt' brand) — the whole point of the fix.
+	// The upload copy is named <stem>.mov — the whole fix is the filename extension.
 	assert.Equal(t, ".mov", filepath.Ext(uploadPath))
-	brand, err := videoMajorBrand(context.Background(), uploadPath)
-	require.NoError(t, err)
-	assert.Equal(t, quickTimeMajorBrand, brand)
 
 	// The creationdate atom carries Canon's wall-clock+offset; mvhd create/modify hold the UTC instant.
 	res, err := getVideoTimezoneExif(context.Background(), []string{uploadPath})
@@ -311,6 +309,14 @@ func TestRemuxAndTagCanonVideo_HappyPath(t *testing.T) {
 	require.True(t, ok)
 	assert.Truef(t, sameWallClock(r.QuickTimeCreateDate, utc), "mvhd CreateDate %q should be UTC %q", r.QuickTimeCreateDate, utc)
 	assert.Truef(t, sameWallClock(r.QuickTimeModifyDate, utc), "mvhd ModifyDate %q should be UTC %q", r.QuickTimeModifyDate, utc)
+
+	// The queued original is never touched — only the copy is tagged, so the source still
+	// carries no creationdate atom.
+	origRes, err := getVideoTimezoneExif(context.Background(), []string{src})
+	require.NoError(t, err)
+	origR, err := singleExifResult(origRes, src)
+	require.NoError(t, err)
+	assert.Empty(t, origR.CreationDate, "the original must not be tagged (only the .mov copy is)")
 
 	// cleanup removes the per-run temp dir.
 	cleanup()
@@ -330,8 +336,8 @@ func TestPrepareVideoForUpload_DisagreeWarnsAndRewrites(t *testing.T) {
 		}}, nil
 	})
 
-	// We assert only that the remux branch was taken: a warning is logged and the original is
-	// NOT returned for direct upload. Whether the real remux ultimately succeeds (returning a
+	// We assert only that the copy-and-tag branch was taken: a warning is logged and the original
+	// is NOT returned for direct upload. Whether the real tag ultimately succeeds (returning a
 	// temp .mov path) or fails (returning "") is exercised by the sandbox harness, not here —
 	// either way uploadPath differs from the original.
 	path := filepath.Join(t.TempDir(), "2026-04-03-IMG_3805.MP4")
@@ -353,7 +359,7 @@ func TestUploadVideos_PreparedTempPath_CleanupOnSuccess(t *testing.T) {
 	basename := "2026-04-03-IMG_3805.MP4"
 	createTestFiles(t, cfg.VideosUploadQueueRoot, map[string]string{basename: "content"})
 	originalPath := filepath.Join(cfg.VideosUploadQueueRoot, basename)
-	// The remux renames the upload to <stem>.mov; Google sees that name.
+	// The upload copy is named <stem>.mov; Google sees that name.
 	movBasename := "2026-04-03-IMG_3805.mov"
 	tempPath := filepath.Join(t.TempDir(), "upload-xyz", movBasename)
 
@@ -468,7 +474,7 @@ func TestUploadVideos_PreparedTempPath_CleanupOnAddToAlbumError(t *testing.T) {
 }
 
 func TestUploadVideos_PrepareError_SkipsAndContinues(t *testing.T) {
-	// A prepare failure on one video (e.g. a remux ffmpeg cannot rewrap) must skip just that
+	// A prepare failure on one video (e.g. exiftool cannot tag the copy) must skip just that
 	// file — leaving it queued for a later run — and let the batch continue, not abort.
 	ctx := context.Background()
 	cfg := newTestConfig(t, "", "")
@@ -489,7 +495,7 @@ func TestUploadVideos_PrepareError_SkipsAndContinues(t *testing.T) {
 	goodCleanup := false
 	stubPrepareVideoForUpload(t, func(_ context.Context, p string) (string, func(), error) {
 		if filepath.Base(p) == badBase {
-			return "", func() {}, errors.New("remux failed")
+			return "", func() {}, errors.New("prepare failed")
 		}
 		return goodTemp, func() { goodCleanup = true }, nil
 	})

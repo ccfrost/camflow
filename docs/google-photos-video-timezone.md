@@ -182,16 +182,17 @@ Verify like this:
 
 camflow tags camera videos with the `com.apple.quicktime.creationdate` atom and
 uploads them under a `.mov` filename, from a temp copy so the queued original is
-never touched. See `internal/lib/exif.go` (`remuxAndTagCanonVideo`).
+never touched. See `internal/lib/exif.go` (`copyAndTagCanonVideo`).
 
-Historically that function *also* losslessly remuxed the MP4 to a QuickTime (`qt`)
-container with `ffmpeg`, on the belief that the container brand was the lever. The
-factorial above shows it isn't — the `.mov` filename (which the code already
-applies) is what matters — so the remux step is more than necessary and is a
-candidate for removal (which would drop the hard `ffmpeg` dependency and the
-"stream must be `.mov`-muxable" failure mode). That simplification is being
-validated end-to-end before the code changes; until then, the remux remains as
-harmless belt-and-suspenders.
+It does this with a plain byte copy to a `<stem>.mov` temp plus an `exiftool` tag —
+**no remux or transcode.** Earlier versions losslessly remuxed the MP4 to a
+QuickTime (`qt`) container with `ffmpeg`, on the belief that the container brand was
+the lever; the factorial above showed it isn't (the `.mov` filename is), so the
+`ffmpeg` step — and the hard `ffmpeg` dependency and the "stream must be
+`.mov`-muxable" failure mode — was removed. The rename-only path was validated
+end-to-end: an unmodified `mp42` Canon file copied to `.mov` and tagged settles to
+the correct instant and plays normally (Google processes it `READY` with full
+dimensions/fps).
 
 ## References
 

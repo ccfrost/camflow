@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -119,11 +118,10 @@ func cleanupOrphanedVideoTimezoneTempFiles(cacheRoot string, dryRun bool) error 
 
 // precheckVideoTimezones runs one exiftool batch over all queued videos to validate, before any
 // upload, that exiftool returned exactly one result per path (error on a missing, duplicate, or
-// unexpected result) and — when any Canon video is present — that ffmpeg is on PATH to remux it.
-// A video that cannot be prepared (no explicit-timezone creation date and no Canon
-// DateTimeOriginal+OffsetTimeOriginal) is NOT rejected here: it is skipped per-item at upload time
-// (prepareVideoForUpload errors, uploadMediaItem leaves it queued), so one such video does not
-// abort the whole batch.
+// unexpected result). A video that cannot be prepared (no explicit-timezone creation date and no
+// Canon DateTimeOriginal+OffsetTimeOriginal) is NOT rejected here: it is skipped per-item at
+// upload time (prepareVideoForUpload errors, uploadMediaItem leaves it queued), so one such video
+// does not abort the whole batch.
 func precheckVideoTimezones(ctx context.Context, items []itemFileInfo) error {
 	paths := make([]string, 0, len(items))
 	for _, item := range items {
@@ -146,24 +144,9 @@ func precheckVideoTimezones(ctx context.Context, items []itemFileInfo) error {
 		return fmt.Errorf("expected %d video metadata results, got %d", len(paths), len(byPath))
 	}
 
-	canonCount := 0
 	for _, path := range paths {
-		r, ok := byPath[filepath.Clean(path)]
-		if !ok {
+		if _, ok := byPath[filepath.Clean(path)]; !ok {
 			return fmt.Errorf("no exiftool result for %s", path)
-		}
-		// Only Canon videos (both DateTimeOriginal and OffsetTimeOriginal present) get remuxed, so
-		// only they require ffmpeg. A video with neither Canon fields nor an explicit-timezone atom
-		// is left to the per-item skip at upload time, not rejected here.
-		if r.DateTimeOriginal != "" && r.OffsetTimeOriginal != "" {
-			canonCount++
-		}
-	}
-	// Canon videos are remuxed to QuickTime .mov via ffmpeg before upload (see
-	// remuxAndTagCanonVideo); fail fast here rather than mid-batch if it is missing.
-	if canonCount > 0 {
-		if _, err := exec.LookPath("ffmpeg"); err != nil {
-			return fmt.Errorf("ffmpeg not found in PATH (required to fix timezones on %d Canon video(s)): %w", canonCount, err)
 		}
 	}
 	return nil
@@ -283,8 +266,8 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 		slog.Int("count", len(itemsToUpload)),
 		slog.Float64("total_size_gb", math.Ceil(float64(totalSize)/1024/1024/1024)))
 
-	// Batch precheck for videos: validate exiftool results and ffmpeg availability before any
-	// upload. Videos that can't be prepared are skipped per-item later, not rejected here.
+	// Batch precheck for videos: validate exiftool results before any upload. Videos that can't
+	// be prepared are skipped per-item later, not rejected here.
 	if isVideos {
 		if err := precheckVideoTimezones(ctx, itemsToUpload); err != nil {
 			return err
@@ -435,22 +418,22 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 			slog.String("file", fileBasename),
 			slog.Any("albums", targetAlbumTitles))
 		if isVideoFile(fileInfo.path) {
-			logger.Debug("Would prepare video timezone before upload (Canon videos are remuxed to a QuickTime .mov)",
+			logger.Debug("Would prepare video timezone before upload (Canon videos are copied to a .mov name)",
 				slog.String("file", fileBasename))
 		}
 	} else {
 		// For videos, upload from a prepared temp copy so the queued original — the only
-		// surviving copy after the SD card is wiped — is never mutated. Canon videos are
-		// remuxed to a QuickTime .mov (the container Google needs to honor the timezone), so
-		// the upload path's basename may change extension to .mov; non-Canon videos upload
-		// their original unchanged.
+		// surviving copy after the SD card is wiped — is never mutated. Canon videos are copied
+		// to a .mov-named temp (the filename extension Google needs to honor the timezone), so
+		// the upload path's basename changes extension to .mov; non-Canon videos upload their
+		// original unchanged.
 		uploadPath := fileInfo.path
 		if isVideoFile(fileInfo.path) {
 			var cleanup func()
 			var err error
 			uploadPath, cleanup, err = prepareVideoForUploadFn(ctx, fileInfo.path)
 			if err != nil {
-				// A prepare failure (e.g. a remux ffmpeg cannot rewrap) must not abort the whole
+				// A prepare failure (e.g. exiftool cannot tag the copy) must not abort the whole
 				// batch. Skip this one video — leaving the original queued so a later run retries
 				// it — and move on. Context cancellation is the exception: propagate it so Ctrl-C
 				// stops the run instead of churning through the rest of the queue.
@@ -464,7 +447,7 @@ func uploadMediaItem(ctx context.Context, keepQueued bool, localConfig LocalConf
 			}
 			defer cleanup()
 		}
-		// Google sees the prepared file's name (e.g. <stem>.mov for a remuxed Canon video),
+		// Google sees the prepared file's name (e.g. <stem>.mov for a Canon video),
 		// both in the raw upload header and in SimpleMediaItem.Filename below.
 		uploadBasename := filepath.Base(uploadPath)
 

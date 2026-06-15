@@ -38,8 +38,7 @@ Before installing, be aware that Camflow requires a one-time setup of Google API
 2.  **Google Cloud Project**: To upload to your personal Google Photos account, you must create a project and generate OAuth 2.0 credentials (`client_id` and `client_secret`).
     > **Guide:** Follow this tutorial to obtain your credentials:
     > [https://gilesknap.github.io/gphotos-sync/main/tutorials/oauth2.html](https://gilesknap.github.io/gphotos-sync/main/tutorials/oauth2.html)
-3. **exiftool**: Ensure you have [exiftool](https://exiftool.org/) installed. (On macOS, you can run `brew install exiftool`.)
-4. **ffmpeg**: Ensure you have [ffmpeg](https://ffmpeg.org/) installed. (On macOS, you can run `brew install ffmpeg`.) Camflow uses it to losslessly remux camera videos to a QuickTime container before upload, which is what makes Google Photos display them in the correct capture timezone. See [Google Photos video timezone](docs/google-photos-video-timezone.md) for the full story.
+3. **exiftool**: Ensure you have [exiftool](https://exiftool.org/) installed. (On macOS, you can run `brew install exiftool`.) Camflow uses it to read capture metadata and to tag camera videos (with a `.mov`-named copy) so Google Photos displays them in the correct capture timezone. See [Google Photos video timezone](docs/google-photos-video-timezone.md) for the full story.
 
 ## Installation
 Currently, Camflow must be built from source.
