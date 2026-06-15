@@ -167,8 +167,9 @@ video + AAC (`mp4a`) audio — the answer is: low risk. Reason through it on one
   by extension. None of these is in the upload path.
 
 Two things bound the risk further. **The direction of the lie is the safe one:** MP4
-is a constrained derivative of the QuickTime file format and shares its box grammar,
-so naming `mp42 → .mov` points the file at its more permissive ancestor — a
+is a constrained derivative of the QuickTime file format and shares its box grammar
+(MP4 was standardized *from* Apple's QTFF — see References), so naming `mp42 → .mov`
+points the file at its more permissive ancestor — a
 QuickTime parser handed `avc1`/`mp4a`/`moov…` boxes understands them because those
 *are* QuickTime boxes. (The dangerous direction is the reverse: a genuinely
 QuickTime-only feature in a file named `.MP4`.) And **the rename can't touch codecs**
@@ -232,7 +233,22 @@ dimensions/fps).
 
 ## References
 
-- Apple `com.apple.quicktime.creationdate` (QuickTime metadata `mdta` keys).
-- ISO base media file format `ftyp` major brand (`qt` vs `mp42`) — relevant to the
-  format, but *not* the signal Google keys on (the filename extension is).
+- Apple, *QuickTime File Format Specification* — defines the QuickTime box
+  structure and the `com.apple.quicktime.creationdate` (`mdta`) keys.
+  <https://developer.apple.com/documentation/quicktime-file-format> (classic
+  version: <https://developer.apple.com/standards/classic-quicktime/>).
+- **MP4 is a derivative of QuickTime.** ISO based the MPEG-4 file format on Apple's
+  QTFF; the modern lineage is ISO/IEC 14496-12 (*ISO base media file format*) plus
+  14496-14 (*MP4 file format*). This is *why* an `mp42`-brand file shares
+  QuickTime's box grammar and a QuickTime parser reads it — the basis for the
+  "renaming `.MP4` → `.mov` points at the permissive ancestor" argument above.
+  Overview: <https://en.wikipedia.org/wiki/MP4_file_format>.
+- **`ftyp` brand, not extension, identifies the format.** ISO/IEC 14496-12 defines
+  the `ftyp` box's `major_brand`/`compatible_brands`; by design a reader that
+  understands only a subset of the listed brands can still parse the file. That is
+  the spec-level basis for "content-sniffing players key on the `ftyp` brand"
+  (`qt` vs `mp42`) — relevant to the format, but *not* the signal Google keys on
+  (the filename extension is). Overviews:
+  <https://en.wikipedia.org/wiki/ISO_base_media_file_format>, Library of Congress
+  FDD <https://www.loc.gov/preservation/digital/formats/fdd/fdd000079.shtml>.
 - Google Photos Library API: `mediaItems.get`, `mediaItems.patch` (description-only).
