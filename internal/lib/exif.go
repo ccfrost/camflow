@@ -384,11 +384,14 @@ func prepareVideoForUpload(ctx context.Context, path string) (uploadPath string,
 // file merely renamed .mov is honored; a real qt container named .MP4 is mangled); see
 // docs/google-photos-video-timezone.md.
 //
-// So we copy the Canon MP4 to a <stem>.mov temp (no remux, no transcode — an unmodified byte
-// copy, which Google still decodes and plays), then add the creationdate atom (local
-// wall-clock + offset) and set the mvhd create/modify dates to the true UTC instant. The
-// caller presents that .mov name to Google. The queued original — the only surviving copy
-// after the SD card is wiped — is never touched. On any failure the per-run temp dir is removed.
+// So we run a single exiftool -o pass that reads the Canon MP4 and writes a <stem>.mov temp
+// copy — no remux, no transcode; the bitstream is copied verbatim and Google still decodes and
+// plays it — while adding the creationdate atom (local wall-clock + offset) and setting the mvhd
+// create/modify dates to the true UTC instant. The caller presents that .mov name to Google.
+// -o opens the source read-only, so the queued original — the only surviving copy after the SD
+// card is wiped — is never written; we also guard that explicitly (temp path != source) and
+// re-stat the original afterward to prove it was untouched. On any failure the per-run temp dir
+// is removed.
 func copyAndTagCanonVideo(ctx context.Context, path, dto, oto string) (uploadPath string, cleanup func(), err error) {
 	noop := func() {}
 
@@ -420,30 +423,58 @@ func copyAndTagCanonVideo(ctx context.Context, path, dto, oto string) (uploadPat
 	base := filepath.Base(path)
 	temp := filepath.Join(tempDir, strings.TrimSuffix(base, filepath.Ext(base))+".mov")
 
-	// Copy the Canon MP4 to the .mov-named temp. The .mov extension is the whole fix; the bytes
-	// are an unmodified copy (no remux/transcode), so this works for any camera regardless of
-	// whether its streams are .mov-muxable. Cross-device safe: copyFile writes within tempDir.
-	fi, err := os.Stat(path)
+	// Guard the irreplaceable original: -o must create a NEW file, never the source. temp lives in
+	// a fresh per-run temp dir so it can't collide in practice, but assert it so a future edit
+	// can't silently turn this into an in-place write of the only surviving copy.
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", noop, fmt.Errorf("failed to resolve %s: %w", path, err)
+	}
+	absTemp, err := filepath.Abs(temp)
+	if err != nil {
+		return "", noop, fmt.Errorf("failed to resolve %s: %w", temp, err)
+	}
+	if filepath.Clean(absPath) == filepath.Clean(absTemp) {
+		return "", noop, fmt.Errorf("refusing to tag in place: temp %s resolves to source %s", temp, path)
+	}
+
+	// Snapshot the original's size+mtime so we can prove below that the copy-and-tag pass left it
+	// untouched.
+	origInfo, err := os.Stat(path)
 	if err != nil {
 		return "", noop, fmt.Errorf("failed to stat %s: %w", path, err)
 	}
-	if err := copyFile(path, temp, fi.Size(), fi.ModTime(), nil /*bar*/); err != nil {
-		return "", noop, fmt.Errorf("failed to copy %s to temp: %w", path, err)
-	}
 
-	// Add the Apple creationdate atom (local wall-clock + offset) and set the mvhd create/modify
-	// dates to the true UTC instant. QuickTimeUTC=0 makes exiftool store these literally instead
-	// of applying its own UTC conversion.
-	tag := exec.CommandContext(ctx, exiftoolPath, "-api", "QuickTimeUTC=0", "-overwrite_original",
+	// Copy-and-tag in a single exiftool pass: -o reads the Canon MP4 and writes the tagged .mov
+	// copy, opening the source read-only (never modifying it). The .mov extension is the whole fix;
+	// the bitstream is copied verbatim (no remux/transcode), so this works for any camera
+	// regardless of whether its streams are .mov-muxable. The same pass adds the Apple creationdate
+	// atom (local wall-clock + offset) and sets the mvhd create/modify dates to the true UTC
+	// instant. QuickTimeUTC=0 makes exiftool store these literally instead of applying its own UTC
+	// conversion.
+	copyTag := exec.CommandContext(ctx, exiftoolPath, "-api", "QuickTimeUTC=0",
+		"-o", temp,
 		"-Keys:CreationDate="+dto+oto,
 		"-QuickTime:CreateDate="+utc,
 		"-QuickTime:ModifyDate="+utc,
-		temp)
-	if out, runErr := tag.CombinedOutput(); runErr != nil {
+		path)
+	if out, runErr := copyTag.CombinedOutput(); runErr != nil {
 		if ctx.Err() != nil {
 			return "", noop, ctx.Err()
 		}
 		return "", noop, fmt.Errorf("failed to tag %s: %w: %s", path, runErr, strings.TrimSpace(string(out)))
+	}
+
+	// Prove the only surviving copy was not mutated: a read-only -o leaves size and mtime
+	// unchanged, whereas an accidental in-place write would grow the file (atom added) and/or bump
+	// the mtime. Abort loudly rather than risk having silently corrupted the original.
+	after, err := os.Stat(path)
+	if err != nil {
+		return "", noop, fmt.Errorf("failed to re-stat %s after tagging: %w", path, err)
+	}
+	if after.Size() != origInfo.Size() || !after.ModTime().Equal(origInfo.ModTime()) {
+		return "", noop, fmt.Errorf("original %s changed during tagging (size %d->%d, mtime %s->%s); aborting to avoid corrupting the only copy",
+			path, origInfo.Size(), after.Size(), origInfo.ModTime(), after.ModTime())
 	}
 
 	// Verify the result is exactly what Google needs: the atom encoding exactly Canon's

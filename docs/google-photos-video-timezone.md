@@ -221,8 +221,10 @@ camflow tags camera videos with the `com.apple.quicktime.creationdate` atom and
 uploads them under a `.mov` filename, from a temp copy so the queued original is
 never touched. See `internal/lib/exif.go` (`copyAndTagCanonVideo`).
 
-It does this with a plain byte copy to a `<stem>.mov` temp plus an `exiftool` tag —
-**no remux or transcode.** Earlier versions losslessly remuxed the MP4 to a
+It does this in a single `exiftool -o` pass that copies the source to a `<stem>.mov`
+temp and tags it at once — **no remux or transcode.** `-o` opens the source
+read-only, so the queued original is never written (camflow also re-stats it
+afterward to prove size+mtime are unchanged). Earlier versions losslessly remuxed the MP4 to a
 QuickTime (`qt`) container with `ffmpeg`, on the belief that the container brand was
 the lever; the factorial above showed it isn't (the `.mov` filename is), so the
 `ffmpeg` step — and the hard `ffmpeg` dependency and the "stream must be

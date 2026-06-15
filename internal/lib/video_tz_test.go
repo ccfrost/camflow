@@ -269,10 +269,10 @@ func TestSameWallClock(t *testing.T) {
 	assert.False(t, sameWallClock("2026:04:03 16:37:51-08:00", "2026:04:03 16:37:51"))
 }
 
-// TestCopyAndTagCanonVideo_HappyPath exercises the real copy + exiftool tag + verify (no stubs)
-// on a generated video, locking in the exiftool arg strings and the mvhd set. It skips when
-// ffmpeg/exiftool are unavailable (ffmpeg only generates the fixture; the function itself no
-// longer needs it) so the unit suite still runs without them.
+// TestCopyAndTagCanonVideo_HappyPath exercises the real single-pass exiftool -o copy-and-tag +
+// verify (no stubs) on a generated video, locking in the exiftool arg strings and the mvhd set.
+// It skips when ffmpeg/exiftool are unavailable (ffmpeg only generates the fixture; the function
+// itself no longer needs it) so the unit suite still runs without them.
 func TestCopyAndTagCanonVideo_HappyPath(t *testing.T) {
 	for _, tool := range []string{"ffmpeg", "exiftool"} {
 		if _, err := exec.LookPath(tool); err != nil {
@@ -288,6 +288,9 @@ func TestCopyAndTagCanonVideo_HappyPath(t *testing.T) {
 	if out, err := gen.CombinedOutput(); err != nil {
 		t.Fatalf("failed to generate test mp4: %v\n%s", err, out)
 	}
+
+	srcInfoBefore, err := os.Stat(src)
+	require.NoError(t, err)
 
 	const dto, oto = "2026:04:03 16:37:51", "-08:00"
 	uploadPath, cleanup, err := copyAndTagCanonVideo(context.Background(), src, dto, oto)
@@ -317,6 +320,13 @@ func TestCopyAndTagCanonVideo_HappyPath(t *testing.T) {
 	origR, err := singleExifResult(origRes, src)
 	require.NoError(t, err)
 	assert.Empty(t, origR.CreationDate, "the original must not be tagged (only the .mov copy is)")
+
+	// Stronger than the atom check above: -o opens the source read-only, so its size and mtime
+	// must be byte-for-byte unchanged. This locks in copyAndTagCanonVideo's own post-tag guard.
+	srcInfoAfter, err := os.Stat(src)
+	require.NoError(t, err)
+	assert.Equal(t, srcInfoBefore.Size(), srcInfoAfter.Size(), "original size must not change")
+	assert.True(t, srcInfoBefore.ModTime().Equal(srcInfoAfter.ModTime()), "original mtime must not change")
 
 	// cleanup removes the per-run temp dir.
 	cleanup()
