@@ -193,6 +193,19 @@ func TestPrecheckVideoTimezones(t *testing.T) {
 		err := precheckVideoTimezones(context.Background(), items("/q/a.mp4", "/q/b.mp4"))
 		require.Error(t, err)
 	})
+
+	t.Run("non-video files are filtered out of the batch", func(t *testing.T) {
+		stubVideoTimezoneExif(t, func(_ context.Context, paths []string) ([]videoTimezoneExif, error) {
+			// The stray non-video files must never reach exiftool; only the video is prechecked.
+			assert.Equal(t, []string{"/q/a.mp4"}, paths)
+			out := make([]videoTimezoneExif, len(paths))
+			for i, p := range paths {
+				out[i] = videoTimezoneExif{Path: p, CreationDate: "2026:04:03 16:37:51-08:00"}
+			}
+			return out, nil
+		})
+		assert.NoError(t, precheckVideoTimezones(context.Background(), items("/q/a.mp4", "/q/sidecar.xmp", "/q/note.txt")))
+	})
 }
 
 func TestPrepareVideoForUpload_DirectUploadWhenNonCanonExplicitTz(t *testing.T) {

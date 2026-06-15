@@ -122,9 +122,17 @@ func cleanupOrphanedVideoTimezoneTempFiles(cacheRoot string, dryRun bool) error 
 // Canon DateTimeOriginal+OffsetTimeOriginal) is NOT rejected here: it is skipped per-item at
 // upload time (prepareVideoForUpload errors, uploadMediaItem leaves it queued), so one such video
 // does not abort the whole batch.
+//
+// Non-video files are filtered out so the precheck covers exactly the files the per-item prepare
+// step touches (also guarded by isVideoFile). The upload queue is not extension-filtered, so a
+// stray non-video file would otherwise be sent to exiftool here and, if unreadable, fail the whole
+// batch — yet be skipped at upload time anyway.
 func precheckVideoTimezones(ctx context.Context, items []itemFileInfo) error {
 	paths := make([]string, 0, len(items))
 	for _, item := range items {
+		if !isVideoFile(item.path) {
+			continue // non-video files are skipped per-item at upload, so don't precheck them
+		}
 		paths = append(paths, item.path)
 	}
 	results, err := getVideoTimezoneExifFn(ctx, paths)
