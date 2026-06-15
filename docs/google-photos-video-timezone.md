@@ -8,22 +8,28 @@ MP4s**, not phone videos.
 
 Keywords (so this is findable): google photos api video wrong time / wrong
 timezone / off by hours / previous day, `mediaMetadata.creationTime`, MP4 vs MOV,
-`com.apple.quicktime.creationdate`, ftyp brand `mp42` vs `qt`.
+`com.apple.quicktime.creationdate`, `.MP4` vs `.mov` filename extension, ftyp
+brand `mp42` vs `qt`.
 
 ## TL;DR
 
-- **Cause:** Google honors a video's timezone offset only when it's delivered as a
-  **QuickTime `.mov`** (`ftyp` brand `qt`), not an **MP4** (`mp42`) — what Canon and
-  many cameras write. With an MP4 it mis-parses the timestamp and the displayed time
-  lands off by the offset. **It's the container, not the metadata** (exactly which
-  container signal — brand, extension, or upload MIME — isn't isolated; see below).
-- **Fix:** losslessly **remux MP4 → MOV** (`ffmpeg -c copy`, no re-encode) and add a
-  `com.apple.quicktime.creationdate` atom carrying the offset. Nothing you do at the
-  metadata layer alone works.
+- **Cause:** Google honors a video's timezone offset only when the **filename it
+  receives ends in `.mov`**. Upload the same bytes named `.MP4` — what Canon and
+  many cameras write — and it mis-parses the timestamp, landing the displayed time
+  off by the offset. The offset lives in the `com.apple.quicktime.creationdate`
+  atom; whether Google trusts it is decided by the **filename extension**, *not* by
+  the file's `ftyp` container brand and *not* by the upload MIME type (both proven
+  irrelevant — see [Which signal is it](#which-signal-is-it-the-filename-extension)).
+- **Fix:** make sure the file carries a `com.apple.quicktime.creationdate` atom
+  with the offset, and **upload it under a `.mov` filename**. That's it — you do
+  **not** need to transcode or even remux; an untouched Canon MP4 simply *renamed*
+  `.mov` is honored. (Earlier guidance here said you must remux MP4 → QuickTime
+  `.mov`; that does work, but the container change it makes is incidental — the
+  `.mov` name is doing the work. See below.)
 - **Biggest trap:** the API's `creationTime` and the web UI show a **transient**
-  value right after upload that *settles* to the (wrong) value 30–60+ minutes later.
-  Checking too early gives a false "it works." **Only trust the settled value,
-  >1 hour after upload.**
+  value right after upload that *settles* to the (correct or wrong) value 30–60+
+  minutes later. Checking too early gives a false reading. **Only trust the settled
+  value, >1 hour after upload.**
 
 ## Worked example
 
@@ -32,10 +38,10 @@ A Canon clip shot at **2026-06-06 07:55:00 −08:00** (true instant
 
 | | what Google stores as `creationTime` | what the UI shows |
 |---|---|---|
-| **Correct** | `2026-06-06T15:55:00Z` | Jun 6, 7:55 AM |
-| **The bug** | `2026-06-06T07:55:00Z` (local wall-clock mislabelled as `Z`) | Jun **5**, 11:55 PM |
+| **Correct** (uploaded as `.mov`) | `2026-06-06T15:55:00Z` | Jun 6, 7:55 AM |
+| **The bug** (uploaded as `.MP4`) | `2026-06-06T07:55:00Z` (local wall-clock mislabelled as `Z`) | Jun **5**, 11:55 PM |
 
-Google takes the local wall-clock from the file and treats it as if it were UTC,
+Google takes the local wall-clock from the atom and treats it as if it were UTC,
 then the UI re-applies the offset — so the time ends up wrong by (roughly) the
 offset, here landing on the previous day.
 
@@ -47,49 +53,60 @@ offset, here landing on the previous day.
 - The standard MP4 date atoms (`mvhd`, `tkhd`, `mdhd`) are UTC-only by spec — no
   timezone field. Apple added `com.apple.quicktime.creationdate` (in `moov/meta`,
   handler `mdta`) to carry an explicit offset like `2026-06-06T07:55:00-08:00`, and
-  Google honors it — **but only in a QuickTime-brand container.**
-- **Phone videos are already QuickTime** (`.mov`, brand `qt`), so they display
-  correctly and nobody notices. The bug only surfaces for camera MP4s, which is why
-  it's underreported.
+  Google honors it — **but only when the file is presented with a `.mov` filename.**
+- **Phone videos are already `.mov`**, so they display correctly and nobody
+  notices. The bug only surfaces for camera MP4s (`.MP4`), which is why it's
+  underreported.
 
 ## What does NOT fix it
 
 We tested each of these and checked the **settled** `creationTime` hours later. All
-of them still mangle, because they only change metadata, not the container brand:
+still mangle — because they leave the upload **named `.MP4`** and only change
+metadata or the container:
 
-| Attempt | container | settled `creationTime` | result |
+| Attempt | uploaded as | settled `creationTime` | result |
 |---|---|---|---|
-| Add the `com.apple.quicktime.creationdate` atom (offset correct) | `mp42` | `…07:55:00Z` | ❌ wrong |
-| Atom **+ rewrite `mvhd`/track dates to local time** (mimic iPhone) | `mp42` | `…07:55:00Z` | ❌ wrong |
-| Atom **+ strip all EXIF / maker-note / GPS** metadata | `mp42` | `…07:55:00Z` | ❌ wrong |
+| Add the `com.apple.quicktime.creationdate` atom (offset correct) | `.MP4` | `…07:55:00Z` | ❌ wrong |
+| Atom **+ rewrite `mvhd`/track dates to local time** (mimic iPhone) | `.MP4` | `…07:55:00Z` | ❌ wrong |
+| Atom **+ strip all EXIF / maker-note / GPS** metadata | `.MP4` | `…07:55:00Z` | ❌ wrong |
+| Atom **+ losslessly remux to a QuickTime (`qt`-brand) container**, still named `.MP4` | `.MP4` | `…07:55:00Z` | ❌ wrong |
+
+The first three were long read as "metadata can't fix it." The fourth row is the
+telling one: even a genuine QuickTime-brand container is mangled if it's **named
+`.MP4`**. So the lever was never the metadata *or* the container brand — it was the
+filename extension all along, and every failed attempt above happened to keep the
+`.MP4` name.
 
 Notably, the atom + local-`mvhd` and the fully-stripped files looked **correct for
 the first ~50 minutes**, then drifted to the wrong value — see the verification trap
 below. Do not be fooled.
 
 (Also: do **not** end up with two `meta` blocks in `moov` — e.g. from an ffmpeg
-trim that added an empty one with `-movflags use_metadata_tags` — Google picks the
-empty one and ignores your atom entirely. A clean single-pass remux avoids this.)
+trim that added an empty one with `-movflags use_metadata_tags`— Google picks the
+empty one and ignores your atom entirely. A clean single-pass edit avoids this.)
 
 ## What DOES fix it
 
-Make the file a **QuickTime container** and carry the offset in the atom:
+Carry the offset in the atom and **upload under a `.mov` filename**:
 
-| Attempt | container | settled `creationTime` | result |
+| Attempt | uploaded as | settled `creationTime` | result |
 |---|---|---|---|
-| Same camera content **remuxed to `.mov`** + atom | `qt` | `…15:55:00Z` | ✅ correct |
-| A genuine iPhone `.mov` (positive control) | `qt` | true instant | ✅ correct |
+| Canon MP4 (brand `mp42`) **merely renamed `.mov`** + atom | `.mov` | `…15:55:00Z` | ✅ correct |
+| Same content remuxed to a `qt`-brand container + atom, named `.mov` | `.mov` | `…15:55:00Z` | ✅ correct |
+| A genuine iPhone `.mov` (positive control) | `.mov` | true instant | ✅ correct |
 
-Recipe (lossless — no re-encode):
+The first row is the key one: **no remux, no transcode** — the same `mp42` Canon
+bytes, just renamed, are honored. The remux in row 2 also works, but it's doing
+more than necessary; the `.mov` extension is what Google keys on.
+
+Minimal recipe (no ffmpeg):
 
 ```sh
-# 1. Remux MP4 -> QuickTime .mov ('qt' brand). -map 0 keeps every stream; -c copy
-#    rewraps without re-encoding (near-instant, no quality loss).
-ffmpeg -nostdin -y -loglevel error -i in.MP4 -map 0 -c copy out.mov
-
-# 2. Add the creationdate atom (local wall-clock + offset) and restore the mvhd
-#    create/modify dates, which ffmpeg zeroes, to the true UTC instant.
-#    QuickTimeUTC=0 makes exiftool store these literally, without its own UTC shift.
+# Write the creationdate atom (local wall-clock + offset) onto a .mov-named copy,
+# and set the mvhd create/modify dates to the true UTC instant. QuickTimeUTC=0
+# makes exiftool store these literally, without its own UTC shift. (Editing a copy
+# keeps your original untouched.)
+cp in.MP4 out.mov
 exiftool -api QuickTimeUTC=0 -overwrite_original \
   '-Keys:CreationDate=2026:06:06 07:55:00-08:00' \
   '-QuickTime:CreateDate=2026:06:06 15:55:00' \
@@ -99,30 +116,40 @@ exiftool -api QuickTimeUTC=0 -overwrite_original \
 
 The offset values come from the camera's own EXIF (`DateTimeOriginal` +
 `OffsetTimeOriginal`); the UTC instant is just `DateTimeOriginal` converted by the
-offset. Upload the `.mov`. Google now displays the correct local time.
+offset. **Upload `out.mov`** (the `.mov` name must reach Google — via the upload
+file name and/or `simpleMediaItem.fileName`). Google now displays the correct local
+time.
 
-### Which signal is it exactly?
+### Which signal is it: the filename extension
 
-The fix works, and metadata is definitely *not* the lever (every metadata-only
-attempt failed). But the working file differs from the broken one in **three** ways
-that always move together when you remux:
+The fix differs from the broken upload in **three** ways that all move together
+when you "remux to `.mov`":
 
-- the **`ftyp` container brand** (`qt` vs `mp42`),
-- the **filename extension** (`.mov` vs `.MP4`), and
+- the **filename extension** (`.mov` vs `.MP4`),
+- the **`ftyp` container brand** (`qt` vs `mp42`), and
 - the **upload `Content-Type`** (`video/quicktime` vs `video/mp4`).
 
-We did **not** isolate which of the three Google actually keys on — "container brand"
-is the most likely but unconfirmed. To disambiguate, upload a `qt`-brand file *named*
-`.MP4` with a `video/mp4` MIME and check the settled value. For the fix it doesn't
-matter (a real `.mov` makes all three correct at once), but if you report this
-upstream, don't over-claim it's specifically the brand.
+We isolated which one Google keys on with a full **2³ factorial** — all eight
+combinations of (extension × brand × MIME), each a byte-distinct upload, read at the
+**settled** value:
+
+- **Filename extension: 4-of-4 honored as `.mov`, 0-of-4 as `.MP4`** — the lever.
+- `ftyp` brand (`qt` vs `mp42`): 2-of-4 each way — **no effect**.
+- Upload MIME (`video/quicktime` vs `video/mp4`): 2-of-4 each way — **no effect**.
+
+The two decisive cells: an `mp42`-brand Canon file *renamed* `.mov` and uploaded as
+`video/mp4` was **honored**; a genuine `qt`-brand remux *named* `.MP4` was
+**mangled**. So the `.mov` extension is **necessary and sufficient**; brand and MIME
+do nothing. (Tested `.mov` vs `.MP4` specifically; we did not separately probe case
+variants or whether Google reads the extension from the upload header vs the
+`fileName` field — we set both to the same value.)
 
 ## How to verify — and the trap that fools everyone
 
 **Google reports a transient timestamp right after upload, then settles to a
 different one 30–60+ minutes later.** A correct-looking value at 5 minutes means
 nothing. This is the single biggest time-sink here — it produced false "it works"
-verdicts twice during this investigation.
+verdicts more than once during this investigation.
 
 Verify like this:
 
@@ -144,20 +171,31 @@ Verify like this:
     only return items **your app created**. You can't inspect arbitrary library items.
   - **Dedup:** re-uploading a file that's already in the library (e.g. a video you
     downloaded *from* Google Photos) is deduplicated to the existing item — which
-    your app may not be able to read. Use freshly-distinct content for controls.
+    your app may not be able to read. Dedup is byte-hash based, so any metadata edit
+    (a different atom timestamp) yields a distinct item; use distinct content for
+    controls.
 - **The diagnostic signal** is the *settled* `creationTime`: `true-instant Z`
   (honored) vs `local-wall-clock Z` (mangled). That's a far cleaner read than
   eyeballing the UI. A known-good iPhone `.mov` makes a good positive control.
 
 ## How camflow handles this
 
-camflow remuxes camera videos to QuickTime `.mov` and adds the atom before upload,
-from a temp copy so the queued original is never touched. See
-`internal/lib/exif.go` (`remuxAndTagCanonVideo`). This is why `ffmpeg` is a required
-dependency.
+camflow tags camera videos with the `com.apple.quicktime.creationdate` atom and
+uploads them under a `.mov` filename, from a temp copy so the queued original is
+never touched. See `internal/lib/exif.go` (`remuxAndTagCanonVideo`).
+
+Historically that function *also* losslessly remuxed the MP4 to a QuickTime (`qt`)
+container with `ffmpeg`, on the belief that the container brand was the lever. The
+factorial above shows it isn't — the `.mov` filename (which the code already
+applies) is what matters — so the remux step is more than necessary and is a
+candidate for removal (which would drop the hard `ffmpeg` dependency and the
+"stream must be `.mov`-muxable" failure mode). That simplification is being
+validated end-to-end before the code changes; until then, the remux remains as
+harmless belt-and-suspenders.
 
 ## References
 
 - Apple `com.apple.quicktime.creationdate` (QuickTime metadata `mdta` keys).
-- ISO base media file format `ftyp` major brand (`qt` vs `mp42`).
+- ISO base media file format `ftyp` major brand (`qt` vs `mp42`) — relevant to the
+  format, but *not* the signal Google keys on (the filename extension is).
 - Google Photos Library API: `mediaItems.get`, `mediaItems.patch` (description-only).
