@@ -1,14 +1,12 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
-	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -234,39 +232,6 @@ Successfully uploaded videos are deleted from upload queue unless --keep is spec
 	}
 	uploadVideosCmd.Flags().BoolP("keep", "k", false, "Keep videos in upload queue after upload")
 	rootCmd.AddCommand(&uploadVideosCmd)
-
-	markVideosUploadedCmd := cobra.Command{
-		Use:   "mark-videos-uploaded",
-		Short: "Move videos from upload queue to uploaded directory without uploading",
-		Long: `Move videos from the upload queue to the uploaded directory.
-This is a workaround for video uploads not preserving the video's timezone.`,
-		Args: cobra.NoArgs,
-		Run: func(cmd *cobra.Command, args []string) {
-			// Confirm with user to protect against accidental invocation.
-			if !dryRun {
-				reader := bufio.NewReader(os.Stdin)
-				fmt.Print("Confirm: move all videos in upload queue to the uploaded directory? [y/N]: ")
-				response, err := reader.ReadString('\n')
-				if err != nil {
-					fmt.Fprintln(os.Stderr, "error: failed to read confirmation:", err)
-					os.Exit(1)
-				}
-
-				response = strings.TrimSpace(strings.ToLower(response))
-				if response != "y" && response != "yes" {
-					fmt.Println("Aborted")
-					return
-				}
-			}
-
-			ctx := context.Background()
-			if err := lib.MarkVideosUploaded(ctx, cfg, dryRun); err != nil {
-				fmt.Fprintln(os.Stderr, "error:", err)
-				os.Exit(1)
-			}
-		},
-	}
-	rootCmd.AddCommand(&markVideosUploadedCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)

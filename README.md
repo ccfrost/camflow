@@ -28,7 +28,7 @@ Camflow is designed for a "Curate & Edit" philosophy:
 
 3.  **Upload (Photos)**: Run `camflow upload-photos`. Your images are uploaded to Google Photos and then moved to the upload archive.
 
-4.  **Upload (Videos)**: *Video upload is currently manual to preserve metadata.* Upload them via the browser, then run `camflow mark-videos-uploaded` to move the files to the upload archive.
+4.  **Upload (Videos)**: Run `camflow upload-videos`. Your videos are uploaded to Google Photos (tagged so they display in the correct capture timezone) and then moved to the upload archive.
 
 ## Prerequisites
 
@@ -79,14 +79,13 @@ camflow upload-photos
 ```
 *This uploads the photos, adds them to the desired albums, and moves the local files to your uploaded directory.*
 
-### 3. Upload Videos (Manual Upload)
-Currently, we recommend uploading videos manually via the Google Photos website, to preserve their metadata.
+### 3. Upload Videos
+Run this to upload the videos in your video upload queue.
 
-1.  Drag your video files from the **Video Upload Queue** directory into the Google Photos website.
-2.  Run this command to move the videos from your upload queue into your uploaded directory:
-    ```bash
-    camflow mark-videos-uploaded
-    ```
+```bash
+camflow upload-videos
+```
+*This uploads the videos — tagging each one (with a `.mov`-named copy) so Google Photos displays it in the correct capture timezone — and moves the local files to your uploaded directory. See [Google Photos video timezone](docs/google-photos-video-timezone.md) for the full story.*
 
 ### Check Version
 ```bash
