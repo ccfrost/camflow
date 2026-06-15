@@ -15,5 +15,5 @@ func UploadPhotos(ctx context.Context, cfg config.CamflowConfig, cacheDirFlag st
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
-	return uploadMediaItems(ctx, cacheDirFlag, keepQueued, &cfg.LocalPhotos, &cfg.GooglePhotos.Photos, "photos", gphotosClient, dryRun)
+	return uploadMediaItems(ctx, cacheDirFlag, keepQueued, &cfg.LocalPhotos, &cfg.GooglePhotos.Photos, photoKind, gphotosClient, dryRun)
 }

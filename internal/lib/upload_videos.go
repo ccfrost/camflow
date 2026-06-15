@@ -15,5 +15,5 @@ func UploadVideos(ctx context.Context, cfg config.CamflowConfig, cacheDirFlag st
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("invalid config: %w", err)
 	}
-	return uploadMediaItems(ctx, cacheDirFlag, keepQueued, &cfg.LocalVideos, &cfg.GooglePhotos.Videos, "videos", gphotosClient, dryRun)
+	return uploadMediaItems(ctx, cacheDirFlag, keepQueued, &cfg.LocalVideos, &cfg.GooglePhotos.Videos, videoKind, gphotosClient, dryRun)
 }

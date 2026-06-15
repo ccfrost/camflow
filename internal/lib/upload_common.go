@@ -221,16 +221,30 @@ func moveToUploaded(localConfig LocalConfig, fileInfo itemFileInfo, dryRun bool)
 	return destPath, nil
 }
 
+// mediaKind describes a category of uploadable media. It pairs the human-readable plural
+// name used in summaries with the capability flags that gate kind-specific behavior, so the
+// behavior is selected by a typed field rather than by string-matching the display name.
+type mediaKind struct {
+	// pluralName is the lowercase plural used in user-facing summaries ("photos", "videos").
+	pluralName string
+	// prepareVideoTimezone enables the Canon video timezone pipeline: a batch precheck before
+	// upload, a per-item .mov copy/tag at upload time, and crash-orphan temp-dir cleanup.
+	prepareVideoTimezone bool
+}
+
+var (
+	photoKind = mediaKind{pluralName: "photos"}
+	videoKind = mediaKind{pluralName: "videos", prepareVideoTimezone: true}
+)
+
 // uploadMediaItems uploads media items from the upload queue dir to Google Photos.
 // Media items are added to Google Photos album named DefaultAlbum.
 // Uploaded media items are moved from upload queue to uploaded dir; unless keepQueued is true, in which case they are copied (but not moved).
 // The function is idempotent - if interrupted, it can be recalled to resume.
-func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, localConfig LocalConfig, gpConfig GPConfig, itemTypePluralName string, gphotosClient GPhotosClient, dryRun bool) (retErr error) {
-	isVideos := itemTypePluralName == "videos"
-
+func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, localConfig LocalConfig, gpConfig GPConfig, kind mediaKind, gphotosClient GPhotosClient, dryRun bool) (retErr error) {
 	// For videos, reclaim crash-orphaned temp dirs in the OS cache dir before anything else —
 	// they live outside the queue, so this must run even when the queue dir is gone.
-	if isVideos {
+	if kind.prepareVideoTimezone {
 		cacheRoot, err := videoTimezoneTempRoot()
 		if err != nil {
 			return err
@@ -268,7 +282,7 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 
 	// Batch precheck for videos: validate exiftool results before any upload. Videos that can't
 	// be prepared are skipped per-item later, not rejected here.
-	if isVideos {
+	if kind.prepareVideoTimezone {
 		if err := precheckVideoTimezones(ctx, itemsToUpload); err != nil {
 			return err
 		}
@@ -383,11 +397,11 @@ func uploadMediaItems(ctx context.Context, cacheDir string, keepQueued bool, loc
 	uploaded := len(itemsToUpload) - skipped
 	switch {
 	case dryRun:
-		fmt.Printf("Would have uploaded %d %s\n", len(itemsToUpload), itemTypePluralName)
+		fmt.Printf("Would have uploaded %d %s\n", len(itemsToUpload), kind.pluralName)
 	case skipped > 0:
-		fmt.Printf("Finished uploading %d %s (%d skipped, left in queue)\n", uploaded, itemTypePluralName, skipped)
+		fmt.Printf("Finished uploading %d %s (%d skipped, left in queue)\n", uploaded, kind.pluralName, skipped)
 	default:
-		fmt.Printf("Finished uploading %d %s\n", uploaded, itemTypePluralName)
+		fmt.Printf("Finished uploading %d %s\n", uploaded, kind.pluralName)
 	}
 	return nil
 }
