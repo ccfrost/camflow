@@ -144,6 +144,42 @@ do nothing. (Tested `.mov` vs `.MP4` specifically; we did not separately probe c
 variants or whether Google reads the extension from the upload header vs the
 `fileName` field — we set both to the same value.)
 
+## Does the rename confuse players?
+
+The fix names an MP4 `.mov` without changing the bytes, so a fair worry is whether
+players choke on the extension/format mismatch. For a typical Canon clip — `ftyp`
+brand `mp42` (compatible brands `mp42 avc1 CAEP`, **no `qt` brand**), H.264 (`avc1`)
+video + AAC (`mp4a`) audio — the answer is: low risk. Reason through it on one axis,
+**does the consumer sniff the content or dispatch on the extension?**
+
+- **Sniffers ignore the name.** The file *truthfully* declares `mp42` in its `ftyp`
+  box; a content-sniffing player reads that brand and box structure, picks the
+  MP4/QuickTime demuxer, and plays it — the extension is dead weight. This covers
+  every dominant engine: FFmpeg (VLC, mpv), browser media stacks, macOS
+  AVFoundation/QuickTime, and — proven here — Google's own pipeline, which processes
+  the renamed file `READY` with full dimensions/fps. The tell: `ffprobe` reports a
+  single unified demuxer, `mov,mp4,m4a,3gp,3g2,mj2`, for the whole family. The engine
+  that plays most of the world's video has no separate `.mov` vs `.MP4` code path.
+- **Extension-dispatch consumers are the only ones at risk**, and they're a narrow
+  set: an OS MIME association on download (`.mov` → `video/quicktime`) feeding a
+  downstream that trusts the label without sniffing; a conformance checker that flags
+  "brand `mp42` but named `.mov`"; an old/embedded player that picks a demuxer purely
+  by extension. None of these is in the upload path.
+
+Two things bound the risk further. **The direction of the lie is the safe one:** MP4
+is a constrained derivative of the QuickTime file format and shares its box grammar,
+so naming `mp42 → .mov` points the file at its more permissive ancestor — a
+QuickTime parser handed `avc1`/`mp4a`/`moov…` boxes understands them because those
+*are* QuickTime boxes. (The dangerous direction is the reverse: a genuinely
+QuickTime-only feature in a file named `.MP4`.) And **the rename can't touch codecs**
+— real "won't play `.mov`" failures are almost always a codec the player can't decode
+(e.g. HEVC), not the container; the bytes here stay H.264 + AAC, about as universally
+supported as it gets.
+
+To turn "low risk" into "verified," spot-play one tagged `.mov` in the consumers you
+care about — QuickTime Player, VLC, a browser `<video>`, and a phone — which between
+them exercise the macOS, FFmpeg, browser, and mobile stacks.
+
 ## How to verify — and the trap that fools everyone
 
 **Google reports a transient timestamp right after upload, then settles to a
