@@ -621,6 +621,8 @@ func TestAuthCallbackHandler(t *testing.T) {
 	t.Run("valid state and code delivers code", func(t *testing.T) {
 		w, resultCh := serve(t, "/?code=auth-code&state="+state)
 		assert.Equal(t, http.StatusOK, w.Code)
+		assert.Contains(t, w.Body.String(), "Camflow Authorization Received")
+		assert.NotContains(t, w.Body.String(), "Authentication Successful")
 		require.Len(t, resultCh, 1)
 		result := <-resultCh
 		assert.NoError(t, result.err)
@@ -720,7 +722,7 @@ func TestGetTokenFromWebPKCE(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "access", token.AccessToken)
 	assert.Equal(t, "refresh", token.RefreshToken)
-	assert.Contains(t, <-callbackBodyCh, "Camflow Authentication Successful")
+	assert.Contains(t, <-callbackBodyCh, "Camflow Authorization Received")
 
 	authQuery := <-authQueryCh
 	assert.Equal(t, "S256", authQuery.Get("code_challenge_method"))
@@ -728,6 +730,180 @@ func TestGetTokenFromWebPKCE(t *testing.T) {
 	tokenForm := <-tokenFormCh
 	assert.Equal(t, "auth-code", tokenForm.Get("code"))
 	assert.NotEmpty(t, tokenForm.Get("code_verifier"))
+	assertLoopbackListenerClosed(t, addr)
+}
+
+func TestGetTokenFromWebGracefulShutdown(t *testing.T) {
+	t.Run("listener closes before token exchange finishes", func(t *testing.T) {
+		addr := reserveLoopbackAddress(t)
+		exchangeStartedCh := make(chan struct{}, 1)
+		releaseExchangeCh := make(chan struct{})
+		var releaseExchangeOnce atomic.Bool
+		releaseExchange := func() {
+			if releaseExchangeOnce.CompareAndSwap(false, true) {
+				close(releaseExchangeCh)
+			}
+		}
+		defer releaseExchange()
+
+		tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			exchangeStartedCh <- struct{}{}
+			<-releaseExchangeCh
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"access_token":"access","refresh_token":"refresh","token_type":"Bearer","expires_in":3600}`)
+		}))
+		defer tokenServer.Close()
+
+		conf := testOAuthConfig(tokenServer.URL)
+		conf.RedirectURL = "http://" + addr
+		callbackBodyCh := make(chan string, 1)
+		type flowResult struct {
+			token *oauth2.Token
+			err   error
+		}
+		flowResultCh := make(chan flowResult, 1)
+		go func() {
+			token, err := getTokenFromWebWithBrowser(context.Background(), conf, func(authURL string) {
+				u, parseErr := url.Parse(authURL)
+				if parseErr != nil {
+					callbackBodyCh <- "parse error: " + parseErr.Error()
+					return
+				}
+				callbackURL := conf.RedirectURL + "?code=auth-code&state=" + url.QueryEscape(u.Query().Get("state"))
+				response, requestErr := (&http.Client{Timeout: 2 * time.Second}).Get(callbackURL)
+				if requestErr != nil {
+					callbackBodyCh <- "request error: " + requestErr.Error()
+					return
+				}
+				defer response.Body.Close()
+				body, readErr := io.ReadAll(response.Body)
+				if readErr != nil {
+					callbackBodyCh <- "read error: " + readErr.Error()
+					return
+				}
+				callbackBodyCh <- string(body)
+			})
+			flowResultCh <- flowResult{token: token, err: err}
+		}()
+
+		select {
+		case body := <-callbackBodyCh:
+			assert.Contains(t, body, "Camflow Authorization Received")
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for browser callback response")
+		}
+		select {
+		case <-exchangeStartedCh:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for token exchange")
+		}
+		assertLoopbackListenerClosed(t, addr)
+
+		releaseExchange()
+		select {
+		case result := <-flowResultCh:
+			require.NoError(t, result.err)
+			require.NotNil(t, result.token)
+			assert.Equal(t, "access", result.token.AccessToken)
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for OAuth flow to finish")
+		}
+	})
+
+	t.Run("exchange failure is not reported as browser success", func(t *testing.T) {
+		addr := reserveLoopbackAddress(t)
+		tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"error":"invalid_client"}`)
+		}))
+		defer tokenServer.Close()
+
+		conf := testOAuthConfig(tokenServer.URL)
+		conf.RedirectURL = "http://" + addr
+		callbackBodyCh := make(chan string, 1)
+		_, err := getTokenFromWebWithBrowser(context.Background(), conf, func(authURL string) {
+			u, parseErr := url.Parse(authURL)
+			if parseErr != nil {
+				callbackBodyCh <- "parse error: " + parseErr.Error()
+				return
+			}
+			callbackURL := conf.RedirectURL + "?code=auth-code&state=" + url.QueryEscape(u.Query().Get("state"))
+			response, requestErr := (&http.Client{Timeout: 2 * time.Second}).Get(callbackURL)
+			if requestErr != nil {
+				callbackBodyCh <- "request error: " + requestErr.Error()
+				return
+			}
+			defer response.Body.Close()
+			body, readErr := io.ReadAll(response.Body)
+			if readErr != nil {
+				callbackBodyCh <- "read error: " + readErr.Error()
+				return
+			}
+			callbackBodyCh <- string(body)
+		})
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "unable to retrieve token from web exchange")
+		select {
+		case body := <-callbackBodyCh:
+			assert.Contains(t, body, "Camflow Authorization Received")
+			assert.NotContains(t, body, "Authentication Successful")
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for browser callback response")
+		}
+		assertLoopbackListenerClosed(t, addr)
+	})
+
+	t.Run("denial response is flushed and listener closes", func(t *testing.T) {
+		addr := reserveLoopbackAddress(t)
+		conf := testOAuthConfig("http://127.0.0.1/unused")
+		conf.RedirectURL = "http://" + addr
+		callbackBodyCh := make(chan string, 1)
+		_, err := getTokenFromWebWithBrowser(context.Background(), conf, func(authURL string) {
+			u, parseErr := url.Parse(authURL)
+			if parseErr != nil {
+				callbackBodyCh <- "parse error: " + parseErr.Error()
+				return
+			}
+			callbackURL := conf.RedirectURL + "?error=access_denied&state=" + url.QueryEscape(u.Query().Get("state"))
+			response, requestErr := (&http.Client{Timeout: 2 * time.Second}).Get(callbackURL)
+			if requestErr != nil {
+				callbackBodyCh <- "request error: " + requestErr.Error()
+				return
+			}
+			defer response.Body.Close()
+			body, readErr := io.ReadAll(response.Body)
+			if readErr != nil {
+				callbackBodyCh <- "read error: " + readErr.Error()
+				return
+			}
+			callbackBodyCh <- string(body)
+		})
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "access_denied")
+		assert.Contains(t, <-callbackBodyCh, "Camflow Authentication Failed")
+		assertLoopbackListenerClosed(t, addr)
+	})
+
+	t.Run("pre-canceled context does not open browser and leaves listener closed", func(t *testing.T) {
+		addr := reserveLoopbackAddress(t)
+		conf := testOAuthConfig("http://127.0.0.1/unused")
+		conf.RedirectURL = "http://" + addr
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		browserOpenedCh := make(chan struct{}, 1)
+
+		_, err := getTokenFromWebWithBrowser(ctx, conf, func(string) {
+			browserOpenedCh <- struct{}{}
+		})
+		require.ErrorIs(t, err, context.Canceled)
+		select {
+		case <-browserOpenedCh:
+			t.Fatal("browser opener must not run for a pre-canceled context")
+		case <-time.After(50 * time.Millisecond):
+		}
+		assertLoopbackListenerClosed(t, addr)
+	})
 }
 
 func reserveLoopbackAddress(t *testing.T) string {
@@ -737,4 +913,13 @@ func reserveLoopbackAddress(t *testing.T) string {
 	addr := listener.Addr().String()
 	require.NoError(t, listener.Close())
 	return addr
+}
+
+func assertLoopbackListenerClosed(t *testing.T, addr string) {
+	t.Helper()
+	conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+	if conn != nil {
+		conn.Close()
+	}
+	assert.Error(t, err, "OAuth callback listener should be closed")
 }

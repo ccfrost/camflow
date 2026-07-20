@@ -343,6 +343,10 @@ func getTokenFromWeb(ctx context.Context, conf *oauth2.Config) (*oauth2.Token, e
 // getTokenFromWebWithBrowser contains the OAuth flow with an injectable browser opener
 // so the complete loopback flow can be exercised without launching a real browser.
 func getTokenFromWebWithBrowser(ctx context.Context, conf *oauth2.Config, browserOpener func(string)) (*oauth2.Token, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	// Parse the redirect URL to determine the port to listen on.
 	// We expect something like "http://localhost:8080" or "http://127.0.0.1:8080"
 	u, err := url.Parse(conf.RedirectURL)
@@ -372,7 +376,7 @@ func getTokenFromWebWithBrowser(ctx context.Context, conf *oauth2.Config, browse
 	// its own. State stops an attacker injecting their code; PKCE stops one using ours.
 	verifier := oauth2.GenerateVerifier()
 
-	server := &http.Server{Handler: authCallbackHandler(state, resultCh)}
+	server := &http.Server{Handler: authCallbackHandler(state, resultCh), ReadHeaderTimeout: 10 * time.Second}
 
 	go func() {
 		if err := server.Serve(l); err != nil && err != http.ErrServerClosed {
@@ -382,6 +386,11 @@ func getTokenFromWebWithBrowser(ctx context.Context, conf *oauth2.Config, browse
 			}
 		}
 	}()
+	// Tear the server down gracefully on every exit path. Shutdown waits for the callback
+	// handler to finish flushing its browser response; the bounded fallback still prevents
+	// a slow or malicious connection from keeping the CLI alive indefinitely.
+	shutdownServer := sync.OnceFunc(func() { shutdownOAuthCallbackServer(server) })
+	defer shutdownServer()
 
 	// ApprovalForce (prompt=consent) makes Google issue a refresh token on every
 	// interactive auth, not just the first consent; without it a re-auth saves a token
@@ -389,17 +398,23 @@ func getTokenFromWebWithBrowser(ctx context.Context, conf *oauth2.Config, browse
 	authURL := conf.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce, oauth2.S256ChallengeOption(verifier))
 	fmt.Printf("Opening browser to complete authentication:\n%s\n", authURL)
 
+	// Avoid opening a browser when cancellation happened while the listener and auth URL
+	// were being prepared. The deferred shutdown still closes the listener in this case.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	go browserOpener(authURL)
 
 	fmt.Println("Waiting for authentication callback...")
 
 	select {
 	case result := <-resultCh:
+		// Stop accepting callbacks as soon as the first result wins. Shutdown waits for the
+		// active handler to flush its browser response before the token exchange starts.
+		shutdownServer()
 		if result.err != nil {
 			return nil, result.err
 		}
-		go server.Shutdown(context.Background())
-
 		tok, err := conf.Exchange(ctx, result.code, oauth2.VerifierOption(verifier))
 		if err != nil {
 			return nil, fmt.Errorf("unable to retrieve token from web exchange: %w", oauthTokenRequestError(err))
@@ -407,6 +422,14 @@ func getTokenFromWebWithBrowser(ctx context.Context, conf *oauth2.Config, browse
 		return tok, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+}
+
+func shutdownOAuthCallbackServer(server *http.Server) {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		_ = server.Close()
 	}
 }
 
@@ -447,9 +470,10 @@ func authCallbackHandler(state string, resultCh chan<- authCallbackResult) http.
 			return
 		}
 
-		// Show success message to user.
+		// The authorization code has arrived, but the token exchange still happens after
+		// this response is flushed. Do not claim authentication succeeded prematurely.
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprint(w, `<html><body><h1>Camflow Authentication Successful</h1><p>You can close this window now and return to the terminal.</p></body></html>`)
+		fmt.Fprint(w, `<html><body><h1>Camflow Authorization Received</h1><p>You can close this window and return to the terminal. Camflow will report whether authentication completed successfully.</p></body></html>`)
 
 		select {
 		case resultCh <- authCallbackResult{code: code}:
