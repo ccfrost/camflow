@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -674,4 +676,65 @@ func TestAuthCallbackHandler(t *testing.T) {
 		assert.NoError(t, result.err)
 		assert.Equal(t, "first", result.code)
 	})
+}
+
+func TestGetTokenFromWebPKCE(t *testing.T) {
+	addr := reserveLoopbackAddress(t)
+	tokenFormCh := make(chan url.Values, 1)
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		tokenFormCh <- r.Form
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":"access","refresh_token":"refresh","token_type":"Bearer","expires_in":3600}`)
+	}))
+	defer tokenServer.Close()
+
+	conf := testOAuthConfig(tokenServer.URL)
+	conf.RedirectURL = "http://" + addr
+	callbackBodyCh := make(chan string, 1)
+	authQueryCh := make(chan url.Values, 1)
+	token, err := getTokenFromWebWithBrowser(context.Background(), conf, func(authURL string) {
+		u, parseErr := url.Parse(authURL)
+		if parseErr != nil {
+			callbackBodyCh <- "parse error: " + parseErr.Error()
+			return
+		}
+		authQueryCh <- u.Query()
+		callbackURL := conf.RedirectURL + "?code=auth-code&state=" + url.QueryEscape(u.Query().Get("state"))
+		response, requestErr := (&http.Client{Timeout: 2 * time.Second}).Get(callbackURL)
+		if requestErr != nil {
+			callbackBodyCh <- "request error: " + requestErr.Error()
+			return
+		}
+		defer response.Body.Close()
+		body, readErr := io.ReadAll(response.Body)
+		if readErr != nil {
+			callbackBodyCh <- "read error: " + readErr.Error()
+			return
+		}
+		callbackBodyCh <- string(body)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "access", token.AccessToken)
+	assert.Equal(t, "refresh", token.RefreshToken)
+	assert.Contains(t, <-callbackBodyCh, "Camflow Authentication Successful")
+
+	authQuery := <-authQueryCh
+	assert.Equal(t, "S256", authQuery.Get("code_challenge_method"))
+	assert.NotEmpty(t, authQuery.Get("code_challenge"))
+	tokenForm := <-tokenFormCh
+	assert.Equal(t, "auth-code", tokenForm.Get("code"))
+	assert.NotEmpty(t, tokenForm.Get("code_verifier"))
+}
+
+func reserveLoopbackAddress(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := listener.Addr().String()
+	require.NoError(t, listener.Close())
+	return addr
 }

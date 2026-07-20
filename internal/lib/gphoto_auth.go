@@ -337,6 +337,12 @@ type authCallbackResult struct {
 
 // getTokenFromWeb guides the user through the web-based OAuth2 flow via a local server.
 func getTokenFromWeb(ctx context.Context, conf *oauth2.Config) (*oauth2.Token, error) {
+	return getTokenFromWebWithBrowser(ctx, conf, openBrowser)
+}
+
+// getTokenFromWebWithBrowser contains the OAuth flow with an injectable browser opener
+// so the complete loopback flow can be exercised without launching a real browser.
+func getTokenFromWebWithBrowser(ctx context.Context, conf *oauth2.Config, browserOpener func(string)) (*oauth2.Token, error) {
 	// Parse the redirect URL to determine the port to listen on.
 	// We expect something like "http://localhost:8080" or "http://127.0.0.1:8080"
 	u, err := url.Parse(conf.RedirectURL)
@@ -361,6 +367,11 @@ func getTokenFromWeb(ctx context.Context, conf *oauth2.Config) (*oauth2.Token, e
 	}
 	state := hex.EncodeToString(stateBytes)
 
+	// PKCE (RFC 7636): the token exchange must present the verifier matching the
+	// code_challenge sent in the auth URL, so a stolen authorization code is useless on
+	// its own. State stops an attacker injecting their code; PKCE stops one using ours.
+	verifier := oauth2.GenerateVerifier()
+
 	server := &http.Server{Handler: authCallbackHandler(state, resultCh)}
 
 	go func() {
@@ -375,10 +386,10 @@ func getTokenFromWeb(ctx context.Context, conf *oauth2.Config) (*oauth2.Token, e
 	// ApprovalForce (prompt=consent) makes Google issue a refresh token on every
 	// interactive auth, not just the first consent; without it a re-auth saves a token
 	// file with no refresh token and hourly browser prompts return.
-	authURL := conf.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce)
+	authURL := conf.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce, oauth2.S256ChallengeOption(verifier))
 	fmt.Printf("Opening browser to complete authentication:\n%s\n", authURL)
 
-	go openBrowser(authURL)
+	go browserOpener(authURL)
 
 	fmt.Println("Waiting for authentication callback...")
 
@@ -389,7 +400,7 @@ func getTokenFromWeb(ctx context.Context, conf *oauth2.Config) (*oauth2.Token, e
 		}
 		go server.Shutdown(context.Background())
 
-		tok, err := conf.Exchange(ctx, result.code)
+		tok, err := conf.Exchange(ctx, result.code, oauth2.VerifierOption(verifier))
 		if err != nil {
 			return nil, fmt.Errorf("unable to retrieve token from web exchange: %w", oauthTokenRequestError(err))
 		}
