@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,29 +26,19 @@ import (
 
 // GetAuthenticatedGooglePhotosClient creates an authenticated HTTP client using OAuth2 credentials.
 // It handles token loading, refreshing, and saving.
-// Takes configDir to locate the token file.
+// Takes cacheDir to locate the token file.
 func GetAuthenticatedGooglePhotosClient(ctx context.Context, cfg config.CamflowConfig, cacheDir string) (*http.Client, error) {
-	if cfg.GooglePhotos.ClientId == "" || cfg.GooglePhotos.ClientSecret == "" {
-		return nil, fmt.Errorf("google Photos ClientId or ClientSecret not configured")
-	}
-
-	// Use http://localhost:0 for auto-selected port if RedirectURI is empty,
-	// otherwise use the configured one.
-	redirectURI := cfg.GooglePhotos.RedirectURI
-	if redirectURI == "" || redirectURI == "urn:ietf:wg:oauth:2.0:oob" {
-		// Using a fixed common port for simplicity as dynamic port requires a listener.
-		redirectURI = "http://localhost:8080"
-		if cfg.GooglePhotos.RedirectURI == "urn:ietf:wg:oauth:2.0:oob" {
-			fmt.Printf("Warning: google_photos.redirect_uri is legacy OOB (%s). Overriding with %s for new auth flow.\n", cfg.GooglePhotos.RedirectURI, redirectURI)
-		} else {
-			fmt.Printf("Warning: google_photos.redirect_uri not set in config, using default: %s\n", redirectURI)
-		}
+	// Validate a local copy so direct library callers get the same redirect defaults and
+	// legacy-OOB migration as the CLI without mutating their configuration.
+	googlePhotosCfg := cfg.GooglePhotos
+	if err := googlePhotosCfg.Validate(); err != nil {
+		return nil, err
 	}
 
 	conf := &oauth2.Config{
-		ClientID:     cfg.GooglePhotos.ClientId,
-		ClientSecret: cfg.GooglePhotos.ClientSecret,
-		RedirectURL:  redirectURI,
+		ClientID:     googlePhotosCfg.ClientId,
+		ClientSecret: googlePhotosCfg.ClientSecret,
+		RedirectURL:  googlePhotosCfg.RedirectURI,
 		Scopes: []string{
 			"https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata",
 			"https://www.googleapis.com/auth/photoslibrary.appendonly",
@@ -347,18 +336,16 @@ func getTokenFromWebWithBrowser(ctx context.Context, conf *oauth2.Config, browse
 		return nil, err
 	}
 
-	// Parse the redirect URL to determine the port to listen on.
-	// We expect something like "http://localhost:8080" or "http://127.0.0.1:8080"
-	u, err := url.Parse(conf.RedirectURL)
+	u, err := config.ParseOAuthLoopbackRedirectURI(conf.RedirectURL)
 	if err != nil {
-		return nil, fmt.Errorf("bad redirect URL: %w", err)
+		return nil, err
 	}
 
 	resultCh := make(chan authCallbackResult, 1)
 
 	l, err := net.Listen("tcp", u.Host)
 	if err != nil {
-		return nil, fmt.Errorf("failed to start local server for auth: %w", err)
+		return nil, fmt.Errorf("failed to start local server for auth on %s: %w (if the port is in use, free it or set google_photos.redirect_uri to a different http://127.0.0.1:<port>)", u.Host, err)
 	}
 	defer l.Close()
 	// fmt.Printf("Listening on %s for authentication callback...\n", l.Addr().String())

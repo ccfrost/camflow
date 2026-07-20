@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ccfrost/camflow/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2"
@@ -678,6 +679,69 @@ func TestAuthCallbackHandler(t *testing.T) {
 		assert.NoError(t, result.err)
 		assert.Equal(t, "first", result.code)
 	})
+}
+
+func TestGetAuthenticatedGooglePhotosClientRejectsInvalidRedirectBeforeCacheChanges(t *testing.T) {
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+	cfg := config.CamflowConfig{GooglePhotos: config.GooglePhotosConfig{
+		ClientId:     "client-id",
+		ClientSecret: "client-secret",
+		RedirectURI:  "http://0.0.0.0:8080",
+	}}
+
+	client, err := GetAuthenticatedGooglePhotosClient(context.Background(), cfg, cacheDir)
+	require.Error(t, err)
+	assert.Nil(t, client)
+	assert.ErrorContains(t, err, "loopback")
+	_, statErr := os.Stat(cacheDir)
+	assert.True(t, os.IsNotExist(statErr), "invalid redirect URI must fail before creating the cache directory")
+}
+
+func TestGetAuthenticatedGooglePhotosClientNormalizesRedirectForDirectCall(t *testing.T) {
+	tests := []struct {
+		name        string
+		redirectURI string
+	}{
+		{name: "empty", redirectURI: ""},
+		{name: "legacy OOB", redirectURI: "urn:ietf:wg:oauth:2.0:oob"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cacheDir := filepath.Join(t.TempDir(), "cache")
+			cfg := config.CamflowConfig{GooglePhotos: config.GooglePhotosConfig{
+				ClientId:     "client-id",
+				ClientSecret: "client-secret",
+				RedirectURI:  tt.redirectURI,
+			}}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+
+			client, err := GetAuthenticatedGooglePhotosClient(ctx, cfg, cacheDir)
+			require.ErrorIs(t, err, context.Canceled)
+			assert.Nil(t, client)
+			assert.Equal(t, tt.redirectURI, cfg.GooglePhotos.RedirectURI, "normalization must not mutate the caller's config")
+			info, statErr := os.Stat(cacheDir)
+			require.NoError(t, statErr)
+			assert.True(t, info.IsDir(), "normalized redirect should advance beyond validation")
+		})
+	}
+}
+
+func TestGetTokenFromWebRejectsInvalidRedirectBeforeOpeningBrowser(t *testing.T) {
+	conf := testOAuthConfig("http://127.0.0.1/unused")
+	conf.RedirectURL = "localhost:8080"
+	browserOpened := make(chan struct{}, 1)
+
+	_, err := getTokenFromWebWithBrowser(context.Background(), conf, func(string) {
+		browserOpened <- struct{}{}
+	})
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "http scheme")
+	select {
+	case <-browserOpened:
+		t.Fatal("browser opener must not run for an invalid redirect URI")
+	case <-time.After(50 * time.Millisecond):
+	}
 }
 
 func TestGetTokenFromWebPKCE(t *testing.T) {

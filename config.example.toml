@@ -50,7 +50,7 @@ videos_uploaded_root = "/Users/you/Google Drive/My Drive/media/videos/uploaded"
     # Guide: https://gilesknap.github.io/gphotos-sync/main/tutorials/oauth2.html
     client_secret = "YOUR_CLIENT_SECRET"
     client_id = "YOUR_CLIENT_ID.apps.googleusercontent.com"
-    redirect_uri = "http://localhost:8080" 
+    redirect_uri = "http://127.0.0.1:8080"
 
     [google_photos.photos]
         # The default album where uploaded photos will be added.
