@@ -38,6 +38,13 @@ Before installing, be aware that Camflow requires a one-time setup of Google API
 2.  **Google Cloud Project**: To upload to your personal Google Photos account, you must create a project and generate OAuth 2.0 credentials (`client_id` and `client_secret`).
     > **Guide:** Follow this tutorial to obtain your credentials:
     > [https://gilesknap.github.io/gphotos-sync/main/tutorials/oauth2.html](https://gilesknap.github.io/gphotos-sync/main/tutorials/oauth2.html)
+
+    > **Note:** In the Google Cloud Console, if your app's OAuth consent screen is left in
+    > **Testing** publishing status, Google expires refresh tokens after 7 days — Camflow
+    > will make you re-authenticate in the browser every week. Set the publishing status to
+    > **In production** to get long-lived refresh tokens. For personal use you don't need to
+    > complete Google's verification process; you'll just click through an "unverified app"
+    > warning during the (now rare) browser sign-in.
 3. **exiftool**: Ensure you have [exiftool](https://exiftool.org/) installed. (On macOS, you can run `brew install exiftool`.) Camflow uses it to read capture metadata and to tag camera videos (with a `.mov`-named copy) so Google Photos displays them in the correct capture timezone. See [Google Photos video timezone](docs/google-photos-video-timezone.md) for the full story.
 
 ## Installation
