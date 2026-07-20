@@ -58,7 +58,7 @@ func GetAuthenticatedGooglePhotosClient(ctx context.Context, cfg config.CamflowC
 		err = json.NewDecoder(tokenFile).Decode(token)
 		tokenFile.Close()
 		if err != nil {
-			fmt.Printf("Error reading token file (%s), requesting new token: %v\n", tokenFilePath, err)
+			fmt.Fprintf(os.Stderr, "Error reading token file (%s), requesting new token: %v\n", tokenFilePath, err)
 			token = nil // Force getting a new token
 		}
 	} else if !os.IsNotExist(err) {
@@ -122,12 +122,12 @@ func authenticatedTokenSource(ctx context.Context, conf *oauth2.Config, token *o
 	ctx = withOAuthRequestTimeout(ctx)
 
 	if token == nil {
-		fmt.Println("No existing OAuth token found, starting auth flow...")
+		fmt.Fprintln(os.Stderr, "No existing OAuth token found, starting auth flow...")
 	} else if token.RefreshToken == "" {
 		// Without a refresh token the access token dies within the hour and cannot be
 		// renewed silently (eg, a token file saved before offline access was requested);
 		// re-auth now instead of failing mid-upload.
-		fmt.Println("OAuth token has no refresh token, starting auth flow...")
+		fmt.Fprintln(os.Stderr, "OAuth token has no refresh token, starting auth flow...")
 		token = nil
 	}
 
@@ -147,7 +147,7 @@ func authenticatedTokenSource(ctx context.Context, conf *oauth2.Config, token *o
 		if !storedCredentialRejected(err) {
 			return nil, fmt.Errorf("could not refresh Google credentials: %w (if this persists, delete %s to force re-authentication)", err, tokenFilePath)
 		}
-		fmt.Printf("Stored Google credentials were rejected (%v), starting auth flow...\n", err)
+		fmt.Fprintf(os.Stderr, "Stored Google credentials were rejected (%v), starting auth flow...\n", err)
 		return newInteractiveTokenSource(ctx, conf, tokenFilePath, interactiveAuth)
 	}
 	return src, nil
@@ -166,9 +166,9 @@ func newInteractiveTokenSource(ctx context.Context, conf *oauth2.Config, tokenFi
 	// Token call retries persistence until the cache becomes writable.
 	var last *oauth2.Token
 	if err := saveToken(tokenFilePath, token); err != nil {
-		fmt.Printf("Warning: Failed to save token to %s: %v\n", tokenFilePath, err)
+		fmt.Fprintf(os.Stderr, "Warning: Failed to save token to %s: %v\n", tokenFilePath, err)
 	} else {
-		fmt.Printf("Token obtained and saved successfully to %s\n", tokenFilePath)
+		fmt.Fprintf(os.Stderr, "Token obtained and saved successfully to %s\n", tokenFilePath)
 		last = token
 	}
 
@@ -230,7 +230,7 @@ func (p *persistingTokenSource) Token() (*oauth2.Token, error) {
 	}
 	if p.last == nil || tok.AccessToken != p.last.AccessToken || tok.RefreshToken != p.last.RefreshToken || !tok.Expiry.Equal(p.last.Expiry) {
 		if err := saveToken(p.path, tok); err != nil {
-			fmt.Printf("Warning: failed to persist refreshed Google token to %s: %v\n", p.path, err)
+			fmt.Fprintf(os.Stderr, "Warning: failed to persist refreshed Google token to %s: %v\n", p.path, err)
 		} else {
 			p.last = tok
 		}
@@ -383,7 +383,7 @@ func getTokenFromWebWithBrowser(ctx context.Context, conf *oauth2.Config, browse
 	// interactive auth, not just the first consent; without it a re-auth saves a token
 	// file with no refresh token and hourly browser prompts return.
 	authURL := conf.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce, oauth2.S256ChallengeOption(verifier))
-	fmt.Printf("Opening browser to complete authentication:\n%s\n", authURL)
+	fmt.Fprintf(os.Stderr, "Opening browser to complete authentication:\n%s\n", authURL)
 
 	// Avoid opening a browser when cancellation happened while the listener and auth URL
 	// were being prepared. The deferred shutdown still closes the listener in this case.
@@ -392,7 +392,7 @@ func getTokenFromWebWithBrowser(ctx context.Context, conf *oauth2.Config, browse
 	}
 	go browserOpener(authURL)
 
-	fmt.Println("Waiting for authentication callback...")
+	fmt.Fprintln(os.Stderr, "Waiting for authentication callback...")
 
 	select {
 	case result := <-resultCh:
@@ -432,14 +432,14 @@ func authCallbackHandler(state string, resultCh chan<- authCallbackResult) http.
 		code := q.Get("code")
 		if errParam == "" && code == "" {
 			if r.URL.Path != "/favicon.ico" {
-				fmt.Printf("Warning: Code not found in request (path: %s)\n", r.URL.Path)
+				fmt.Fprintf(os.Stderr, "Warning: Code not found in request (path: %s)\n", r.URL.Path)
 			}
 			http.Error(w, "Code not found in response", http.StatusBadRequest)
 			return
 		}
 		if subtle.ConstantTimeCompare([]byte(q.Get("state")), []byte(state)) != 1 {
 			// Keep listening: a stray or forged request must not kill a pending auth.
-			fmt.Println("Warning: Ignoring auth callback with mismatched state parameter")
+			fmt.Fprintln(os.Stderr, "Warning: Ignoring auth callback with mismatched state parameter")
 			http.Error(w, "State mismatch", http.StatusBadRequest)
 			return
 		}
@@ -483,6 +483,6 @@ func openBrowser(url string) {
 		err = fmt.Errorf("unsupported platform")
 	}
 	if err != nil {
-		fmt.Printf("Could not open browser automatically: %v\nPlease open the URL manually.\n", err)
+		fmt.Fprintf(os.Stderr, "Could not open browser automatically: %v\nPlease open the URL manually.\n", err)
 	}
 }
