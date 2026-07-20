@@ -604,3 +604,74 @@ func testOAuthConfig(tokenURL string) *oauth2.Config {
 		},
 	}
 }
+
+func TestAuthCallbackHandler(t *testing.T) {
+	const state = "expected-state"
+
+	serve := func(t *testing.T, target string) (*httptest.ResponseRecorder, chan authCallbackResult) {
+		t.Helper()
+		resultCh := make(chan authCallbackResult, 1)
+		w := httptest.NewRecorder()
+		authCallbackHandler(state, resultCh)(w, httptest.NewRequest("GET", target, nil))
+		return w, resultCh
+	}
+
+	t.Run("valid state and code delivers code", func(t *testing.T) {
+		w, resultCh := serve(t, "/?code=auth-code&state="+state)
+		assert.Equal(t, http.StatusOK, w.Code)
+		require.Len(t, resultCh, 1)
+		result := <-resultCh
+		assert.NoError(t, result.err)
+		assert.Equal(t, "auth-code", result.code)
+	})
+
+	t.Run("mismatched state is rejected and keeps waiting", func(t *testing.T) {
+		w, resultCh := serve(t, "/?code=auth-code&state=forged")
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Empty(t, resultCh)
+	})
+
+	t.Run("missing code is rejected and keeps waiting", func(t *testing.T) {
+		w, resultCh := serve(t, "/favicon.ico")
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Empty(t, resultCh)
+	})
+
+	t.Run("denial delivers error", func(t *testing.T) {
+		w, resultCh := serve(t, "/?error=access_denied&state="+state)
+		assert.Equal(t, http.StatusOK, w.Code)
+		require.Len(t, resultCh, 1)
+		assert.ErrorContains(t, (<-resultCh).err, "access_denied")
+	})
+
+	t.Run("denial includes error_description when present", func(t *testing.T) {
+		w, resultCh := serve(t, "/?error=access_denied&error_description=policy+forbids+it&state="+state)
+		assert.Equal(t, http.StatusOK, w.Code)
+		require.Len(t, resultCh, 1)
+		assert.ErrorContains(t, (<-resultCh).err, "access_denied: policy forbids it")
+	})
+
+	t.Run("denial with mismatched state is rejected and keeps waiting", func(t *testing.T) {
+		w, resultCh := serve(t, "/?error=access_denied&state=forged")
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Empty(t, resultCh)
+	})
+
+	t.Run("denial with missing state is rejected and keeps waiting", func(t *testing.T) {
+		w, resultCh := serve(t, "/?error=access_denied")
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Empty(t, resultCh)
+	})
+
+	t.Run("first valid callback wins", func(t *testing.T) {
+		resultCh := make(chan authCallbackResult, 1)
+		handler := authCallbackHandler(state, resultCh)
+		handler(httptest.NewRecorder(), httptest.NewRequest("GET", "/?code=first&state="+state, nil))
+		handler(httptest.NewRecorder(), httptest.NewRequest("GET", "/?error=access_denied&state="+state, nil))
+
+		require.Len(t, resultCh, 1)
+		result := <-resultCh
+		assert.NoError(t, result.err)
+		assert.Equal(t, "first", result.code)
+	})
+}

@@ -2,6 +2,9 @@ package lib
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -327,6 +330,11 @@ func saveToken(path string, token *oauth2.Token) error {
 	return nil
 }
 
+type authCallbackResult struct {
+	code string
+	err  error
+}
+
 // getTokenFromWeb guides the user through the web-based OAuth2 flow via a local server.
 func getTokenFromWeb(ctx context.Context, conf *oauth2.Config) (*oauth2.Token, error) {
 	// Parse the redirect URL to determine the port to listen on.
@@ -336,8 +344,7 @@ func getTokenFromWeb(ctx context.Context, conf *oauth2.Config) (*oauth2.Token, e
 		return nil, fmt.Errorf("bad redirect URL: %w", err)
 	}
 
-	codeCh := make(chan string, 1) // Buffered channel
-	errCh := make(chan error, 1)
+	resultCh := make(chan authCallbackResult, 1)
 
 	l, err := net.Listen("tcp", u.Host)
 	if err != nil {
@@ -346,36 +353,29 @@ func getTokenFromWeb(ctx context.Context, conf *oauth2.Config) (*oauth2.Token, e
 	defer l.Close()
 	// fmt.Printf("Listening on %s for authentication callback...\n", l.Addr().String())
 
-	// Handler for the redirect.
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		code := r.URL.Query().Get("code")
-		if code == "" {
-			if r.URL.Path != "/favicon.ico" {
-				fmt.Printf("Warning: Code not found in request (path: %s)\n", r.URL.Path)
-			}
-			http.Error(w, "Code not found in response", http.StatusBadRequest)
-			return
-		}
+	// A random state ties the callback to this auth attempt: the handler rejects codes
+	// delivered by requests that didn't originate from our auth URL (OAuth CSRF).
+	stateBytes := make([]byte, 16)
+	if _, err := rand.Read(stateBytes); err != nil {
+		return nil, fmt.Errorf("failed to generate OAuth state: %w", err)
+	}
+	state := hex.EncodeToString(stateBytes)
 
-		// Show success message to user.
-		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprint(w, `<html><body><h1>Camflow Authentication Successful</h1><p>You can close this window now and return to the terminal.</p></body></html>`)
-
-		codeCh <- code
-	})
-
-	server := &http.Server{Handler: handler}
+	server := &http.Server{Handler: authCallbackHandler(state, resultCh)}
 
 	go func() {
 		if err := server.Serve(l); err != nil && err != http.ErrServerClosed {
-			errCh <- fmt.Errorf("http server error: %w", err)
+			select {
+			case resultCh <- authCallbackResult{err: fmt.Errorf("http server error: %w", err)}:
+			default: // the flow already has a result; nothing reads resultCh anymore
+			}
 		}
 	}()
 
 	// ApprovalForce (prompt=consent) makes Google issue a refresh token on every
 	// interactive auth, not just the first consent; without it a re-auth saves a token
 	// file with no refresh token and hourly browser prompts return.
-	authURL := conf.AuthCodeURL("state-token", oauth2.AccessTypeOffline, oauth2.ApprovalForce)
+	authURL := conf.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce)
 	fmt.Printf("Opening browser to complete authentication:\n%s\n", authURL)
 
 	go openBrowser(authURL)
@@ -383,19 +383,67 @@ func getTokenFromWeb(ctx context.Context, conf *oauth2.Config) (*oauth2.Token, e
 	fmt.Println("Waiting for authentication callback...")
 
 	select {
-	case code := <-codeCh:
+	case result := <-resultCh:
+		if result.err != nil {
+			return nil, result.err
+		}
 		go server.Shutdown(context.Background())
 
-		tok, err := conf.Exchange(ctx, code)
+		tok, err := conf.Exchange(ctx, result.code)
 		if err != nil {
 			return nil, fmt.Errorf("unable to retrieve token from web exchange: %w", oauthTokenRequestError(err))
 		}
 		return tok, nil
-
-	case err := <-errCh:
-		return nil, err
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+}
+
+// authCallbackHandler handles the OAuth redirect back to the local server. A result is
+// delivered only when the state parameter matches this auth attempt, so a code injected
+// by a request that didn't come from our auth URL (OAuth CSRF) is ignored. A denial (error
+// param, eg the user canceling the consent screen) fails the flow immediately instead of
+// waiting for a code that will never arrive.
+func authCallbackHandler(state string, resultCh chan<- authCallbackResult) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		errParam := q.Get("error")
+		code := q.Get("code")
+		if errParam == "" && code == "" {
+			if r.URL.Path != "/favicon.ico" {
+				fmt.Printf("Warning: Code not found in request (path: %s)\n", r.URL.Path)
+			}
+			http.Error(w, "Code not found in response", http.StatusBadRequest)
+			return
+		}
+		if subtle.ConstantTimeCompare([]byte(q.Get("state")), []byte(state)) != 1 {
+			// Keep listening: a stray or forged request must not kill a pending auth.
+			fmt.Println("Warning: Ignoring auth callback with mismatched state parameter")
+			http.Error(w, "State mismatch", http.StatusBadRequest)
+			return
+		}
+
+		if errParam != "" {
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprint(w, `<html><body><h1>Camflow Authentication Failed</h1><p>You can close this window and return to the terminal.</p></body></html>`)
+			if desc := q.Get("error_description"); desc != "" {
+				errParam += ": " + desc
+			}
+			select {
+			case resultCh <- authCallbackResult{err: fmt.Errorf("authentication failed: %s", errParam)}:
+			default: // an earlier callback already delivered a result; don't block the handler
+			}
+			return
+		}
+
+		// Show success message to user.
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, `<html><body><h1>Camflow Authentication Successful</h1><p>You can close this window now and return to the terminal.</p></body></html>`)
+
+		select {
+		case resultCh <- authCallbackResult{code: code}:
+		default: // duplicate success callback; the first one already delivered
+		}
 	}
 }
 
