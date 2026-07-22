@@ -46,10 +46,12 @@ videos_uploaded_root = "/Users/you/Google Drive/My Drive/media/videos/uploaded"
 [google_photos]
     # Credentials for the Google Photos API.
     # You must create a Google Cloud Project and generate OAuth 2.0 credentials
-    # (Client ID and Client Secret).
+    # (Client ID and Client Secret) with the application type set to "Desktop app".
     # Guide: https://gilesknap.github.io/gphotos-sync/main/tutorials/oauth2.html
     client_secret = "YOUR_CLIENT_SECRET"
     client_id = "YOUR_CLIENT_ID.apps.googleusercontent.com"
+    # Loopback callback for the browser sign-in. If this port is already in use, Camflow
+    # automatically falls back to a free one (Google's Desktop app flow accepts any port).
     redirect_uri = "http://127.0.0.1:8080"
 
     [google_photos.photos]

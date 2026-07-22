@@ -1055,6 +1055,73 @@ func TestGetTokenFromWebGracefulShutdown(t *testing.T) {
 	})
 }
 
+func TestGetTokenFromWebFallsBackToFreePortWhenConfiguredPortBusy(t *testing.T) {
+	// Hold the configured port so the flow cannot bind it and must fall back to a free one.
+	blocker, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer blocker.Close()
+	configuredAddr := blocker.Addr().String()
+	_, configuredPort, err := net.SplitHostPort(configuredAddr)
+	require.NoError(t, err)
+
+	tokenFormCh := make(chan url.Values, 1)
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		tokenFormCh <- r.Form
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":"access","refresh_token":"refresh","token_type":"Bearer","expires_in":3600}`)
+	}))
+	defer tokenServer.Close()
+
+	conf := testOAuthConfig(tokenServer.URL)
+	conf.RedirectURL = "http://" + configuredAddr
+
+	authRedirectCh := make(chan string, 1)
+	callbackBodyCh := make(chan string, 1)
+	token, err := getTokenFromWebWithBrowser(context.Background(), conf, func(authURL string) {
+		u, parseErr := url.Parse(authURL)
+		if parseErr != nil {
+			callbackBodyCh <- "parse error: " + parseErr.Error()
+			return
+		}
+		// The listener fell back to a different port than conf.RedirectURL, so the callback must
+		// target the redirect_uri the flow actually advertised in the auth URL.
+		redirectURI := u.Query().Get("redirect_uri")
+		authRedirectCh <- redirectURI
+		callbackURL := redirectURI + "?code=auth-code&state=" + url.QueryEscape(u.Query().Get("state"))
+		response, requestErr := (&http.Client{Timeout: 2 * time.Second}).Get(callbackURL)
+		if requestErr != nil {
+			callbackBodyCh <- "request error: " + requestErr.Error()
+			return
+		}
+		defer response.Body.Close()
+		body, readErr := io.ReadAll(response.Body)
+		if readErr != nil {
+			callbackBodyCh <- "read error: " + readErr.Error()
+			return
+		}
+		callbackBodyCh <- string(body)
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "access", token.AccessToken)
+	assert.Equal(t, "refresh", token.RefreshToken)
+	assert.Contains(t, <-callbackBodyCh, "Camflow Authorization Received")
+
+	authRedirect := <-authRedirectCh
+	authRedirectURL, err := url.Parse(authRedirect)
+	require.NoError(t, err)
+	assert.Equal(t, "127.0.0.1", authRedirectURL.Hostname())
+	assert.NotEqual(t, configuredPort, authRedirectURL.Port(), "flow should bind a free port, not the busy configured one")
+
+	// The token exchange must present the same effective redirect_uri as the authorization request.
+	tokenForm := <-tokenFormCh
+	assert.Equal(t, "auth-code", tokenForm.Get("code"))
+	assert.Equal(t, authRedirect, tokenForm.Get("redirect_uri"))
+}
+
 func reserveLoopbackAddress(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

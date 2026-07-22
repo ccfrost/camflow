@@ -10,10 +10,12 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
@@ -357,6 +359,47 @@ func getTokenFromWeb(ctx context.Context, conf *oauth2.Config) (*oauth2.Token, e
 	return getTokenFromWebWithBrowser(ctx, conf, openBrowser)
 }
 
+// listenLoopbackWithFallback binds the OAuth callback listener. It prefers the port from the
+// configured redirect URI, but if that port is unavailable it falls back to an OS-assigned free
+// port on the same loopback host — Google's loopback-IP OAuth flow matches only the loopback host,
+// not the port, so any free port works and a busy port no longer blocks authentication. It returns
+// the listener and the effective redirect URI carrying the port actually bound; the caller must use
+// that URI for both the authorization request and the token exchange so the two stay consistent.
+func listenLoopbackWithFallback(u *url.URL) (net.Listener, string, error) {
+	// ParseOAuthLoopbackRedirectURI already guarantees a host:port, so SplitHostPort won't fail.
+	host, _, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to start local server for auth: invalid redirect host %q: %w", u.Host, err)
+	}
+
+	l, err := net.Listen("tcp", u.Host)
+	usedFallback := false
+	if err != nil {
+		fallback, fallbackErr := net.Listen("tcp", net.JoinHostPort(host, "0"))
+		if fallbackErr != nil {
+			return nil, "", fmt.Errorf("failed to start local server for auth on %s: %w (also could not bind a free loopback port: %v)", u.Host, err, fallbackErr)
+		}
+		l = fallback
+		usedFallback = true
+	}
+
+	addr, ok := l.Addr().(*net.TCPAddr)
+	if !ok {
+		l.Close()
+		return nil, "", fmt.Errorf("failed to start local server for auth: unexpected listener address type %T", l.Addr())
+	}
+	if usedFallback {
+		// err is the original bind failure (address in use, permission denied, ...); report it
+		// verbatim rather than assuming a cause, since any bind error triggers the fallback.
+		fmt.Fprintf(os.Stderr, "Could not bind configured auth port %s (%v); listening on free port %d instead.\n", u.Port(), err, addr.Port)
+	}
+
+	// Preserve the configured host spelling and path; only the port reflects what was bound.
+	effective := *u
+	effective.Host = net.JoinHostPort(host, strconv.Itoa(addr.Port))
+	return l, effective.String(), nil
+}
+
 // getTokenFromWebWithBrowser contains the OAuth flow with an injectable browser opener
 // so the complete loopback flow can be exercised without launching a real browser.
 func getTokenFromWebWithBrowser(ctx context.Context, conf *oauth2.Config, browserOpener func(string)) (*oauth2.Token, error) {
@@ -371,12 +414,17 @@ func getTokenFromWebWithBrowser(ctx context.Context, conf *oauth2.Config, browse
 
 	resultCh := make(chan authCallbackResult, 1)
 
-	l, err := net.Listen("tcp", u.Host)
+	l, redirectURI, err := listenLoopbackWithFallback(u)
 	if err != nil {
-		return nil, fmt.Errorf("failed to start local server for auth on %s: %w (if the port is in use, free it or set google_photos.redirect_uri to a different http://127.0.0.1:<port>)", u.Host, err)
+		return nil, err
 	}
 	defer l.Close()
-	// fmt.Printf("Listening on %s for authentication callback...\n", l.Addr().String())
+
+	// Use the port actually bound (which may differ from the configured one if it was in use) for
+	// both the authorization request and the token exchange so the redirect_uri stays consistent.
+	// Copy conf rather than mutate the caller's; its TokenSource refresh path ignores RedirectURL.
+	flowConf := *conf
+	flowConf.RedirectURL = redirectURI
 
 	// A random state ties the callback to this auth attempt: the handler rejects codes
 	// delivered by requests that didn't originate from our auth URL (OAuth CSRF).
@@ -410,7 +458,7 @@ func getTokenFromWebWithBrowser(ctx context.Context, conf *oauth2.Config, browse
 	// ApprovalForce (prompt=consent) makes Google issue a refresh token on every
 	// interactive auth, not just the first consent; without it a re-auth saves a token
 	// file with no refresh token and hourly browser prompts return.
-	authURL := conf.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce, oauth2.S256ChallengeOption(verifier))
+	authURL := flowConf.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce, oauth2.S256ChallengeOption(verifier))
 	fmt.Fprintf(os.Stderr, "Opening browser to complete authentication:\n%s\n", authURL)
 
 	// Avoid opening a browser when cancellation happened while the listener and auth URL
@@ -430,7 +478,7 @@ func getTokenFromWebWithBrowser(ctx context.Context, conf *oauth2.Config, browse
 		if result.err != nil {
 			return nil, result.err
 		}
-		tok, err := conf.Exchange(ctx, result.code, oauth2.VerifierOption(verifier))
+		tok, err := flowConf.Exchange(ctx, result.code, oauth2.VerifierOption(verifier))
 		if err != nil {
 			return nil, fmt.Errorf("unable to retrieve token from web exchange: %w", oauthTokenRequestError(err))
 		}
