@@ -435,6 +435,9 @@ func TestAuthenticatedTokenSourceTransientRefreshFailureDoesNotRunInteractiveAut
 	})
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "could not refresh Google credentials")
+	assert.ErrorContains(t, err, "temporary network or server issue")
+	assert.ErrorContains(t, err, "try again")
+	assert.NotContains(t, err.Error(), "delete")
 	assert.Zero(t, interactiveCalls)
 }
 
@@ -463,6 +466,88 @@ func TestAuthenticatedTokenSourceTimesOutStoredCredentialRefresh(t *testing.T) {
 	assert.ErrorContains(t, err, "check the network connection and try again")
 	assert.Equal(t, int32(1), requests.Load(), "timed-out token POSTs must not be retried automatically")
 	assert.Zero(t, interactiveCalls, "a timeout must not trigger interactive reauthentication")
+}
+
+func TestAuthenticatedTokenSourceOAuthFailureGuidance(t *testing.T) {
+	tests := []struct {
+		name      string
+		status    int
+		errorCode string
+		want      []string
+		notWanted []string
+	}{
+		{
+			name:      "invalid client checks OAuth configuration",
+			status:    http.StatusBadRequest,
+			errorCode: "invalid_client",
+			want:      []string{"invalid_client", "google_photos.client_id", "google_photos.client_secret", "OAuth client configuration"},
+			notWanted: []string{"temporary network or server issue", "delete"},
+		},
+		{
+			name:      "temporarily unavailable retries",
+			status:    http.StatusBadRequest,
+			errorCode: "temporarily_unavailable",
+			want:      []string{"temporarily_unavailable", "temporary network or server issue", "try again"},
+			notWanted: []string{"OAuth client configuration", "delete"},
+		},
+		{
+			name:      "request timeout retries",
+			status:    http.StatusRequestTimeout,
+			want:      []string{"408 Request Timeout", "temporary network or server issue", "try again"},
+			notWanted: []string{"OAuth client configuration", "delete"},
+		},
+		{
+			name:      "too early retries",
+			status:    http.StatusTooEarly,
+			want:      []string{"425 Too Early", "temporary network or server issue", "try again"},
+			notWanted: []string{"OAuth client configuration", "delete"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.status)
+				fmt.Fprintf(w, `{"error":%q}`, tt.errorCode)
+			}))
+			defer tokenServer.Close()
+
+			conf := testOAuthConfig(tokenServer.URL)
+			stored := &oauth2.Token{AccessToken: "access", RefreshToken: "refresh", Expiry: time.Now().Add(time.Hour)}
+			interactiveCalls := 0
+			_, err := authenticatedTokenSource(context.Background(), conf, stored, filepath.Join(t.TempDir(), "token.json"), func(context.Context, *oauth2.Config) (*oauth2.Token, error) {
+				interactiveCalls++
+				return nil, nil
+			})
+			require.Error(t, err)
+			for _, want := range tt.want {
+				assert.ErrorContains(t, err, want)
+			}
+			for _, notWanted := range tt.notWanted {
+				assert.NotContains(t, err.Error(), notWanted)
+			}
+			assert.Zero(t, interactiveCalls)
+		})
+	}
+}
+
+func TestAuthenticatedTokenSourceCanceledRefreshPreservesCancellation(t *testing.T) {
+	conf := testOAuthConfig("http://127.0.0.1/unused")
+	stored := &oauth2.Token{AccessToken: "access", RefreshToken: "refresh", Expiry: time.Now().Add(time.Hour)}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	interactiveCalls := 0
+
+	_, err := authenticatedTokenSource(ctx, conf, stored, filepath.Join(t.TempDir(), "token.json"), func(context.Context, *oauth2.Config) (*oauth2.Token, error) {
+		interactiveCalls++
+		return nil, nil
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	assert.NotContains(t, err.Error(), "try again")
+	assert.NotContains(t, err.Error(), "OAuth client configuration")
+	assert.NotContains(t, err.Error(), "delete")
+	assert.Zero(t, interactiveCalls)
 }
 
 func TestAuthenticatedTokenSourcePersistsWithoutRefreshingNewInteractiveToken(t *testing.T) {

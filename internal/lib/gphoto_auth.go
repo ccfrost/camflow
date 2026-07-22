@@ -144,11 +144,11 @@ func authenticatedTokenSource(ctx context.Context, conf *oauth2.Config, token *o
 		last: token,
 	}
 	if _, err := src.Token(); err != nil {
-		if !storedCredentialRejected(err) {
-			return nil, fmt.Errorf("could not refresh Google credentials: %w (if this persists, delete %s to force re-authentication)", err, tokenFilePath)
+		if storedCredentialRejected(err) {
+			fmt.Fprintf(os.Stderr, "Stored Google credentials were rejected (%v), starting auth flow...\n", err)
+			return newInteractiveTokenSource(ctx, conf, tokenFilePath, interactiveAuth)
 		}
-		fmt.Fprintf(os.Stderr, "Stored Google credentials were rejected (%v), starting auth flow...\n", err)
-		return newInteractiveTokenSource(ctx, conf, tokenFilePath, interactiveAuth)
+		return nil, storedCredentialRefreshError(err)
 	}
 	return src, nil
 }
@@ -201,6 +201,34 @@ func validateInteractiveToken(token *oauth2.Token) error {
 func storedCredentialRejected(err error) bool {
 	var rErr *oauth2.RetrieveError
 	return errors.As(err, &rErr) && rErr.ErrorCode == "invalid_grant"
+}
+
+// storedCredentialRefreshError adds recovery guidance for a failed preflight
+// refresh without obscuring cancellation or suggesting destructive steps that
+// cannot fix the underlying problem.
+func storedCredentialRefreshError(err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("could not refresh Google credentials: %w", err)
+	}
+
+	var rErr *oauth2.RetrieveError
+	if errors.As(err, &rErr) {
+		statusCode := 0
+		if rErr.Response != nil {
+			statusCode = rErr.Response.StatusCode
+		}
+		temporaryCode := rErr.ErrorCode == "server_error" || rErr.ErrorCode == "temporarily_unavailable"
+		temporaryStatus := statusCode == http.StatusRequestTimeout ||
+			statusCode == http.StatusTooEarly ||
+			statusCode == http.StatusTooManyRequests ||
+			statusCode >= http.StatusInternalServerError
+		permanentStatus := statusCode >= http.StatusBadRequest && statusCode < http.StatusInternalServerError && !temporaryStatus
+		if !temporaryCode && !temporaryStatus && (rErr.ErrorCode != "" || permanentStatus) {
+			return fmt.Errorf("could not refresh Google credentials: %w (verify google_photos.client_id, google_photos.client_secret, and the OAuth client configuration)", err)
+		}
+	}
+
+	return fmt.Errorf("could not refresh Google credentials: %w (usually a temporary network or server issue — try again)", err)
 }
 
 func oauthTokenRequestError(err error) error {
