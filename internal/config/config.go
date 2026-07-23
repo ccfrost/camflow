@@ -70,9 +70,9 @@ type CamflowConfig struct {
 	PhotosUploadedRoot     string            `mapstructure:"photos_uploaded_root"`
 	LocalPhotos            LocalPhotosConfig `mapstructure:"-"`
 
-	VideosUploadQueueRoot  string            `mapstructure:"videos_upload_queue_root"`
-	VideosUploadedRoot     string            `mapstructure:"videos_uploaded_root"`
-	LocalVideos            LocalVideosConfig `mapstructure:"-"`
+	VideosUploadQueueRoot string            `mapstructure:"videos_upload_queue_root"`
+	VideosUploadedRoot    string            `mapstructure:"videos_uploaded_root"`
+	LocalVideos           LocalVideosConfig `mapstructure:"-"`
 
 	GooglePhotos GooglePhotosConfig `mapstructure:"google_photos"`
 
@@ -189,8 +189,8 @@ func LoadConfig(configPathFlag string) (CamflowConfig, error) {
 	}
 	config.LocalPhotos = LocalPhotosConfig{
 		ProcessQueueRoot: config.PhotosProcessQueueRoot,
-		UploadQueueDir:  config.PhotosUploadQueueDir,
-		UploadedRoot:    config.PhotosUploadedRoot,
+		UploadQueueDir:   config.PhotosUploadQueueDir,
+		UploadedRoot:     config.PhotosUploadedRoot,
 	}
 	config.LocalVideos = LocalVideosConfig{
 		UploadQueueRoot: config.VideosUploadQueueRoot,

@@ -27,7 +27,7 @@ client_id = "file-client-id"
 
 	// Verify that without the code change, it likely fails (or we just implement the fix directly)
 	// But here we are writing the test that expects success *after* the change.
-	
+
 	cfg, err := LoadConfig(configPath)
 	require.NoError(t, err)
 
