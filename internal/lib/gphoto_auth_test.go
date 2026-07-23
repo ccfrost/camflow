@@ -297,6 +297,27 @@ func TestSaveTokenRemovesStaleTempFiles(t *testing.T) {
 		_, err := os.Stat(fresh)
 		assert.NoError(t, err, "a recent temp file must not be swept while another process may be mid-write")
 	})
+
+	t.Run("removes a stale orphan when the cache path contains glob metacharacters", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "weird[dir]*?")
+		require.NoError(t, os.MkdirAll(dir, 0700))
+		path := filepath.Join(dir, "google_photos_token.json")
+		orphan := path + ".tmp-orphan"
+		require.NoError(t, os.WriteFile(orphan, []byte("partial write"), 0600))
+		old := time.Now().Add(-2 * time.Hour)
+		require.NoError(t, os.Chtimes(orphan, old, old))
+
+		require.NoError(t, saveToken(path, token))
+
+		_, err := os.Stat(orphan)
+		assert.True(t, os.IsNotExist(err), "an orphaned temp file must be swept even when the directory name is a glob pattern")
+
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		var saved oauth2.Token
+		require.NoError(t, json.Unmarshal(data, &saved))
+		assert.Equal(t, token.AccessToken, saved.AccessToken)
+	})
 }
 
 func TestValidateInteractiveToken(t *testing.T) {

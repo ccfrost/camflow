@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -299,17 +300,25 @@ const staleTokenTempAge = time.Hour
 
 // removeStaleTokenTempFiles deletes leftover "<base>.tmp-*" files from token writes that
 // were killed between CreateTemp and Rename. Best-effort: any error is ignored so cleanup
-// never blocks saving the token.
+// never blocks saving the token. It scans the directory and prefix-matches names rather than
+// globbing so a cache path containing glob metacharacters ([, *, ?) is treated literally.
 func removeStaleTokenTempFiles(path string) {
-	matches, err := filepath.Glob(filepath.Join(filepath.Dir(path), filepath.Base(path)+".tmp-*"))
+	dir := filepath.Dir(path)
+	prefix := filepath.Base(path) + ".tmp-"
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
 	cutoff := time.Now().Add(-staleTokenTempAge)
-	for _, m := range matches {
-		if info, err := os.Stat(m); err == nil && info.ModTime().Before(cutoff) {
-			_ = os.Remove(m)
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), prefix) {
+			continue
 		}
+		info, err := entry.Info()
+		if err != nil || !info.ModTime().Before(cutoff) {
+			continue
+		}
+		_ = os.Remove(filepath.Join(dir, entry.Name()))
 	}
 }
 
