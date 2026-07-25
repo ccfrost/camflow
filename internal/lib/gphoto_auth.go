@@ -2,7 +2,11 @@ package lib
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -11,6 +15,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/ccfrost/camflow/internal/config"
 	"golang.org/x/oauth2"
@@ -21,29 +29,19 @@ import (
 
 // GetAuthenticatedGooglePhotosClient creates an authenticated HTTP client using OAuth2 credentials.
 // It handles token loading, refreshing, and saving.
-// Takes configDir to locate the token file.
+// Takes cacheDir to locate the token file.
 func GetAuthenticatedGooglePhotosClient(ctx context.Context, cfg config.CamflowConfig, cacheDir string) (*http.Client, error) {
-	if cfg.GooglePhotos.ClientId == "" || cfg.GooglePhotos.ClientSecret == "" {
-		return nil, fmt.Errorf("google Photos ClientId or ClientSecret not configured")
-	}
-
-	// Use http://localhost:0 for auto-selected port if RedirectURI is empty,
-	// otherwise use the configured one.
-	redirectURI := cfg.GooglePhotos.RedirectURI
-	if redirectURI == "" || redirectURI == "urn:ietf:wg:oauth:2.0:oob" {
-		// Using a fixed common port for simplicity as dynamic port requires a listener.
-		redirectURI = "http://localhost:8080"
-		if cfg.GooglePhotos.RedirectURI == "urn:ietf:wg:oauth:2.0:oob" {
-			fmt.Printf("Warning: google_photos.redirect_uri is legacy OOB (%s). Overriding with %s for new auth flow.\n", cfg.GooglePhotos.RedirectURI, redirectURI)
-		} else {
-			fmt.Printf("Warning: google_photos.redirect_uri not set in config, using default: %s\n", redirectURI)
-		}
+	// Validate a local copy so direct library callers get the same redirect defaults and
+	// legacy-OOB migration as the CLI without mutating their configuration.
+	googlePhotosCfg := cfg.GooglePhotos
+	if err := googlePhotosCfg.Validate(); err != nil {
+		return nil, err
 	}
 
 	conf := &oauth2.Config{
-		ClientID:     cfg.GooglePhotos.ClientId,
-		ClientSecret: cfg.GooglePhotos.ClientSecret,
-		RedirectURL:  redirectURI,
+		ClientID:     googlePhotosCfg.ClientId,
+		ClientSecret: googlePhotosCfg.ClientSecret,
+		RedirectURL:  googlePhotosCfg.RedirectURI,
 		Scopes: []string{
 			"https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata",
 			"https://www.googleapis.com/auth/photoslibrary.appendonly",
@@ -53,6 +51,9 @@ func GetAuthenticatedGooglePhotosClient(ctx context.Context, cfg config.CamflowC
 	}
 
 	tokenFilePath := getTokenFilePath(cacheDir)
+	if err := ensureCacheDir(cacheDir); err != nil {
+		return nil, err
+	}
 
 	token := &oauth2.Token{}
 	tokenFile, err := os.Open(tokenFilePath)
@@ -60,7 +61,7 @@ func GetAuthenticatedGooglePhotosClient(ctx context.Context, cfg config.CamflowC
 		err = json.NewDecoder(tokenFile).Decode(token)
 		tokenFile.Close()
 		if err != nil {
-			fmt.Printf("Error reading token file (%s), requesting new token: %v\n", tokenFilePath, err)
+			fmt.Fprintf(os.Stderr, "Error reading token file (%s), requesting new token: %v\n", tokenFilePath, err)
 			token = nil // Force getting a new token
 		}
 	} else if !os.IsNotExist(err) {
@@ -70,26 +71,202 @@ func GetAuthenticatedGooglePhotosClient(ctx context.Context, cfg config.CamflowC
 		token = nil
 	}
 
-	if token == nil || !token.Valid() {
-		if token == nil {
-			fmt.Println("No existing OAuth token found, starting auth flow...")
-		} else {
-			fmt.Println("OAuth token is invalid (eg, expired), starting auth flow...")
-		}
-		newToken, err := getTokenFromWeb(ctx, conf)
-		if err != nil {
-			return nil, err
-		}
-		token = newToken
-		if err := saveToken(tokenFilePath, token); err != nil {
-			// Log error but continue, maybe token is still usable in memory
-			fmt.Printf("Warning: Failed to save token to %s: %v\n", tokenFilePath, err)
-		}
-		fmt.Printf("Token obtained and saved successfully to %s\n", tokenFilePath)
+	src, err := authenticatedTokenSource(ctx, conf, token, tokenFilePath, runInteractiveAuth)
+	if err != nil {
+		return nil, err
 	}
 
-	// The gphotosuploader library expects an http.Client, which oauth2.Config provides.
-	return conf.Client(ctx, token), nil
+	// The gphotosuploader library expects an http.Client. Keep src directly on the
+	// transport: oauth2.NewClient would wrap it in another ReuseTokenSource, which
+	// would prevent persistingTokenSource from retrying a failed save until the
+	// cached access token expires. The source wrapped by persistingTokenSource
+	// already handles normal token reuse and refresh.
+	return newOAuthClient(ctx, src), nil
+}
+
+func newOAuthClient(ctx context.Context, src oauth2.TokenSource) *http.Client {
+	base := oauth2.NewClient(ctx, nil)
+	return &http.Client{
+		Transport: &oauth2.Transport{
+			Base:   base.Transport,
+			Source: src,
+		},
+		CheckRedirect: base.CheckRedirect,
+		Jar:           base.Jar,
+		Timeout:       base.Timeout,
+	}
+}
+
+const defaultOAuthRequestTimeout = 60 * time.Second
+
+// withOAuthRequestTimeout returns a context whose HTTP client is used only by
+// golang.org/x/oauth2 token requests. It clones the caller's client so adding the
+// default timeout never mutates shared state, and it does not add a context deadline:
+// browser consent can take as long as needed while each token HTTP request is bounded.
+func withOAuthRequestTimeout(ctx context.Context) context.Context {
+	client := http.DefaultClient
+	if configured, ok := ctx.Value(oauth2.HTTPClient).(*http.Client); ok && configured != nil {
+		client = configured
+	}
+	bounded := *client
+	if bounded.Timeout <= 0 {
+		bounded.Timeout = defaultOAuthRequestTimeout
+	}
+	return context.WithValue(ctx, oauth2.HTTPClient, &bounded)
+}
+
+type interactiveAuthFunc func(context.Context, *oauth2.Config) (*oauth2.Token, error)
+
+// authenticatedTokenSource selects interactive authentication or validates stored
+// credentials with a real refresh-token exchange. Supplying only the refresh token to
+// conf.TokenSource guarantees the preflight contacts the token endpoint even when the
+// stored access token has not reached its recorded expiry yet.
+func authenticatedTokenSource(ctx context.Context, conf *oauth2.Config, token *oauth2.Token, tokenFilePath string, interactiveAuth interactiveAuthFunc) (oauth2.TokenSource, error) {
+	ctx = withOAuthRequestTimeout(ctx)
+
+	if token == nil {
+		fmt.Fprintln(os.Stderr, "No existing OAuth token found, starting auth flow...")
+	} else if token.RefreshToken == "" {
+		// Without a refresh token the access token dies within the hour and cannot be
+		// renewed silently (eg, a token file saved before offline access was requested);
+		// re-auth now instead of failing mid-upload.
+		fmt.Fprintln(os.Stderr, "OAuth token has no refresh token, starting auth flow...")
+		token = nil
+	}
+
+	if token == nil {
+		return newInteractiveTokenSource(ctx, conf, tokenFilePath, interactiveAuth)
+	}
+
+	// Deliberately omit the cached access token so Token must exchange the stored refresh
+	// token. This catches revoked credentials before any media preparation or upload begins.
+	refreshSeed := &oauth2.Token{RefreshToken: token.RefreshToken}
+	src := &persistingTokenSource{
+		src:  conf.TokenSource(ctx, refreshSeed),
+		path: tokenFilePath,
+		last: token,
+	}
+	if _, err := src.Token(); err != nil {
+		if storedCredentialRejected(err) {
+			fmt.Fprintf(os.Stderr, "Stored Google credentials were rejected (%v), starting auth flow...\n", err)
+			return newInteractiveTokenSource(ctx, conf, tokenFilePath, interactiveAuth)
+		}
+		return nil, storedCredentialRefreshError(err)
+	}
+	return src, nil
+}
+
+func newInteractiveTokenSource(ctx context.Context, conf *oauth2.Config, tokenFilePath string, interactiveAuth interactiveAuthFunc) (oauth2.TokenSource, error) {
+	token, err := interactiveAuth(ctx, conf)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateInteractiveToken(token); err != nil {
+		return nil, err
+	}
+
+	// Keep an unsaved token usable in memory, but leave last nil so every subsequent
+	// Token call retries persistence until the cache becomes writable.
+	var last *oauth2.Token
+	if err := saveToken(tokenFilePath, token); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to save token to %s: %v\n", tokenFilePath, err)
+	} else {
+		fmt.Fprintf(os.Stderr, "Token obtained and saved successfully to %s\n", tokenFilePath)
+		last = token
+	}
+
+	return &persistingTokenSource{
+		src:  conf.TokenSource(ctx, token),
+		path: tokenFilePath,
+		last: last,
+	}, nil
+}
+
+// runInteractiveAuth obtains a token through the browser OAuth flow. The caller validates
+// and persists the token so injected interactive flows follow the same behavior.
+func runInteractiveAuth(ctx context.Context, conf *oauth2.Config) (*oauth2.Token, error) {
+	return getTokenFromWeb(ctx, conf)
+}
+
+func validateInteractiveToken(token *oauth2.Token) error {
+	if token == nil || !token.Valid() {
+		return fmt.Errorf("Google authentication returned no usable access token")
+	}
+	if token.RefreshToken == "" {
+		return fmt.Errorf("Google authentication returned no refresh token; verify the OAuth client configuration and try again")
+	}
+	return nil
+}
+
+// storedCredentialRejected reports whether err means the OAuth server rejected the
+// stored refresh token itself (revoked, expired, etc — RFC 6749 invalid_grant), as
+// opposed to a transient network/server/rate-limit failure that re-auth wouldn't fix.
+func storedCredentialRejected(err error) bool {
+	var rErr *oauth2.RetrieveError
+	return errors.As(err, &rErr) && rErr.ErrorCode == "invalid_grant"
+}
+
+// storedCredentialRefreshError adds recovery guidance for a failed preflight
+// refresh without obscuring cancellation or suggesting destructive steps that
+// cannot fix the underlying problem.
+func storedCredentialRefreshError(err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("could not refresh Google credentials: %w", err)
+	}
+
+	var rErr *oauth2.RetrieveError
+	if errors.As(err, &rErr) {
+		statusCode := 0
+		if rErr.Response != nil {
+			statusCode = rErr.Response.StatusCode
+		}
+		temporaryCode := rErr.ErrorCode == "server_error" || rErr.ErrorCode == "temporarily_unavailable"
+		temporaryStatus := statusCode == http.StatusRequestTimeout ||
+			statusCode == http.StatusTooEarly ||
+			statusCode == http.StatusTooManyRequests ||
+			statusCode >= http.StatusInternalServerError
+		permanentStatus := statusCode >= http.StatusBadRequest && statusCode < http.StatusInternalServerError && !temporaryStatus
+		if !temporaryCode && !temporaryStatus && (rErr.ErrorCode != "" || permanentStatus) {
+			return fmt.Errorf("could not refresh Google credentials: %w (verify google_photos.client_id, google_photos.client_secret, and the OAuth client configuration)", err)
+		}
+	}
+
+	return fmt.Errorf("could not refresh Google credentials: %w (usually a temporary network or server issue — try again)", err)
+}
+
+func oauthTokenRequestError(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("OAuth token request timed out; check the network connection and try again: %w", err)
+	}
+	return err
+}
+
+// persistingTokenSource wraps a TokenSource and writes the token to disk whenever the
+// wrapped source hands back a different one (ie, after a silent refresh).
+type persistingTokenSource struct {
+	src  oauth2.TokenSource
+	path string
+	mu   sync.Mutex
+	last *oauth2.Token
+}
+
+func (p *persistingTokenSource) Token() (*oauth2.Token, error) {
+	// The lock spans the fetch so concurrent refreshes can't persist out of order; the
+	// wrapped ReuseTokenSource serializes refreshes anyway, so this adds no contention.
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	tok, err := p.src.Token()
+	if err != nil {
+		return nil, oauthTokenRequestError(err)
+	}
+	if p.last == nil || tok.AccessToken != p.last.AccessToken || tok.RefreshToken != p.last.RefreshToken || !tok.Expiry.Equal(p.last.Expiry) {
+		if err := saveToken(p.path, tok); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to persist refreshed Google token to %s: %v\n", p.path, err)
+		} else {
+			p.last = tok
+		}
+	}
+	return tok, nil
 }
 
 // getTokenFilePath determines where to store the token file.
@@ -97,82 +274,283 @@ func getTokenFilePath(cacheDir string) string {
 	return filepath.Join(cacheDir, "google_photos_token.json")
 }
 
-// saveToken saves the OAuth2 token to the specified file path.
+func ensureCacheDir(cacheDir string) error {
+	if cacheDir == "" {
+		return fmt.Errorf("cache directory is empty")
+	}
+	if err := os.MkdirAll(cacheDir, 0700); err != nil {
+		return fmt.Errorf("failed to create cache directory %s: %w", cacheDir, err)
+	}
+	info, err := os.Stat(cacheDir)
+	if err != nil {
+		return fmt.Errorf("failed to inspect cache directory %s: %w", cacheDir, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("cache path is not a directory: %s", cacheDir)
+	}
+	return nil
+}
+
+// staleTokenTempAge bounds how long a legitimate token temp file can plausibly live
+// (encode + fsync + rename take milliseconds). Anything older is an orphan from a crashed
+// run and is safe to remove, so a concurrent writer's in-flight temp is never touched. Set
+// generously (an hour) since the only cost of waiting is an orphan lingering slightly
+// longer before the next save reclaims it.
+const staleTokenTempAge = time.Hour
+
+// removeStaleTokenTempFiles deletes leftover "<base>.tmp-*" files from token writes that
+// were killed between CreateTemp and Rename. Best-effort: any error is ignored so cleanup
+// never blocks saving the token. It scans the directory and prefix-matches names rather than
+// globbing so a cache path containing glob metacharacters ([, *, ?) is treated literally.
+func removeStaleTokenTempFiles(path string) {
+	dir := filepath.Dir(path)
+	prefix := filepath.Base(path) + ".tmp-"
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-staleTokenTempAge)
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || !info.ModTime().Before(cutoff) {
+			continue
+		}
+		_ = os.Remove(filepath.Join(dir, entry.Name()))
+	}
+}
+
+// saveToken saves the OAuth2 token to the specified file path. It writes to a temp file
+// and renames so a crash mid-write can't leave a corrupt token file behind.
 func saveToken(path string, token *oauth2.Token) error {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	if err := ensureCacheDir(filepath.Dir(path)); err != nil {
+		return fmt.Errorf("unable to cache oauth token: %w", err)
+	}
+	// Reclaim temp files orphaned by a previous run that was killed between CreateTemp and
+	// Rename. Done before we create our own temp so it is never a removal candidate.
+	removeStaleTokenTempFiles(path)
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("unable to cache oauth token: %w", err)
 	}
-	defer f.Close()
-	return json.NewEncoder(f).Encode(token)
+	if err := json.NewEncoder(f).Encode(token); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return fmt.Errorf("unable to cache oauth token: %w", err)
+	}
+	// Flush to stable storage before the rename so a power loss can't make the rename
+	// durable while the data isn't (which would leave an empty/corrupt token file).
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return fmt.Errorf("unable to cache oauth token: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(f.Name())
+		return fmt.Errorf("unable to cache oauth token: %w", err)
+	}
+	if err := os.Rename(f.Name(), path); err != nil {
+		os.Remove(f.Name())
+		return fmt.Errorf("unable to cache oauth token: %w", err)
+	}
+	return nil
+}
+
+type authCallbackResult struct {
+	code string
+	err  error
 }
 
 // getTokenFromWeb guides the user through the web-based OAuth2 flow via a local server.
 func getTokenFromWeb(ctx context.Context, conf *oauth2.Config) (*oauth2.Token, error) {
-	// Parse the redirect URL to determine the port to listen on.
-	// We expect something like "http://localhost:8080" or "http://127.0.0.1:8080"
-	u, err := url.Parse(conf.RedirectURL)
-	if err != nil {
-		return nil, fmt.Errorf("bad redirect URL: %w", err)
-	}
+	return getTokenFromWebWithBrowser(ctx, conf, openBrowser)
+}
 
-	codeCh := make(chan string, 1) // Buffered channel
-	errCh := make(chan error, 1)
+// listenLoopbackWithFallback binds the OAuth callback listener. It prefers the port from the
+// configured redirect URI, but if that port is unavailable it falls back to an OS-assigned free
+// port on the same loopback host — Google's loopback-IP OAuth flow matches only the loopback host,
+// not the port, so any free port works and a busy port no longer blocks authentication. It returns
+// the listener and the effective redirect URI carrying the port actually bound; the caller must use
+// that URI for both the authorization request and the token exchange so the two stay consistent.
+func listenLoopbackWithFallback(u *url.URL) (net.Listener, string, error) {
+	// ParseOAuthLoopbackRedirectURI already guarantees a host:port, so SplitHostPort won't fail.
+	host, _, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to start local server for auth: invalid redirect host %q: %w", u.Host, err)
+	}
 
 	l, err := net.Listen("tcp", u.Host)
+	usedFallback := false
 	if err != nil {
-		return nil, fmt.Errorf("failed to start local server for auth: %w", err)
+		fallback, fallbackErr := net.Listen("tcp", net.JoinHostPort(host, "0"))
+		if fallbackErr != nil {
+			return nil, "", fmt.Errorf("failed to start local server for auth on %s: %w (also could not bind a free loopback port: %v)", u.Host, err, fallbackErr)
+		}
+		l = fallback
+		usedFallback = true
+	}
+
+	addr, ok := l.Addr().(*net.TCPAddr)
+	if !ok {
+		l.Close()
+		return nil, "", fmt.Errorf("failed to start local server for auth: unexpected listener address type %T", l.Addr())
+	}
+	if usedFallback {
+		// err is the original bind failure (address in use, permission denied, ...); report it
+		// verbatim rather than assuming a cause, since any bind error triggers the fallback.
+		fmt.Fprintf(os.Stderr, "Could not bind configured auth port %s (%v); listening on free port %d instead.\n", u.Port(), err, addr.Port)
+	}
+
+	// Preserve the configured host spelling and path; only the port reflects what was bound.
+	effective := *u
+	effective.Host = net.JoinHostPort(host, strconv.Itoa(addr.Port))
+	return l, effective.String(), nil
+}
+
+// getTokenFromWebWithBrowser contains the OAuth flow with an injectable browser opener
+// so the complete loopback flow can be exercised without launching a real browser.
+func getTokenFromWebWithBrowser(ctx context.Context, conf *oauth2.Config, browserOpener func(string)) (*oauth2.Token, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	u, err := config.ParseOAuthLoopbackRedirectURI(conf.RedirectURL)
+	if err != nil {
+		return nil, err
+	}
+
+	resultCh := make(chan authCallbackResult, 1)
+
+	l, redirectURI, err := listenLoopbackWithFallback(u)
+	if err != nil {
+		return nil, err
 	}
 	defer l.Close()
-	// fmt.Printf("Listening on %s for authentication callback...\n", l.Addr().String())
 
-	// Handler for the redirect.
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		code := r.URL.Query().Get("code")
-		if code == "" {
+	// Use the port actually bound (which may differ from the configured one if it was in use) for
+	// both the authorization request and the token exchange so the redirect_uri stays consistent.
+	// Copy conf rather than mutate the caller's; its TokenSource refresh path ignores RedirectURL.
+	flowConf := *conf
+	flowConf.RedirectURL = redirectURI
+
+	// A random state ties the callback to this auth attempt: the handler rejects codes
+	// delivered by requests that didn't originate from our auth URL (OAuth CSRF).
+	stateBytes := make([]byte, 16)
+	if _, err := rand.Read(stateBytes); err != nil {
+		return nil, fmt.Errorf("failed to generate OAuth state: %w", err)
+	}
+	state := hex.EncodeToString(stateBytes)
+
+	// PKCE (RFC 7636): the token exchange must present the verifier matching the
+	// code_challenge sent in the auth URL, so a stolen authorization code is useless on
+	// its own. State stops an attacker injecting their code; PKCE stops one using ours.
+	verifier := oauth2.GenerateVerifier()
+
+	server := &http.Server{Handler: authCallbackHandler(state, resultCh), ReadHeaderTimeout: 10 * time.Second}
+
+	go func() {
+		if err := server.Serve(l); err != nil && err != http.ErrServerClosed {
+			select {
+			case resultCh <- authCallbackResult{err: fmt.Errorf("http server error: %w", err)}:
+			default: // the flow already has a result; nothing reads resultCh anymore
+			}
+		}
+	}()
+	// Tear the server down gracefully on every exit path. Shutdown waits for the callback
+	// handler to finish flushing its browser response; the bounded fallback still prevents
+	// a slow or malicious connection from keeping the CLI alive indefinitely.
+	shutdownServer := sync.OnceFunc(func() { shutdownOAuthCallbackServer(server) })
+	defer shutdownServer()
+
+	// ApprovalForce (prompt=consent) makes Google issue a refresh token on every
+	// interactive auth, not just the first consent; without it a re-auth saves a token
+	// file with no refresh token and hourly browser prompts return.
+	authURL := flowConf.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.ApprovalForce, oauth2.S256ChallengeOption(verifier))
+	fmt.Fprintf(os.Stderr, "Opening browser to complete authentication:\n%s\n", authURL)
+
+	// Avoid opening a browser when cancellation happened while the listener and auth URL
+	// were being prepared. The deferred shutdown still closes the listener in this case.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	go browserOpener(authURL)
+
+	fmt.Fprintln(os.Stderr, "Waiting for authentication callback...")
+
+	select {
+	case result := <-resultCh:
+		// Stop accepting callbacks as soon as the first result wins. Shutdown waits for the
+		// active handler to flush its browser response before the token exchange starts.
+		shutdownServer()
+		if result.err != nil {
+			return nil, result.err
+		}
+		tok, err := flowConf.Exchange(ctx, result.code, oauth2.VerifierOption(verifier))
+		if err != nil {
+			return nil, fmt.Errorf("unable to retrieve token from web exchange: %w", oauthTokenRequestError(err))
+		}
+		return tok, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func shutdownOAuthCallbackServer(server *http.Server) {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		_ = server.Close()
+	}
+}
+
+// authCallbackHandler handles the OAuth redirect back to the local server. A result is
+// delivered only when the state parameter matches this auth attempt, so a code injected
+// by a request that didn't come from our auth URL (OAuth CSRF) is ignored. A denial (error
+// param, eg the user canceling the consent screen) fails the flow immediately instead of
+// waiting for a code that will never arrive.
+func authCallbackHandler(state string, resultCh chan<- authCallbackResult) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		errParam := q.Get("error")
+		code := q.Get("code")
+		if errParam == "" && code == "" {
 			if r.URL.Path != "/favicon.ico" {
-				fmt.Printf("Warning: Code not found in request (path: %s)\n", r.URL.Path)
+				fmt.Fprintf(os.Stderr, "Warning: Code not found in request (path: %s)\n", r.URL.Path)
 			}
 			http.Error(w, "Code not found in response", http.StatusBadRequest)
 			return
 		}
+		if subtle.ConstantTimeCompare([]byte(q.Get("state")), []byte(state)) != 1 {
+			// Keep listening: a stray or forged request must not kill a pending auth.
+			fmt.Fprintln(os.Stderr, "Warning: Ignoring auth callback with mismatched state parameter")
+			http.Error(w, "State mismatch", http.StatusBadRequest)
+			return
+		}
 
-		// Show success message to user.
+		if errParam != "" {
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprint(w, `<html><body><h1>Camflow Authentication Failed</h1><p>You can close this window and return to the terminal.</p></body></html>`)
+			if desc := q.Get("error_description"); desc != "" {
+				errParam += ": " + desc
+			}
+			select {
+			case resultCh <- authCallbackResult{err: fmt.Errorf("authentication failed: %s", errParam)}:
+			default: // an earlier callback already delivered a result; don't block the handler
+			}
+			return
+		}
+
+		// The authorization code has arrived, but the token exchange still happens after
+		// this response is flushed. Do not claim authentication succeeded prematurely.
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprint(w, `<html><body><h1>Camflow Authentication Successful</h1><p>You can close this window now and return to the terminal.</p></body></html>`)
+		fmt.Fprint(w, `<html><body><h1>Camflow Authorization Received</h1><p>You can close this window and return to the terminal. Camflow will report whether authentication completed successfully.</p></body></html>`)
 
-		codeCh <- code
-	})
-
-	server := &http.Server{Handler: handler}
-
-	go func() {
-		if err := server.Serve(l); err != nil && err != http.ErrServerClosed {
-			errCh <- fmt.Errorf("http server error: %w", err)
+		select {
+		case resultCh <- authCallbackResult{code: code}:
+		default: // duplicate success callback; the first one already delivered
 		}
-	}()
-
-	authURL := conf.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
-	fmt.Printf("Opening browser to complete authentication:\n%s\n", authURL)
-
-	go openBrowser(authURL)
-
-	fmt.Println("Waiting for authentication callback...")
-
-	select {
-	case code := <-codeCh:
-		go server.Shutdown(context.Background())
-
-		tok, err := conf.Exchange(ctx, code)
-		if err != nil {
-			return nil, fmt.Errorf("unable to retrieve token from web exchange: %w", err)
-		}
-		return tok, nil
-
-	case err := <-errCh:
-		return nil, err
-	case <-ctx.Done():
-		return nil, ctx.Err()
 	}
 }
 
@@ -190,6 +568,6 @@ func openBrowser(url string) {
 		err = fmt.Errorf("unsupported platform")
 	}
 	if err != nil {
-		fmt.Printf("Could not open browser automatically: %v\nPlease open the URL manually.\n", err)
+		fmt.Fprintf(os.Stderr, "Could not open browser automatically: %v\nPlease open the URL manually.\n", err)
 	}
 }

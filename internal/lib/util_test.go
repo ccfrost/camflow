@@ -52,7 +52,7 @@ func newTestConfig(t *testing.T, photosDefaultAlbum, videosDefaultAlbum string) 
 		GooglePhotos: config.GooglePhotosConfig{
 			ClientId:     "test-client-id",
 			ClientSecret: "test-client-secret",
-			RedirectURI:  "test-redirect-uri",
+			RedirectURI:  "http://localhost:8080",
 
 			Photos: config.GPPhotosConfig{
 				DefaultAlbum: photosDefaultAlbum,

@@ -2,8 +2,11 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -106,17 +109,66 @@ func (c *LocalVideosConfig) GetUploadedRoot() string {
 	return c.UploadedRoot
 }
 
+// defaultRedirectURI is used when redirect_uri is unset or a legacy OOB value that Google
+// no longer supports for the loopback flow.
+const defaultRedirectURI = "http://127.0.0.1:8080"
+
 func (c *GooglePhotosConfig) Validate() error {
 	// Check that at least a base set of fields have values.
 	if c.ClientId == "" || c.ClientSecret == "" {
 		return fmt.Errorf("missing google photos client_id or client_secret")
 	}
-	if c.RedirectURI == "" {
-		c.RedirectURI = "http://localhost:8080" // Default redirect URI
-		fmt.Printf("Warning: google_photos.redirect_uri not set in config, using default: %s\n", c.RedirectURI)
+	switch c.RedirectURI {
+	case "":
+		c.RedirectURI = defaultRedirectURI
+		fmt.Fprintf(os.Stderr, "Warning: google_photos.redirect_uri not set in config, using default: %s\n", c.RedirectURI)
+	case "urn:ietf:wg:oauth:2.0:oob":
+		fmt.Fprintf(os.Stderr, "Warning: google_photos.redirect_uri is legacy OOB (%s). Overriding with %s for the loopback auth flow.\n", c.RedirectURI, defaultRedirectURI)
+		c.RedirectURI = defaultRedirectURI
+	}
+	// Validate syntax now so a malformed redirect_uri fails at config load rather than at
+	// the start of an upload.
+	if _, err := ParseOAuthLoopbackRedirectURI(c.RedirectURI); err != nil {
+		return err
 	}
 	// Allow empty DefaultAlbums, ToFavAlbumName, and KeywordAlbums.
 	return nil
+}
+
+// ParseOAuthLoopbackRedirectURI validates that raw is a usable OAuth loopback redirect URI
+// (http scheme, localhost/127.0.0.1/::1, and an explicit port) and returns the parsed URL so
+// callers can bind a listener to its host. The loopback restriction follows Google's
+// requirements for the installed-app OAuth flow.
+func ParseOAuthLoopbackRedirectURI(raw string) (*url.URL, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid google_photos.redirect_uri %q: %w", raw, err)
+	}
+	if !strings.EqualFold(u.Scheme, "http") {
+		return nil, fmt.Errorf("invalid google_photos.redirect_uri %q: must use the http scheme", raw)
+	}
+	if u.User != nil {
+		return nil, fmt.Errorf("invalid google_photos.redirect_uri %q: must not contain user information", raw)
+	}
+	if u.RawQuery != "" || u.ForceQuery {
+		return nil, fmt.Errorf("invalid google_photos.redirect_uri %q: must not contain a query string", raw)
+	}
+	if u.Fragment != "" {
+		return nil, fmt.Errorf("invalid google_photos.redirect_uri %q: must not contain a fragment", raw)
+	}
+
+	host, port, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		return nil, fmt.Errorf("invalid google_photos.redirect_uri %q: must include a loopback host and explicit port (for example, http://127.0.0.1:8080)", raw)
+	}
+	if !strings.EqualFold(host, "localhost") && host != "127.0.0.1" && host != "::1" {
+		return nil, fmt.Errorf("invalid google_photos.redirect_uri %q: loopback host must be localhost, 127.0.0.1, or ::1", raw)
+	}
+	portNumber, err := strconv.ParseUint(port, 10, 16)
+	if err != nil || portNumber == 0 {
+		return nil, fmt.Errorf("invalid google_photos.redirect_uri %q: port must be a number from 1 through 65535", raw)
+	}
+	return u, nil
 }
 
 func (c *CamflowConfig) Validate() error {
